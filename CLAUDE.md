@@ -7,13 +7,18 @@
 ```
 사용자 요청
   └─ Orchestrator (LLM 안 부름, 컨트롤러)
-      ├─ Phase 1  CodeChecker (LLM)   → FE/BE/BOTH 분류, spec + api_contract 생성
-      ├─ Phase 2  BE Agent (LLM)      → BE/ 코드 + Jest 테스트
-      ├─ Phase 3  FE Agent (LLM)      → FE/ 코드 + Vitest+RTL 테스트
-      ├─ Phase 4  Lint Agent (LLM X)  → eslint → build → tests
-      └─ Phase 5  verdict (LLM X)     → PASS / FAIL / ERROR / CONTINUE
-                                          CONTINUE면 fix_instructions 들고
-                                          Phase 2/3로 다시 진입
+      ├─ Phase 1  CodeChecker (LLM)    → FE/BE/BOTH 분류, spec + api_contract 생성
+      ├─ Phase 2  BE Agent (LLM)       → BE/ 코드 + Jest 테스트
+      ├─ Phase 3  FE Agent (LLM)       → FE/ 코드 + Vitest+RTL 테스트
+      ├─ Phase 4  Lint Agent (LLM X)   → eslint → build → tests
+      ├─ Phase 5  verdict (LLM X)      → PASS / FAIL / ERROR / CONTINUE
+      │                                    CONTINUE면 fix_instructions 들고
+      │                                    Phase 2/3로 다시 진입
+      ├─ Phase 6  finalize (LLM X)     → log_agent_decisions UPDATE,
+      │                                    log_agent_runs UPDATE
+      └─ Phase 7  auto-commit (LLM X)  → PASS + COMMIT_MODE=auto면
+                                           git add BE/ FE/ + git commit
+                                           (push는 절대 안 함, 사람이 수행)
 ```
 
 LLM은 **CodeChecker, BE Agent, FE Agent 안에서만** 호출됨.
@@ -65,7 +70,7 @@ Agent 코드, lint 로직, bootstrap은 전부 그대로.
 | 값 | 의미 | 어디서 결정 |
 |---|---|---|
 | `IN_PROGRESS` | task 시작됨, 아직 종료 안 됨 | CodeChecker INSERT 시점 (Phase 1) |
-| `PASS` | 모든 영역(BE/FE) `log_task_state.status='SUCCESS'` | Orchestrator Phase 5 ② |
+| `PASS` | 모든 영역(BE/FE) `log_task_state.status='SUCCESS'`. `COMMIT_MODE=auto`면 Phase 7에서 자동 commit 발동 | Orchestrator Phase 5 ② |
 | `FAIL` | Stage 3 실패 또는 `retry_count >= 3` | Orchestrator Phase 5 ③, ④ |
 | `ERROR` | 어느 Agent의 `log_agent_runs.status='FAILED'` (예외 발생) | Orchestrator Phase 5 ① |
 
@@ -90,9 +95,9 @@ Agent 코드, lint 로직, bootstrap은 전부 그대로.
 위 절대 규칙 #1, #2의 `validatePaths` 검증은 **LLM Agent가 코드를 응답으로 내놓을 때** 적용된다. 사람이 IDE로 직접 편집하거나, Claude(어시스턴트)가 Edit/Write 도구로 BE/, FE/, 또는 protected 파일을 수정하는 것은 **정상적인 개발 작업으로 허용**된다.
 
 - Agent 산출물 → `validatePaths` 통과해야 디스크에 반영
-- 사람·Claude 직접 편집 → 자유. 단, push 시점에 pre-push gate가 최신 orchestrator verdict는 확인함.
+- 사람·Claude 직접 편집 → 자유. commit/push 시점 검사·차단 없음 (pre-push gate 제거됨).
 
-직접 코드를 손본 뒤에 시스템에 반영하려면 결국 orchestrator를 다시 통과(verdict=PASS)시켜야 main에 push 가능.
+자동 commit은 오직 **파이프라인이 만든 변경분(BE/+FE/)** 에만 적용된다. 사람이 손본 코드를 자동 commit에 끼워넣으려면 orchestrator를 한 번 통과시켜 PASS를 받아야 한다 — 그렇지 않으면 사람이 직접 commit하면 됨 (모드 무관 자유).
 
 ## 표준 명령
 
@@ -103,6 +108,7 @@ npm run init-db
 # 파이프라인 실행
 npm start                                          # 기본 시나리오 (회원가입)
 node agents/orchestrator.js "기능 요청 자연어..."   # 커스텀
+# → verdict=PASS && COMMIT_MODE=auto면 종료 직전 BE/+FE/ 자동 commit (push 안 함)
 
 # 개별 테스트 실행
 cd BE && npx jest --runInBand
@@ -134,6 +140,20 @@ Orchestrator end-to-end 한 번에 약 **3~5분**:
 3. LLM JSON 깨졌으면 raw 응답이 `os.tmpdir()/llm-bad-response-*.txt`에 덤프됨.
 4. `log_task_state`의 `failed_stage`, `fix_instructions`, `stage_logs` 확인.
 
+### Phase 7 자동 commit 진단
+verdict=PASS인데 commit이 생기지 않았을 때 콘솔 로그를 확인. 자동 commit이 skip되는 모든 경우:
+
+| 케이스 | 콘솔 메시지 | 대응 |
+|---|---|---|
+| `COMMIT_MODE` ≠ `auto` | `[commit] COMMIT_MODE=... — auto-commit skipped` | `.env`에서 `COMMIT_MODE=auto`로 |
+| git repo 아님 | `[commit] not a git repository — auto-commit skipped` | `git init` 후 재실행 |
+| BE/FE 둘 다 없음 | `[commit] neither BE/ nor FE/ exists — auto-commit skipped` | bootstrap 확인 |
+| BE/FE에 변경 0 | `[commit] no changes in BE/ or FE/ — auto-commit skipped` | 정상 (Agent가 실제 코드 수정 안 함) |
+| `git add` 실패 | `[commit] git add failed: ...` | 권한·잠금 등 OS 문제 |
+| `git commit` 실패 | `[commit] git commit failed: ...` | git config user.name/email, pre-commit hook 등 |
+
+자동 commit 실패는 verdict에 영향을 주지 않음 — verdict는 PASS 그대로, commit만 안 만들어짐.
+
 ### 스택 교체
 README의 "스택 변경 체크리스트" 섹션 참조.
 
@@ -141,9 +161,11 @@ README의 "스택 변경 체크리스트" 섹션 참조.
 
 - `rules/code_convention.md` — BE/FE Agent가 매 LLM 호출 시 읽음. 명명 규칙, 보안(bcrypt, prepared statement), API 응답 형식, placeholder 보존, 스택 일관성 포함.
 - API 응답 형식: 모든 엔드포인트가 `{ success: bool, data: any, error?: string }` 따름.
+- **env 변수 추가/수정**: 코드에서 새 env를 도입할 때 `.env.example`과 `.env`를 **반드시 짝으로** 갱신. `.env.example`만 손보면 사용자가 토글하려 할 때 실제 `.env`에 변수가 없어 혼란 — runtime이 읽는 건 `.env`임.
 
 ## 최근 결정 (타임라인)
 
+- 2026-05-07  b6212e1  COMMIT_MODE 도입 (PASS+auto 시 BE/FE 자동 commit), pre-push gate 제거
 - 2026-05-07  b41aee3  login + LoginForm 추가 (signup 보존)
 - 2026-05-07  2613b5f  jsonrepair 폴백을 LLM JSON 파서에 추가
 - 2026-05-07  3597f77  pre-push 게이트 (main push는 verdict=PASS 필요)
