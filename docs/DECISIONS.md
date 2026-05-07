@@ -4,6 +4,7 @@
 
 ## 2026-05-08
 
+- **(TBD)**  Prompt caching API 단순화 + CodeChecker 캐싱 추가 — 기존 `cache: boolean`(true=system 캐시) → `cache: 'system' | 'user'`로 enum화. BE/FE Agent는 system이 무거워(`'system'`) rules를 캐시, CodeChecker는 user_request가 큰 경우(`'user'`) user 메시지를 캐시. **인사이트**: "Agent마다 콘텐츠 분포가 다르다 — 캐싱 전략도 그에 맞춰 다르게." 같은 spec으로 orchestrator 재실행 시 (디버깅·시연 반복) CodeChecker도 5분 TTL 안에서 ~90% 절감. user_request가 캐시 임계값(Sonnet 1024, Haiku 2048 토큰) 미달이면 자동 no-op으로 안전. `cache: 'both'`는 의도적으로 안 추가 (현 3개 Agent 중 어느 것도 system+user 둘 다 무겁지 않음 — YAGNI).
 - **(TBD)**  [C] dotenv override 정책 변경 **기각** — UI 단계 진입 시 dotenv `override: true` → `false`로 바꾸는 안을 검토했으나, 사용자가 더 단순한 대안 채택: UI가 `.env` 파일을 직접 수정하면 됨. 정책 변경, API key 가드 추가, 절대 규칙 갱신 모두 불필요. 사고 모델: "`.env`가 single source of truth, UI는 그것의 GUI 에디터." UI scope에 `.env` writer 유틸(atomic write로 tmp+rename) 추가될 예정. 교육적 의미: "**프레임워크 사상(env 우선순위)에 끌려가지 말고 PoC 규모에 맞는 단순한 답을 고르기**" 결정 사례.
 - **(TBD)**  Prompt caching 도입 — `lib/llm.js`의 `callJSON()`에 `cache: true` 옵션 추가, BE/FE Agent의 system prompt에 rules 본문을 포함시켜 모듈 로드 시점에 한 번만 빌드. system prompt를 `[{ type: 'text', text, cache_control: { type: 'ephemeral' } }]`로 마킹해 5분 TTL 캐시 활성. 재시도 호출이나 같은 라운드 내 다음 호출에서 ~90% 입력 비용 절감. 사용량 통계는 콘솔에 `[llm:<agent>] cache hit/write` 로그.
 - **5365d2d**  문서 구조 분리 — CLAUDE.md를 슬림화하고 `docs/`(PRD, ARCHITECTURE, OPERATIONS, DECISIONS, ROADMAP)와 `rules/`(common.md, be.md, fe.md)로 분산. Agent prompt 다이어트(BE는 BE 규칙만, FE는 FE 규칙만)와 다음 세션 cold-start 효율 향상이 목적.

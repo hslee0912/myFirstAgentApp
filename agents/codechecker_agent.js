@@ -82,6 +82,10 @@ async function run({ task_id, user_request }) {
       agent: 'codechecker',
       system: SYSTEM_PROMPT,
       user: buildUserPrompt(user_request),
+      // CodeChecker는 user_request가 큰 spec일 때 캐시 효과. 같은 spec 재실행
+      // (디버깅·시연 반복) 시 5분 TTL 안에서 ~90% 절감. user_request가 작으면
+      // 캐시 임계값 미달로 자동 no-op.
+      cache: 'user',
     });
 
     const targets = llmOut.targets;

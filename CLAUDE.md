@@ -74,9 +74,9 @@ Orchestrator와 Lint Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
-- 2026-05-08  (TBD)    Prompt caching — BE/FE system prompt에 rules 포함 + cache_control:ephemeral. 재시도/같은 라운드 내 호출에서 ~90% 입력 비용 절감.
-- 2026-05-08  5365d2d  문서 구조 분리 — CLAUDE.md 슬림화, docs/+rules/ 분산. BE/FE Agent prompt 다이어트.
-- 2026-05-08  cff5842  Per-agent LLM 모델 분리 (CODECHECKER_MODEL/BE_AGENT_MODEL/FE_AGENT_MODEL)
+- 2026-05-08  (TBD)    Prompt caching API 단순화 + CodeChecker 추가 — `cache: true` → `cache: 'system' | 'user'`. BE/FE는 'system' (rules 캐시), CodeChecker는 'user' (큰 spec 캐시). 같은 user_request 재실행 시 ~90% 절감.
+- 2026-05-08  ffa5d59  Prompt caching 도입 (BE/FE system prompt). 재시도 호출에서 ~90% 절감.
+- 2026-05-08  5365d2d  문서 구조 분리 — CLAUDE.md 슬림화, docs/+rules/ 분산.
 
 ## Skill routing
 
