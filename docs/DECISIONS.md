@@ -4,7 +4,9 @@
 
 ## 2026-05-08
 
-- **(TBD hash)**  문서 구조 분리 — CLAUDE.md를 슬림화하고 `docs/`(PRD, ARCHITECTURE, OPERATIONS, DECISIONS, ROADMAP)와 `rules/`(common.md, be.md, fe.md)로 분산. Agent prompt 다이어트(BE는 BE 규칙만, FE는 FE 규칙만)와 다음 세션 cold-start 효율 향상이 목적.
+- **(TBD)**  Prompt caching 도입 — `lib/llm.js`의 `callJSON()`에 `cache: true` 옵션 추가, BE/FE Agent의 system prompt에 rules 본문을 포함시켜 모듈 로드 시점에 한 번만 빌드. system prompt를 `[{ type: 'text', text, cache_control: { type: 'ephemeral' } }]`로 마킹해 5분 TTL 캐시 활성. 재시도 호출이나 같은 라운드 내 다음 호출에서 ~90% 입력 비용 절감. 사용량 통계는 콘솔에 `[llm:<agent>] cache hit/write` 로그.
+- **5365d2d**  문서 구조 분리 — CLAUDE.md를 슬림화하고 `docs/`(PRD, ARCHITECTURE, OPERATIONS, DECISIONS, ROADMAP)와 `rules/`(common.md, be.md, fe.md)로 분산. Agent prompt 다이어트(BE는 BE 규칙만, FE는 FE 규칙만)와 다음 세션 cold-start 효율 향상이 목적.
+- **0e2b6e4**  문서 구조 분리 — Phase 1 (additive) — 새 docs/와 rules/ 파일 추가 (구 code_convention.md는 보존, 코드 변경 X).
 - **cff5842**  Agent별 LLM 모델 분리 — `CODECHECKER_MODEL` / `BE_AGENT_MODEL` / `FE_AGENT_MODEL` env로 토글, `ANTHROPIC_MODEL` fallback. `lib/llm.js`에 `resolveModel(agent)` 헬퍼 추가.
 - **c6417ac**  VALIDATION_MODE 도입 — off면 Phase 4 (Lint) 통째 skip, log_task_state 자동 SUCCESS. Ablation/디버깅 모드. validatePaths 같은 안전장치는 모드 무관 항상 켜짐.
 

@@ -56,13 +56,18 @@ function buildSystemPrompt(cfg) {
   ].join('\n');
 }
 
-const SYSTEM_PROMPT = buildSystemPrompt(stackCfg);
-
 function readConvention() {
   const common = fs.readFileSync(path.join(ROOT, 'rules', 'common.md'), 'utf8');
   const beSpecific = fs.readFileSync(path.join(ROOT, 'rules', 'be.md'), 'utf8');
   return common + '\n\n---\n\n' + beSpecific;
 }
+
+// Built once at module load. Includes rules so the entire system prompt is
+// stable across calls within an orchestrator run → prompt caching can hit.
+const SYSTEM_PROMPT =
+  buildSystemPrompt(stackCfg) +
+  '\n\n## rules (common + BE-specific, 반드시 준수)\n\n' +
+  readConvention();
 
 function readApiContractIfAny() {
   const p = path.join(ROOT, 'shared', 'api_contract.json');
@@ -83,11 +88,8 @@ function ensureEslintrc() {
   return false;
 }
 
-function buildInitialUserPrompt({ be_spec, api_contract, convention, existing_files }) {
+function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
   return [
-    '## rules (common + BE-specific, 반드시 준수)',
-    convention,
-    '',
     '## be_spec',
     '```json',
     JSON.stringify(be_spec, null, 2),
@@ -116,12 +118,9 @@ function buildInitialUserPrompt({ be_spec, api_contract, convention, existing_fi
   ].join('\n');
 }
 
-function buildRetryUserPrompt({ be_spec, api_contract, convention, existing_files, allowed_paths, fix_instructions }) {
+function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_paths, fix_instructions }) {
   return [
     '## 모드: RETRY (부분 수정)',
-    '',
-    '## rules (common + BE-specific)',
-    convention,
     '',
     '## be_spec (참고)',
     '```json',
@@ -191,7 +190,6 @@ async function run(params) {
 
   try {
     const eslintrcCreated = ensureEslintrc();
-    const convention = readConvention();
     const api_contract = params.api_contract || readApiContractIfAny();
 
     let userPrompt;
@@ -199,7 +197,6 @@ async function run(params) {
       userPrompt = buildRetryUserPrompt({
         be_spec: params.be_spec || {},
         api_contract,
-        convention,
         existing_files: params.existing_files || {},
         allowed_paths: params.allowed_paths || [],
         fix_instructions: params.fix_instructions || '',
@@ -211,12 +208,11 @@ async function run(params) {
       userPrompt = buildInitialUserPrompt({
         be_spec: params.be_spec || {},
         api_contract,
-        convention,
         existing_files: initialExisting,
       });
     }
 
-    const llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPrompt });
+    const llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPrompt, cache: true });
     const files = llmOut.files || {};
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });

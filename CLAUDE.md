@@ -74,9 +74,9 @@ Orchestrator와 Lint Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
-- 2026-05-08  (TBD)    문서 구조 분리 — CLAUDE.md 슬림화, docs/+rules/ 분산
+- 2026-05-08  (TBD)    Prompt caching — BE/FE system prompt에 rules 포함 + cache_control:ephemeral. 재시도/같은 라운드 내 호출에서 ~90% 입력 비용 절감.
+- 2026-05-08  5365d2d  문서 구조 분리 — CLAUDE.md 슬림화, docs/+rules/ 분산. BE/FE Agent prompt 다이어트.
 - 2026-05-08  cff5842  Per-agent LLM 모델 분리 (CODECHECKER_MODEL/BE_AGENT_MODEL/FE_AGENT_MODEL)
-- 2026-05-08  c6417ac  VALIDATION_MODE 도입 (off면 Phase 4 skip, ablation/디버깅용)
 
 ## Skill routing
 
