@@ -4,6 +4,7 @@
 
 ## 2026-05-08
 
+- **(TBD)**  [C] dotenv override 정책 변경 **기각** — UI 단계 진입 시 dotenv `override: true` → `false`로 바꾸는 안을 검토했으나, 사용자가 더 단순한 대안 채택: UI가 `.env` 파일을 직접 수정하면 됨. 정책 변경, API key 가드 추가, 절대 규칙 갱신 모두 불필요. 사고 모델: "`.env`가 single source of truth, UI는 그것의 GUI 에디터." UI scope에 `.env` writer 유틸(atomic write로 tmp+rename) 추가될 예정. 교육적 의미: "**프레임워크 사상(env 우선순위)에 끌려가지 말고 PoC 규모에 맞는 단순한 답을 고르기**" 결정 사례.
 - **(TBD)**  Prompt caching 도입 — `lib/llm.js`의 `callJSON()`에 `cache: true` 옵션 추가, BE/FE Agent의 system prompt에 rules 본문을 포함시켜 모듈 로드 시점에 한 번만 빌드. system prompt를 `[{ type: 'text', text, cache_control: { type: 'ephemeral' } }]`로 마킹해 5분 TTL 캐시 활성. 재시도 호출이나 같은 라운드 내 다음 호출에서 ~90% 입력 비용 절감. 사용량 통계는 콘솔에 `[llm:<agent>] cache hit/write` 로그.
 - **5365d2d**  문서 구조 분리 — CLAUDE.md를 슬림화하고 `docs/`(PRD, ARCHITECTURE, OPERATIONS, DECISIONS, ROADMAP)와 `rules/`(common.md, be.md, fe.md)로 분산. Agent prompt 다이어트(BE는 BE 규칙만, FE는 FE 규칙만)와 다음 세션 cold-start 효율 향상이 목적.
 - **0e2b6e4**  문서 구조 분리 — Phase 1 (additive) — 새 docs/와 rules/ 파일 추가 (구 code_convention.md는 보존, 코드 변경 X).

@@ -45,7 +45,13 @@
 
 **Real-time update**: DB 1~2초 polling으로 충분 (SSE/WebSocket 불필요).
 
-**의존성**: [C] dotenv override 정책 변경을 함께 진행 (UI가 spawn하는 자식에 env 주입하려면 필수).
+**모드 토글 처리** (2026-05-08 사용자 결정): UI는 `.env` 파일을 직접 수정하는 방식 채택. ".env가 single source of truth, UI는 그것의 GUI 에디터" 사고 모델. dotenv 정책 변경 불필요.
+
+UI scope에 포함될 작업:
+- `.env` writer 유틸 (UI backend 헬퍼) — 토글 시 즉시 .env 갱신
+- Atomic write 패턴: `fs.writeFileSync('.env.tmp', ...)` → `fs.renameSync('.env.tmp', '.env')` (Windows·POSIX 모두 atomic)
+- 기존 .env 파싱 → 키 갱신 → 쓰기 (다른 키 보존)
+- 동시 실행 정책: 한 번에 1개 task 큐 (PoC라 단순)
 
 ## 3순위 — [E] Tool use loop pattern (시연 대조군)
 
@@ -104,18 +110,17 @@ UI에서 "새 프로젝트 만들기" 가능. `prompt + project_name + path` 입
 
 ## 알려진 이슈 / 부수 작업
 
-### [C] dotenv override 정책 변경 (UI 단계 진입 시 함께)
+### [C] dotenv override 정책 — 기각 (2026-05-08 사용자 재결정)
 
-`lib/db.js`와 `agents/orchestrator.js`의 `dotenv.config({ override: true })`가 **CLI inline env 주입을 모두 무력화**한다 (PowerShell `$env:`, Git Bash `VAR=value cmd`, child_process.spawn의 env 모두). 모드 토글하려면 `.env` 직접 편집이 유일한 방법.
+기존 안: dotenv `override: true` 정책을 `false`로 바꿔 CLI inline env 주입이 동작하도록 변경.
 
-**Why:** 원래 목적은 시스템 env에 빈 `ANTHROPIC_API_KEY`가 있을 때 .env 값으로 덮기 위함. 그러나 부작용으로 모든 env 변수의 inline override가 막힘.
+**기각 사유**: 사용자가 더 단순한 안 채택 — UI가 `.env` 파일을 직접 수정. ".env가 single source of truth, UI는 그것의 GUI 에디터" 사고 모델로 현 정책(`override: true`) 그대로 유지.
 
-**옵션** (UI 단계 진입 시):
-- (A) UI가 .env를 매 요청 직전 재작성 후 spawn (hacky)
-- (B) **추천** — `dotenv.config({ override: false })`로 변경 + `ANTHROPIC_API_KEY`만 별도 가드. UI는 `child_process.spawn(..., { env: { ...process.env, MODE_VAR: '...' } })`로 자연스럽게 토글 가능.
-- (C) orchestrator를 모듈 함수화 (가장 깔끔하지만 리팩토링 큼)
-
-CLAUDE.md의 절대 규칙 #5 ("dotenv override")도 그때 조정 필요. OPERATIONS.md의 CLI inline 예시도 정정 필요.
+**현 사실 (변경 없음, 알아두면 좋음)**:
+- `lib/db.js`·`agents/orchestrator.js`의 `dotenv.config({ override: true })` 그대로
+- CLI inline (`VAR=value node ...`, `$env:VAR=...`, `VAR=value` Git Bash) 모두 무력 — 사용자가 토글하려면 `.env` 편집 (UI가 대신해주거나 직접)
+- CLAUDE.md 절대 규칙 #5 그대로
+- `docs/OPERATIONS.md`의 "CLI inline 미작동" 사실 그대로 기록
 
 ### [D] 다중 LLM provider 지원 (미래 작업 큐)
 
