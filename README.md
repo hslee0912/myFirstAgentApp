@@ -162,6 +162,45 @@ FE 또는 BE의 기술 스택을 바꾸려면(예: FE → Phaser.js, BE → Spri
 
 ---
 
+## Git Push Gate — `main` 브랜치 보호
+
+`main` 브랜치로의 push는 **최신 Orchestrator 작업의 `final_verdict='PASS'`** 일 때만 허용됩니다. 다른 브랜치는 자유롭게 push 가능.
+
+### 동작
+```
+git push origin main
+  → .git/hooks/pre-push 실행
+  → node lib/check_orchestrator_pass.js
+  → log_agent_decisions에서 최신 final_verdict 조회
+  → PASS면 통과, 그 외(FAIL/ERROR/IN_PROGRESS)면 차단
+```
+
+### 구성 파일
+- `lib/check_orchestrator_pass.js` — DB 조회 스크립트 (Node)
+- `.git/hooks/pre-push` — git이 push 직전 실행하는 bash 훅 (로컬 전용, git에 포함되지 않음)
+
+### 차단 시 출력 예시
+```
+[pre-push] ❌ Push to main BLOCKED
+           latest task_id  : task_20260507010138_a418b9
+           final_verdict   : ERROR
+           reason          : ...
+```
+
+### Bypass (정말 필요할 때만)
+README/문서만 수정해서 orchestrator를 다시 돌릴 필요가 없는 경우:
+```bash
+git push --no-verify origin main
+```
+
+### 다른 머신에서 같은 보호를 원할 때
+`.git/hooks/`는 git에 포함되지 않으므로, 다른 개발자/머신에서 이 보호를 적용하려면:
+1. 새 머신의 repo에서 동일한 `.git/hooks/pre-push` 파일 생성
+2. `chmod +x .git/hooks/pre-push`
+3. (향후 husky 같은 도구로 버전 관리 가능 — 현재는 PoC라 미적용)
+
+---
+
 ## 트러블슈팅
 
 - **`Cannot find module '@anthropic-ai/sdk'`**: `npm install` 실행 필요.
