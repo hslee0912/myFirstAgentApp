@@ -38,6 +38,7 @@ const codeChecker = require('./codechecker_agent');
 const beAgent = require('./be_agent');
 const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
+const { resolveModel } = require('../lib/llm');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || 3);
@@ -219,10 +220,17 @@ async function main() {
     console.warn('[orchestrator] ⚠️  VALIDATION_MODE=off — Lint/build/test will be skipped, code is UNVERIFIED');
   }
 
+  const models = {
+    CodeChecker: resolveModel('codechecker'),
+    BE: resolveModel('be'),
+    FE: resolveModel('fe'),
+  };
+  console.log(`[orchestrator] models: CodeChecker=${models.CodeChecker}, BE=${models.BE}, FE=${models.FE}`);
+
   const orchRun = await logger.startRun({
     task_id,
     agent_name: 'Orchestrator',
-    input_json: { argv: process.argv.slice(2), commitMode, validationMode },
+    input_json: { argv: process.argv.slice(2), commitMode, validationMode, models },
   });
 
   let finalVerdict = 'ERROR';

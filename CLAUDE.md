@@ -30,15 +30,22 @@ Orchestrator와 Lint Agent는 결정론적.
 
 | 파일 | LLM | 역할 |
 |---|---|---|
-| `agents/orchestrator.js` | ❌ | Phase 흐름, verdict 평가 |
-| `agents/codechecker_agent.js` | ✅ | log_agent_decisions / log_task_state INSERT |
-| `agents/be_agent.js` | ✅ | BE/ 쓰기. 매 호출 시 convention 읽음 |
-| `agents/fe_agent.js` | ✅ | FE/ 쓰기. 매 호출 시 convention 읽음 |
+| `agents/orchestrator.js` | ❌ | Phase 흐름, verdict 평가, 모드/모델 로그 |
+| `agents/codechecker_agent.js` | ✅ `CODECHECKER_MODEL` | log_agent_decisions / log_task_state INSERT |
+| `agents/be_agent.js` | ✅ `BE_AGENT_MODEL` | BE/ 쓰기. 매 호출 시 convention 읽음 |
+| `agents/fe_agent.js` | ✅ `FE_AGENT_MODEL` | FE/ 쓰기. 매 호출 시 convention 읽음 |
 | `agents/lint_agent.js` | ❌ | log_task_state UPDATE 전용 |
 | `lib/db.js`, `logger.js` | ❌ | mysql2 + 로그 헬퍼 |
-| `lib/llm.js` | — | @anthropic-ai/sdk 래퍼 + jsonrepair 폴백 |
+| `lib/llm.js` | — | @anthropic-ai/sdk 래퍼 + jsonrepair 폴백 + `resolveModel()` |
 | `lib/bootstrap.js` | ❌ | 멱등 FE/BE 스캐폴딩 |
 | `lib/stack.js` | ❌ | `lib/stack.config.json` 로더 |
+
+### LLM 모델 해석 순서 (각 Agent별)
+1. **`<AGENT>_MODEL`** env (예: `BE_AGENT_MODEL`) — 비어있지 않으면 우선
+2. **`ANTHROPIC_MODEL`** env — 전역 fallback
+3. **`claude-sonnet-4-5`** — 하드코딩 마지막 보루
+
+→ Agent별로 다른 모델 사용 가능. 예: CodeChecker는 빠른 Haiku, BE/FE는 Sonnet.
 
 ## 스택 (단일 원천: `lib/stack.config.json`)
 
@@ -176,7 +183,8 @@ README의 "스택 변경 체크리스트" 섹션 참조.
 
 ## 최근 결정 (타임라인)
 
-- 2026-05-08  (TBD)    VALIDATION_MODE 도입 (off면 Phase 4 skip, ablation/디버깅용)
+- 2026-05-08  (TBD)    Agent별 LLM 모델 분리 (CODECHECKER_MODEL/BE_AGENT_MODEL/FE_AGENT_MODEL, ANTHROPIC_MODEL fallback)
+- 2026-05-08  c6417ac  VALIDATION_MODE 도입 (off면 Phase 4 skip, ablation/디버깅용)
 - 2026-05-07  6a778d9  CLAUDE.md docs 정리 (Phase 7, troubleshooting 표 추가)
 - 2026-05-07  b6212e1  COMMIT_MODE 도입 (PASS+auto 시 BE/FE 자동 commit), pre-push gate 제거
 - 2026-05-07  b41aee3  login + LoginForm 추가 (signup 보존)

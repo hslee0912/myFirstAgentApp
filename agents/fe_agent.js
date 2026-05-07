@@ -212,7 +212,7 @@ async function run(params) {
       });
     }
 
-    const llmOut = await callJSON({ system: SYSTEM_PROMPT, user: userPrompt });
+    const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt });
     const files = llmOut.files || {};
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });

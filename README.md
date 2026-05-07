@@ -50,6 +50,31 @@ cp .env.example .env
 # .env 열어서 ANTHROPIC_API_KEY와 DB 접속 정보 입력
 ```
 
+#### LLM 모델 — Agent별 분리 가능
+각 Agent가 다른 모델을 쓸 수 있도록 `.env`에서 토글:
+
+| 변수 | 적용 Agent | 빈 값일 때 |
+|---|---|---|
+| `CODECHECKER_MODEL` | CodeChecker | `ANTHROPIC_MODEL` 사용 |
+| `BE_AGENT_MODEL` | BE Agent | 동상 |
+| `FE_AGENT_MODEL` | FE Agent | 동상 |
+| `ANTHROPIC_MODEL` | 위 셋의 fallback | `claude-sonnet-4-5` 사용 |
+
+해석 우선순위: **`<AGENT>_MODEL` → `ANTHROPIC_MODEL` → 하드코딩 default**.
+
+예시 — CodeChecker만 빠른 모델로:
+```
+ANTHROPIC_MODEL=claude-sonnet-4-5
+CODECHECKER_MODEL=claude-haiku-4-5
+BE_AGENT_MODEL=
+FE_AGENT_MODEL=
+```
+
+orchestrator 시작 시 콘솔에 실제 적용된 모델이 출력됩니다:
+```
+[orchestrator] models: CodeChecker=claude-haiku-4-5, BE=claude-sonnet-4-5, FE=claude-sonnet-4-5
+```
+
 ### 2) 의존성
 ```bash
 npm install

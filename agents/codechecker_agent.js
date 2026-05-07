@@ -79,6 +79,7 @@ async function run({ task_id, user_request }) {
 
   try {
     const llmOut = await callJSON({
+      agent: 'codechecker',
       system: SYSTEM_PROMPT,
       user: buildUserPrompt(user_request),
     });
