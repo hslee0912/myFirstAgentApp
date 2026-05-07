@@ -21,7 +21,15 @@ myFirstAgentApp/
 │   ├── fs_util.js               # 경로 안전 검증 + 파일 스냅샷
 │   └── init_db.js               # schema.sql 실행
 ├── rules/
-│   └── code_convention.md       # BE/FE Agent가 매 실행 시 읽음
+│   ├── common.md                # BE+FE 공통 규칙 (양 Agent 모두 읽음)
+│   ├── be.md                    # BE 전용 규칙
+│   └── fe.md                    # FE 전용 규칙
+├── docs/
+│   ├── PRD.md                   # 비전·목표·비-목표
+│   ├── ARCHITECTURE.md          # 컴포넌트·DB·verdict·phase 상세
+│   ├── OPERATIONS.md            # 명령·트러블슈팅
+│   ├── DECISIONS.md             # 결정 타임라인
+│   └── ROADMAP.md               # 다음 작업 큐
 ├── db/
 │   └── schema.sql               # 단일 DB (myfirstagentapp_db) 4 tables
 ├── shared/
@@ -165,7 +173,7 @@ FE 또는 BE의 기술 스택을 바꾸려면(예: FE → Phaser.js, BE → Spri
   - bootstrap이 이 폴더를 그대로 `<AREA>/`에 복사
 
 ### 부수 (필요 시)
-- [ ] **`rules/code_convention.md`** §6 테스트 도구 이름, §10 스택 일관성 (자연어로 정리)
+- [ ] **`rules/common.md`** §5 테스트 도구 이름, §9 스택 일관성 (자연어로 정리). 영역 전용 규칙은 `rules/be.md` / `rules/fe.md`
 - [ ] **`README.md`** 본 문서의 설치/실행 가이드
 
 ### 변경하지 않아도 되는 곳 (이게 핵심)

@@ -11,7 +11,7 @@
  *   - mode='retry'  : whitelisted partial fix per Lint's fix_instructions.
  *
  * Always:
- *   - reads rules/code_convention.md
+ *   - reads rules/common.md + rules/be.md
  *   - writes a unit test for any new function (per stack config testFilePattern)
  *   - creates BE/.eslintrc.json if missing (from stack config eslintConfig)
  */
@@ -59,7 +59,9 @@ function buildSystemPrompt(cfg) {
 const SYSTEM_PROMPT = buildSystemPrompt(stackCfg);
 
 function readConvention() {
-  return fs.readFileSync(path.join(ROOT, 'rules', 'code_convention.md'), 'utf8');
+  const common = fs.readFileSync(path.join(ROOT, 'rules', 'common.md'), 'utf8');
+  const beSpecific = fs.readFileSync(path.join(ROOT, 'rules', 'be.md'), 'utf8');
+  return common + '\n\n---\n\n' + beSpecific;
 }
 
 function readApiContractIfAny() {
@@ -83,7 +85,7 @@ function ensureEslintrc() {
 
 function buildInitialUserPrompt({ be_spec, api_contract, convention, existing_files }) {
   return [
-    '## code_convention.md (반드시 준수)',
+    '## rules (common + BE-specific, 반드시 준수)',
     convention,
     '',
     '## be_spec',
@@ -118,7 +120,7 @@ function buildRetryUserPrompt({ be_spec, api_contract, convention, existing_file
   return [
     '## 모드: RETRY (부분 수정)',
     '',
-    '## code_convention.md',
+    '## rules (common + BE-specific)',
     convention,
     '',
     '## be_spec (참고)',
