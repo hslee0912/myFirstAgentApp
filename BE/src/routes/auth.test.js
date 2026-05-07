@@ -3,7 +3,7 @@
 const request = require('supertest');
 const express = require('express');
 const authRouter = require('./auth');
-const { isEmailTaken, createUser } = require('../services/user_service');
+const { isEmailTaken, createUser, authenticateUser } = require('../services/user_service');
 
 jest.mock('../services/user_service');
 
@@ -89,6 +89,71 @@ describe('auth routes', () => {
       const res = await request(app)
         .post('/api/v1/auth/signup')
         .send({ email: 'user@example.com', password: 'password123' });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({
+        success: false,
+        error: 'Internal server error'
+      });
+    });
+  });
+
+  describe('POST /api/v1/auth/login', () => {
+    test('returns 200 with user_id when login is successful', async () => {
+      authenticateUser.mockResolvedValue(12345);
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'user@example.com', password: 'SecurePass123!' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        data: { user_id: 12345 }
+      });
+      expect(authenticateUser).toHaveBeenCalledWith('user@example.com', 'SecurePass123!');
+    });
+
+    test('returns 400 when email is invalid', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'invalid-email', password: 'password' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('Validation failed');
+    });
+
+    test('returns 400 when password is missing', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'user@example.com' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('Validation failed');
+    });
+
+    test('returns 401 when credentials are invalid', async () => {
+      authenticateUser.mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'user@example.com', password: 'wrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    });
+
+    test('returns 500 when server error occurs', async () => {
+      authenticateUser.mockRejectedValue(new Error('Database error'));
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: 'user@example.com', password: 'password' });
 
       expect(res.status).toBe(500);
       expect(res.body).toEqual({

@@ -1,7 +1,7 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
-const { isEmailTaken, createUser } = require('./user_service');
+const { isEmailTaken, createUser, authenticateUser } = require('./user_service');
 const { getPool, closePool } = require('../db/connection');
 
 jest.mock('../db/connection');
@@ -79,6 +79,56 @@ describe('user_service', () => {
 
       const insertCall = mockPool.query.mock.calls[0];
       expect(insertCall[1][0]).toBe('upper@example.com');
+    });
+  });
+
+  describe('authenticateUser', () => {
+    test('returns user_id when credentials are valid', async () => {
+      const hashedPassword = await bcrypt.hash('correctPassword', 10);
+      mockPool.query.mockResolvedValue([[
+        { id: 123, password_hash: hashedPassword }
+      ]]);
+
+      const result = await authenticateUser('user@example.com', 'correctPassword');
+
+      expect(result).toBe(123);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        'SELECT id, password_hash FROM app_users WHERE email = ? LIMIT 1',
+        ['user@example.com']
+      );
+    });
+
+    test('returns null when email does not exist', async () => {
+      mockPool.query.mockResolvedValue([[]]);
+
+      const result = await authenticateUser('nonexistent@example.com', 'password');
+
+      expect(result).toBe(null);
+    });
+
+    test('returns null when password is incorrect', async () => {
+      const hashedPassword = await bcrypt.hash('correctPassword', 10);
+      mockPool.query.mockResolvedValue([[
+        { id: 123, password_hash: hashedPassword }
+      ]]);
+
+      const result = await authenticateUser('user@example.com', 'wrongPassword');
+
+      expect(result).toBe(null);
+    });
+
+    test('normalizes email to lowercase', async () => {
+      const hashedPassword = await bcrypt.hash('password', 10);
+      mockPool.query.mockResolvedValue([[
+        { id: 456, password_hash: hashedPassword }
+      ]]);
+
+      await authenticateUser('User@Example.COM', 'password');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.any(String),
+        ['user@example.com']
+      );
     });
   });
 });

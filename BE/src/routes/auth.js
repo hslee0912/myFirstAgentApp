@@ -1,8 +1,8 @@
 'use strict';
 
 const express = require('express');
-const { validateSignupRequest } = require('../middleware/validation');
-const { isEmailTaken, createUser } = require('../services/user_service');
+const { validateSignupRequest, validateLoginRequest } = require('../middleware/validation');
+const { isEmailTaken, createUser, authenticateUser } = require('../services/user_service');
 
 const router = express.Router();
 
@@ -32,6 +32,37 @@ router.post('/signup', validateSignupRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('Signup error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * POST /api/v1/auth/login
+ * 이메일/비밀번호 로그인 엔드포인트
+ */
+router.post('/login', validateLoginRequest, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // 사용자 인증
+    const userId = await authenticateUser(email, password);
+
+    if (userId === null) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { user_id: userId }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error'

@@ -51,4 +51,33 @@ async function createUser(email, password) {
   };
 }
 
-module.exports = { isEmailTaken, createUser };
+/**
+ * 이메일과 비밀번호로 사용자를 인증한다.
+ * @param {string} email
+ * @param {string} password
+ * @returns {Promise<number|null>} 인증 성공 시 user_id, 실패 시 null
+ */
+async function authenticateUser(email, password) {
+  const pool = getPool();
+  const normalizedEmail = email.toLowerCase();
+
+  const [rows] = await pool.query(
+    'SELECT id, password_hash FROM app_users WHERE email = ? LIMIT 1',
+    [normalizedEmail]
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const user = rows[0];
+  const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+
+  if (!isPasswordValid) {
+    return null;
+  }
+
+  return user.id;
+}
+
+module.exports = { isEmailTaken, createUser, authenticateUser };
