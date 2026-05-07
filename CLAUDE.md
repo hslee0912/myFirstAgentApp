@@ -11,6 +11,8 @@
       ├─ Phase 2  BE Agent (LLM)       → BE/ 코드 + Jest 테스트
       ├─ Phase 3  FE Agent (LLM)       → FE/ 코드 + Vitest+RTL 테스트
       ├─ Phase 4  Lint Agent (LLM X)   → eslint → build → tests
+      │                                    (VALIDATION_MODE=off면 skip,
+      │                                     log_task_state 자동 SUCCESS)
       ├─ Phase 5  verdict (LLM X)      → PASS / FAIL / ERROR / CONTINUE
       │                                    CONTINUE면 fix_instructions 들고
       │                                    Phase 2/3로 다시 진입
@@ -70,7 +72,7 @@ Agent 코드, lint 로직, bootstrap은 전부 그대로.
 | 값 | 의미 | 어디서 결정 |
 |---|---|---|
 | `IN_PROGRESS` | task 시작됨, 아직 종료 안 됨 | CodeChecker INSERT 시점 (Phase 1) |
-| `PASS` | 모든 영역(BE/FE) `log_task_state.status='SUCCESS'`. `COMMIT_MODE=auto`면 Phase 7에서 자동 commit 발동 | Orchestrator Phase 5 ② |
+| `PASS` | 모든 영역(BE/FE) `log_task_state.status='SUCCESS'`. `COMMIT_MODE=auto`면 Phase 7에서 자동 commit 발동. `VALIDATION_MODE=off`면 검증 없이 PASS (코드 미검증 상태) | Orchestrator Phase 5 ② |
 | `FAIL` | Stage 3 실패 또는 `retry_count >= 3` | Orchestrator Phase 5 ③, ④ |
 | `ERROR` | 어느 Agent의 `log_agent_runs.status='FAILED'` (예외 발생) | Orchestrator Phase 5 ① |
 
@@ -83,12 +85,18 @@ Agent 코드, lint 로직, bootstrap은 전부 그대로.
 3. **새 의존성 금지** — `allowedDeps`만 사용. 부족하면 `notes`에 사유만 적고 코드 만들지 말 것. 매니페스트 수정 금지.
 4. **Placeholder 보존** (Convention §9) — bootstrap이 깐 `server.test.js`/`App.test.jsx`는 그대로 유지. 새 코드가 거기에 맞춰야 함.
 5. **dotenv override** — 모든 `dotenv.config()` 는 `{ override: true }`.
-6. **Stage 3 (테스트) 실패 = 즉시 FAIL** — 재시도 없음. Stage 1/2 실패만 최대 3회 재시도.
+6. **Stage 3 (테스트) 실패 = 즉시 FAIL** — 재시도 없음. Stage 1/2 실패만 최대 3회 재시도. (VALIDATION_MODE=on일 때만 적용 — off면 Phase 4 자체가 안 돌아감)
 7. **파이프라인 자동 commit (`COMMIT_MODE`)** — `.env`의 `COMMIT_MODE`로 orchestrator의 자동 commit 여부 토글:
    - `COMMIT_MODE=auto` (기본) → verdict=PASS일 때 orchestrator가 `BE/`+`FE/`만 자동 commit. **push는 항상 사람이 수행** (orchestrator는 절대 push 안 함).
    - `COMMIT_MODE=manual` (또는 `auto`가 아닌 모든 값) → 자동 commit 안 함, 사람이 commit/push 모두 수행.
    - 사람의 `git commit`/`git push`는 어떤 모드에서도 검사·차단 없음.
    - 자동 commit 메시지 포맷: `auto: <task_id> — <user_request 첫 80자>`
+8. **검증 토글 (`VALIDATION_MODE`)** — `.env`의 `VALIDATION_MODE`로 Phase 4 (Lint Agent) 실행 여부 토글:
+   - `VALIDATION_MODE=on` (기본) → Phase 4 정상 실행 (eslint → build → tests), 기존 verdict 흐름 그대로.
+   - `VALIDATION_MODE=off` (또는 `on`이 아닌 모든 값) → Phase 4 통째로 skip, `log_task_state`를 자동 SUCCESS 처리 → verdict는 PASS로 흐를 가능성 높음. 코드 미검증 상태로 디스크에 떨어짐.
+   - **안전장치는 모드 무관 항상 켜짐**: `validatePaths`(폴더 격리), `protectedConfigFiles`(보호 파일) 등 규칙 #1·#2 검증은 OFF 모드에서도 동작.
+   - `COMMIT_MODE`와 독립 — `VALIDATION_MODE=off` + `COMMIT_MODE=auto`면 검증 안 된 코드의 자동 commit 발생, 사용자 책임.
+   - 의미: "결정론적 *검증*"만 끄고 "결정론적 *제어흐름*"은 유지 → LLM 출력 ablation/디버깅 모드.
 
 ## 사람·Claude 직접 편집 vs Agent 자동 생성
 
@@ -109,6 +117,9 @@ npm run init-db
 npm start                                          # 기본 시나리오 (회원가입)
 node agents/orchestrator.js "기능 요청 자연어..."   # 커스텀
 # → verdict=PASS && COMMIT_MODE=auto면 종료 직전 BE/+FE/ 자동 commit (push 안 함)
+
+# 검증 끄고 빠르게 LLM 원시 출력만 보고 싶을 때 (ablation)
+VALIDATION_MODE=off node agents/orchestrator.js "..."
 
 # 개별 테스트 실행
 cd BE && npx jest --runInBand
@@ -165,6 +176,8 @@ README의 "스택 변경 체크리스트" 섹션 참조.
 
 ## 최근 결정 (타임라인)
 
+- 2026-05-08  (TBD)    VALIDATION_MODE 도입 (off면 Phase 4 skip, ablation/디버깅용)
+- 2026-05-07  6a778d9  CLAUDE.md docs 정리 (Phase 7, troubleshooting 표 추가)
 - 2026-05-07  b6212e1  COMMIT_MODE 도입 (PASS+auto 시 BE/FE 자동 commit), pre-push gate 제거
 - 2026-05-07  b41aee3  login + LoginForm 추가 (signup 보존)
 - 2026-05-07  2613b5f  jsonrepair 폴백을 LLM JSON 파서에 추가

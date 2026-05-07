@@ -212,10 +212,17 @@ async function main() {
   const task_id = generateTaskId();
   console.log(`[orchestrator] task_id=${task_id}`);
 
+  const commitMode = (process.env.COMMIT_MODE || 'auto').toLowerCase();
+  const validationMode = (process.env.VALIDATION_MODE || 'on').toLowerCase();
+  console.log(`[orchestrator] modes: COMMIT_MODE=${commitMode}, VALIDATION_MODE=${validationMode}`);
+  if (validationMode === 'off') {
+    console.warn('[orchestrator] ⚠️  VALIDATION_MODE=off — Lint/build/test will be skipped, code is UNVERIFIED');
+  }
+
   const orchRun = await logger.startRun({
     task_id,
     agent_name: 'Orchestrator',
-    input_json: { argv: process.argv.slice(2) },
+    input_json: { argv: process.argv.slice(2), commitMode, validationMode },
   });
 
   let finalVerdict = 'ERROR';
@@ -299,7 +306,7 @@ async function main() {
         await feAgent.run(params);
       }
 
-      // Phase 4: Lint per area
+      // Phase 4: Lint per area (or skip when VALIDATION_MODE=off)
       stateMap = await fetchStateMap(decision_id);
       const areasToLint = [];
       if (stateMap.BE && (needBE || stateMap.BE.status === 'PENDING')) areasToLint.push('BE');
@@ -307,13 +314,24 @@ async function main() {
 
       for (const target of areasToLint) {
         const st = stateMap[target];
-        console.log(`[phase 4] Lint Agent target=${target} (state_id=${st.id})`);
-        await lintAgent.run({
-          task_id,
-          target,
-          state_id: st.id,
-          current_retry_count: st.retry_count || 0,
-        });
+        if (validationMode === 'off') {
+          console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for ${target}, auto-SUCCESS (state_id=${st.id})`);
+          await logger.updateTaskState(st.id, {
+            status: 'SUCCESS',
+            failed_stage: null,
+            fix_instructions: null,
+            stage_logs: { skipped: 'VALIDATION_MODE=off' },
+            result_text: null,
+          });
+        } else {
+          console.log(`[phase 4] Lint Agent target=${target} (state_id=${st.id})`);
+          await lintAgent.run({
+            task_id,
+            target,
+            state_id: st.id,
+            current_retry_count: st.retry_count || 0,
+          });
+        }
       }
 
       // Phase 5: evaluate

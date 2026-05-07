@@ -199,6 +199,58 @@ auto-commit은 메시지 prefix `auto: `로 식별 가능. 사람의 commit과 h
 
 ---
 
+## 검증 토글 — `VALIDATION_MODE`
+
+Phase 4 (Lint Agent의 eslint + build + tests 3단계)를 통째로 끄거나 켜는 토글. LLM 출력의 ablation 측정·디버깅·빠른 시연 용도.
+
+> **안전장치는 모드 무관 항상 켜짐**: `validatePaths`(폴더 격리), `protectedConfigFiles`(보호 파일) 등 보안성 검증은 OFF 모드에서도 동작.
+
+### 모드
+`.env`의 `VALIDATION_MODE`로 제어:
+
+| 값 | 동작 |
+|---|---|
+| `on` (기본, 미설정 시) | Phase 4 정상 실행 (eslint → build → tests, 재시도 로직 포함) |
+| `off` (또는 `on` 아닌 모든 값) | Phase 4 통째로 skip, `log_task_state` 자동 SUCCESS |
+
+### OFF 모드 동작
+```
+Phase 1~3 (LLM)    → 그대로 실행, 코드 디스크에 떨어짐
+Phase 4 Lint       → skip, log_task_state.status='SUCCESS' 직접 UPDATE
+                       stage_logs에 { skipped: 'VALIDATION_MODE=off' } 기록
+Phase 5 verdict    → 모든 영역 SUCCESS이므로 PASS로 흐름
+Phase 6/7          → 그대로 (auto-commit 발동 가능 — 검증 안 된 코드가 commit됨)
+```
+
+### 의미
+"결정론적 *검증*"만 끄고 "결정론적 *제어흐름*"은 유지하는 모드. 즉:
+- LLM 부분(Phase 1~3)은 그대로 동작
+- 검증 부분(Phase 4)만 우회
+- 컨트롤 흐름(Phase 5~7)은 그대로
+
+→ "lint·테스트 없이 LLM이 한 번에 멀쩡한 코드를 뽑나?"를 측정하기 적합.
+
+### COMMIT_MODE와의 조합
+독립적입니다. 위험한 조합은 사용자 책임:
+
+| `VALIDATION_MODE` | `COMMIT_MODE` | 결과 |
+|---|---|---|
+| on | auto | 검증 통과한 코드만 자동 commit (안전) |
+| on | manual | 검증 통과, 사람이 직접 commit |
+| **off** | **auto** | **검증 안 된 코드가 자동 commit ⚠️** |
+| off | manual | 검증 안 된 코드, 사람이 commit 결정 |
+
+### 사용 예
+```bash
+# 검증 끄고 ablation 측정
+VALIDATION_MODE=off node agents/orchestrator.js "..."
+
+# .env에서 영구 토글
+VALIDATION_MODE=off
+```
+
+---
+
 ## 트러블슈팅
 
 - **`Cannot find module '@anthropic-ai/sdk'`**: `npm install` 실행 필요.
