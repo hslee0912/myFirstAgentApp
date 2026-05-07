@@ -13,7 +13,9 @@
  *        ③ any failed_stage='STAGE3'  → FAIL
  *        ④ any retry_count >= MAX     → FAIL
  *        else → next round (only FAILED areas)
- *   6. UPDATE log_agent_decisions, UPDATE Orchestrator's own log_agent_runs, print result.
+ *   6. UPDATE log_agent_decisions, UPDATE Orchestrator's own log_agent_runs.
+ *   7. Auto-commit BE/+FE/ if final_verdict='PASS' AND COMMIT_MODE='auto'.
+ *      Push is always left to the human; this step never pushes.
  *
  * Spec data flow:
  *   CodeChecker output {fe_spec, be_spec, api_contract} is held in memory and passed forward.
@@ -24,6 +26,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 require('dotenv').config({ override: true });
 
 const logger = require('../lib/logger');
@@ -114,6 +117,67 @@ function extractAllowedPathsFromFix(target, fix) {
   return [...out];
 }
 
+// ---------------- Phase 7 auto-commit ----------------
+
+/**
+ * Stage BE/ + FE/ and create a commit when the pipeline produced a passing run.
+ * Only runs when final_verdict='PASS' AND COMMIT_MODE='auto'. Never pushes.
+ *
+ * Failures here never affect the verdict — we just warn and continue.
+ */
+function maybeAutoCommit({ task_id, userRequest, finalVerdict }) {
+  if (finalVerdict !== 'PASS') return;
+  const mode = (process.env.COMMIT_MODE || 'auto').toLowerCase();
+  if (mode !== 'auto') {
+    console.log(`[commit] COMMIT_MODE=${mode} — auto-commit skipped`);
+    return;
+  }
+
+  const opts = { cwd: ROOT, encoding: 'utf8', windowsHide: true };
+
+  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], opts);
+  if (inRepo.status !== 0) {
+    console.warn('[commit] not a git repository — auto-commit skipped');
+    return;
+  }
+
+  const beExists = fs.existsSync(path.join(ROOT, 'BE'));
+  const feExists = fs.existsSync(path.join(ROOT, 'FE'));
+  if (!beExists && !feExists) {
+    console.warn('[commit] neither BE/ nor FE/ exists — auto-commit skipped');
+    return;
+  }
+
+  const stageArgs = ['add', '--'];
+  if (beExists) stageArgs.push('BE');
+  if (feExists) stageArgs.push('FE');
+  const add = spawnSync('git', stageArgs, opts);
+  if (add.status !== 0) {
+    console.warn(`[commit] git add failed: ${(add.stderr || '').trim()}`);
+    return;
+  }
+
+  // Anything actually staged inside BE/FE?
+  const diffArgs = ['diff', '--cached', '--quiet', '--'];
+  if (beExists) diffArgs.push('BE');
+  if (feExists) diffArgs.push('FE');
+  const diff = spawnSync('git', diffArgs, opts);
+  if (diff.status === 0) {
+    console.log('[commit] no changes in BE/ or FE/ — auto-commit skipped');
+    return;
+  }
+
+  const summary = (userRequest || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const message = summary ? `auto: ${task_id} — ${summary}` : `auto: ${task_id}`;
+  const commit = spawnSync('git', ['commit', '-m', message], opts);
+  if (commit.status !== 0) {
+    console.warn(`[commit] git commit failed: ${(commit.stderr || commit.stdout || '').trim()}`);
+    return;
+  }
+
+  console.log(`[commit] auto-committed: ${message}`);
+}
+
 // ---------------- Phase 5 evaluator ----------------
 
 async function evaluateVerdict(task_id, decision_id) {
@@ -156,13 +220,14 @@ async function main() {
 
   let finalVerdict = 'ERROR';
   let finalText = '';
+  let userRequest = '';
 
   try {
     // Phase 0: bootstrap (idempotent)
     console.log('[phase 0] bootstrapping FE/ and BE/ if needed...');
     await runBootstrap({ install: true });
 
-    const userRequest = readUserRequest();
+    userRequest = readUserRequest();
     console.log(`[phase 0] user_request: ${userRequest}`);
 
     // Phase 1: CodeChecker
@@ -285,6 +350,13 @@ async function main() {
     console.error('[orchestrator] failed to write final status:', e.message);
   } finally {
     await db.close().catch(() => {});
+  }
+
+  // Phase 7: auto-commit (PASS + COMMIT_MODE=auto only). Never pushes.
+  try {
+    maybeAutoCommit({ task_id, userRequest, finalVerdict });
+  } catch (e) {
+    console.warn(`[commit] unexpected error: ${e.message}`);
   }
 
   console.log(`\n[${finalVerdict}] task_id=${task_id}`);

@@ -162,42 +162,40 @@ FE 또는 BE의 기술 스택을 바꾸려면(예: FE → Phaser.js, BE → Spri
 
 ---
 
-## Git Push Gate — `main` 브랜치 보호
+## 파이프라인 자동 commit — `COMMIT_MODE`
 
-`main` 브랜치로의 push는 **최신 Orchestrator 작업의 `final_verdict='PASS'`** 일 때만 허용됩니다. 다른 브랜치는 자유롭게 push 가능.
+orchestrator는 verdict=PASS로 끝났을 때 **`BE/`+`FE/`만** 자동 commit할 수 있습니다. push는 항상 사람이 수행합니다.
 
-### 동작
+> **사람의 commit/push는 어떤 모드에서도 검사·차단되지 않습니다.** 자동 commit 토글은 오직 *파이프라인이 만든 변경*에만 적용됩니다.
+
+### 모드
+`.env`의 `COMMIT_MODE`로 제어:
+
+| 값 | 동작 |
+|---|---|
+| `auto` (기본, 미설정 시) | verdict=PASS일 때 orchestrator가 자동 commit |
+| `manual` (또는 `auto` 아닌 모든 값) | 자동 commit 안 함, 사람이 commit/push 모두 수행 |
+
+### 동작 (`COMMIT_MODE=auto` + verdict=PASS일 때)
 ```
-git push origin main
-  → .git/hooks/pre-push 실행
-  → node lib/check_orchestrator_pass.js
-  → log_agent_decisions에서 최신 final_verdict 조회
-  → PASS면 통과, 그 외(FAIL/ERROR/IN_PROGRESS)면 차단
-```
-
-### 구성 파일
-- `lib/check_orchestrator_pass.js` — DB 조회 스크립트 (Node)
-- `.git/hooks/pre-push` — git이 push 직전 실행하는 bash 훅 (로컬 전용, git에 포함되지 않음)
-
-### 차단 시 출력 예시
-```
-[pre-push] ❌ Push to main BLOCKED
-           latest task_id  : task_20260507010138_a418b9
-           final_verdict   : ERROR
-           reason          : ...
-```
-
-### Bypass (정말 필요할 때만)
-README/문서만 수정해서 orchestrator를 다시 돌릴 필요가 없는 경우:
-```bash
-git push --no-verify origin main
+orchestrator Phase 7
+  → git rev-parse --is-inside-work-tree   (repo인지 확인)
+  → git add -- BE FE                       (BE/FE만 stage)
+  → git diff --cached --quiet -- BE FE     (실제 변경 있는지 확인)
+      ├─ 변경 없음    → skip
+      └─ 변경 있음    → git commit -m "auto: <task_id> — <요약>"
 ```
 
-### 다른 머신에서 같은 보호를 원할 때
-`.git/hooks/`는 git에 포함되지 않으므로, 다른 개발자/머신에서 이 보호를 적용하려면:
-1. 새 머신의 repo에서 동일한 `.git/hooks/pre-push` 파일 생성
-2. `chmod +x .git/hooks/pre-push`
-3. (향후 husky 같은 도구로 버전 관리 가능 — 현재는 PoC라 미적용)
+`git push`는 절대 호출하지 않습니다.
+
+### Skip되는 경우 (verdict=PASS여도 commit 안 함)
+- `COMMIT_MODE`가 `auto`가 아님
+- 현재 디렉토리가 git repo가 아님
+- `BE/`나 `FE/`에 staged 변경이 없음
+- `git add` / `git commit` 실행이 실패함 (오류 출력만 하고 verdict는 그대로 PASS)
+
+### 자동 commit 식별
+auto-commit은 메시지 prefix `auto: `로 식별 가능. 사람의 commit과 history에서 구별됩니다.
 
 ---
 

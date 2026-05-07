@@ -32,7 +32,6 @@ Orchestrator와 Lint Agent는 결정론적.
 | `lib/llm.js` | — | @anthropic-ai/sdk 래퍼 + jsonrepair 폴백 |
 | `lib/bootstrap.js` | ❌ | 멱등 FE/BE 스캐폴딩 |
 | `lib/stack.js` | ❌ | `lib/stack.config.json` 로더 |
-| `lib/check_orchestrator_pass.js` | ❌ | pre-push 게이트 (verdict=PASS 검증) |
 
 ## 스택 (단일 원천: `lib/stack.config.json`)
 
@@ -80,7 +79,11 @@ Agent 코드, lint 로직, bootstrap은 전부 그대로.
 4. **Placeholder 보존** (Convention §9) — bootstrap이 깐 `server.test.js`/`App.test.jsx`는 그대로 유지. 새 코드가 거기에 맞춰야 함.
 5. **dotenv override** — 모든 `dotenv.config()` 는 `{ override: true }`.
 6. **Stage 3 (테스트) 실패 = 즉시 FAIL** — 재시도 없음. Stage 1/2 실패만 최대 3회 재시도.
-7. **main push 게이트** — pre-push hook이 최신 verdict=PASS 인지 검사. 우회: `git push --no-verify` (문서만 수정한 경우에 한해서).
+7. **파이프라인 자동 commit (`COMMIT_MODE`)** — `.env`의 `COMMIT_MODE`로 orchestrator의 자동 commit 여부 토글:
+   - `COMMIT_MODE=auto` (기본) → verdict=PASS일 때 orchestrator가 `BE/`+`FE/`만 자동 commit. **push는 항상 사람이 수행** (orchestrator는 절대 push 안 함).
+   - `COMMIT_MODE=manual` (또는 `auto`가 아닌 모든 값) → 자동 commit 안 함, 사람이 commit/push 모두 수행.
+   - 사람의 `git commit`/`git push`는 어떤 모드에서도 검사·차단 없음.
+   - 자동 commit 메시지 포맷: `auto: <task_id> — <user_request 첫 80자>`
 
 ## 사람·Claude 직접 편집 vs Agent 자동 생성
 
@@ -122,8 +125,8 @@ Orchestrator end-to-end 한 번에 약 **3~5분**:
 
 ### 새 기능 추가
 1. `node agents/orchestrator.js "..."` — 파이프라인이 end-to-end로 돌아감.
-2. PASS면 단위별로 commit, 그 다음 push.
-3. pre-push hook이 자동으로 verdict=PASS 확인.
+2. `COMMIT_MODE=auto`(기본)이면 PASS 시 `BE/`+`FE/`가 자동 commit됨 (로컬에만).
+3. 사람이 변경 내용 확인 후 `git push` (검사·차단 없음).
 
 ### 실패한 실행 진단
 1. 콘솔의 `task_id` 확인.
