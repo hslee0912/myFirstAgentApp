@@ -1,0 +1,140 @@
+{
+  "version": "v1",
+  "base_path": "/api/v1",
+  "endpoints": [
+    {
+      "path": "/auth/signup",
+      "method": "POST",
+      "description": "이메일/비밀번호 회원가입",
+      "request": {
+        "content_type": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "email",
+            "password"
+          ],
+          "properties": {
+            "email": {
+              "type": "string",
+              "format": "email",
+              "maxLength": 255,
+              "example": "user@example.com"
+            },
+            "password": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "example": "securePassword123"
+            }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "회원가입 성공",
+          "content_type": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean",
+                "example": true
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "user_id": {
+                    "type": "integer",
+                    "example": 12345
+                  },
+                  "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2025-01-20T10:30:00Z"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "잘못된 요청 (검증 실패)",
+          "content_type": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean",
+                "example": false
+              },
+              "error": {
+                "type": "string",
+                "example": "Validation failed"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "example": "password"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Password must be at least 8 characters"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "이메일 중복",
+          "content_type": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean",
+                "example": false
+              },
+              "error": {
+                "type": "string",
+                "example": "Email already exists"
+              }
+            }
+          }
+        },
+        "500": {
+          "description": "서버 내부 오류",
+          "content_type": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean",
+                "example": false
+              },
+              "error": {
+                "type": "string",
+                "example": "Internal server error"
+              }
+            }
+          }
+        }
+      },
+      "rate_limit": {
+        "requests": 10,
+        "window": "5 minutes",
+        "scope": "IP address"
+      }
+    }
+  ]
+}

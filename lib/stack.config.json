@@ -1,0 +1,127 @@
+{
+  "_doc": "각 영역(FE/BE)의 기술 스택을 정의한다. 스택을 바꾸려면 여기와 lib/stack_templates/<area>/ 두 곳만 수정하면 됨. 자세한 절차는 README.md '스택 변경 체크리스트' 섹션 참조.",
+  "FE": {
+    "displayName": "Vite + React 18 + Vitest + RTL (jsdom)",
+    "templateDir": "lib/stack_templates/FE",
+    "install": {
+      "command": ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
+      "checkPath": "node_modules"
+    },
+    "lint": {
+      "stage1": {
+        "type": "command",
+        "command": [
+          "npx", "--no-install", "eslint", ".", "--ext", ".js,.jsx",
+          "--ignore-pattern", "dist/",
+          "--ignore-pattern", "coverage/",
+          "--ignore-pattern", "build/"
+        ]
+      },
+      "stage2": {
+        "type": "command",
+        "command": ["npm", "run", "build", "--silent"]
+      },
+      "stage3": {
+        "type": "command",
+        "command": ["npx", "--no-install", "vitest", "run"]
+      }
+    },
+    "agent": {
+      "systemPromptHeader": "당신은 React 18 + Vite + Vitest + React Testing Library에 능한 프론트엔드 개발자다.",
+      "moduleSystem": "ES Modules (import/export)",
+      "testFilePattern": "*.test.jsx",
+      "testFramework": "Vitest + RTL",
+      "allowedDeps": "react, react-dom, vite, vitest, jsdom, @testing-library/react, @testing-library/jest-dom",
+      "stackSpecificRules": [
+        "ES Modules (import/export). 컴포넌트 파일은 PascalCase, 유틸/훅은 camelCase.",
+        "API 호출은 fetch 사용. 응답은 { success, data, error } 형식 가정.",
+        "테스트는 jsdom 환경에서 외부 네트워크 없이 통과하도록 fetch는 vi.fn() 또는 vi.spyOn(globalThis, 'fetch')로 mock.",
+        "진입점 FE/src/main.jsx, App 컴포넌트 FE/src/App.jsx 는 보존하되, 라우팅/구성에 맞게 자유롭게 수정 가능."
+      ]
+    },
+    "snapshot": {
+      "extensions": [".js", ".jsx", ".json", ".html", ".css"],
+      "rootGlob": "FE/src/"
+    },
+    "protectedConfigFiles": [
+      "FE/package.json",
+      "FE/package-lock.json",
+      "FE/vite.config.js",
+      "FE/index.html",
+      "FE/.eslintrc.json"
+    ],
+    "eslintConfig": {
+      "env": { "browser": true, "es2022": true, "node": true },
+      "extends": ["eslint:recommended", "plugin:react/recommended", "plugin:react-hooks/recommended"],
+      "parserOptions": { "ecmaVersion": 2022, "sourceType": "module", "ecmaFeatures": { "jsx": true } },
+      "settings": { "react": { "version": "detect" } },
+      "ignorePatterns": ["dist/", "node_modules/", "coverage/", "build/"],
+      "rules": {
+        "react/react-in-jsx-scope": "off",
+        "react/prop-types": "off",
+        "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+      }
+    }
+  },
+  "BE": {
+    "displayName": "Express + Jest + Supertest + mysql2 + bcrypt",
+    "templateDir": "lib/stack_templates/BE",
+    "install": {
+      "command": ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
+      "checkPath": "node_modules"
+    },
+    "lint": {
+      "stage1": {
+        "type": "command",
+        "command": [
+          "npx", "--no-install", "eslint", ".", "--ext", ".js",
+          "--ignore-pattern", "dist/",
+          "--ignore-pattern", "coverage/"
+        ]
+      },
+      "stage2": {
+        "type": "node_check_recursive",
+        "rootDir": "src",
+        "include": [".js"],
+        "exclude": [".test.js"]
+      },
+      "stage3": {
+        "type": "command",
+        "command": ["npx", "--no-install", "jest", "--runInBand", "--colors=false"]
+      }
+    },
+    "agent": {
+      "systemPromptHeader": "당신은 Node.js + Express + MySQL2 + bcrypt에 능한 백엔드 개발자다.",
+      "moduleSystem": "CommonJS (require / module.exports)",
+      "testFilePattern": "*.test.js",
+      "testFramework": "Jest + Supertest",
+      "allowedDeps": "express, mysql2, bcrypt, cors, dotenv, jest, supertest",
+      "stackSpecificRules": [
+        "CommonJS (require / module.exports). 모듈 최상단 'use strict'.",
+        "환경변수는 dotenv로 로드.",
+        "비밀번호는 bcrypt 해시. SQL은 mysql2 prepared statement(?)만 사용. 평문/문자열 결합 금지.",
+        "API 응답 형식: { success: bool, data: any, error?: string }",
+        "테스트는 외부 DB가 없어도 통과하도록 mock 또는 분리 (예: 비즈니스 로직 함수를 export 후 단위 테스트)."
+      ]
+    },
+    "snapshot": {
+      "extensions": [".js", ".json"],
+      "rootGlob": "BE/src/"
+    },
+    "protectedConfigFiles": [
+      "BE/package.json",
+      "BE/package-lock.json",
+      "BE/.eslintrc.json"
+    ],
+    "eslintConfig": {
+      "env": { "node": true, "es2022": true, "jest": true },
+      "extends": ["eslint:recommended"],
+      "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
+      "ignorePatterns": ["node_modules/", "coverage/", "dist/"],
+      "rules": {
+        "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+        "no-console": "off"
+      }
+    }
+  }
+}

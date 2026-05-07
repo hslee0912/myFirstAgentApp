@@ -1,0 +1,24 @@
+{
+  "name": "my-first-agent-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-Agent signup system PoC (CodeChecker / BE / FE / Lint + Orchestrator)",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node agents/orchestrator.js",
+    "init-db": "node lib/init_db.js",
+    "lint:fe": "cd FE && npx eslint . --ext .js,.jsx",
+    "lint:be": "cd BE && npx eslint . --ext .js",
+    "build:fe": "cd FE && npm run build",
+    "test:fe": "cd FE && npm test -- --run",
+    "test:be": "cd BE && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.11.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
