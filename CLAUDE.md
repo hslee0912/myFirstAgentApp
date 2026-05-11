@@ -86,9 +86,9 @@ Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
-- 2026-05-11  (TBD)  **API contract split layout** — `shared/api_contract.json`은 endpoint index만 (`{name, path, method, description}`), 각 detail은 `shared/router/<name>.json`. CodeChecker가 `api_contract` + `router_details` 두 필드로 emit → 시스템이 두 위치에 write + stale router 파일 자동 cleanup. `normalizeContract(contract, { routerDir })`이 in-memory에서 inline 확장 — Agent/PostTest는 항상 full form을 봄. 사이클 검증 PASS (1 라운드 + PostTest 65ms). [ARCHITECTURE.md](docs/ARCHITECTURE.md#api-contract-레이아웃-split-index--router) 참조.
+- 2026-05-11  (TBD)  **UI control panel (npm run ui)** — Express + 정적 HTML (~200 LOC). `ui/server.js` REST 7개 endpoint, `ui/public/index.html` 단일 페이지 + 1.5초 DB polling. orchestrator spawn (동시 1 run) / 최근 task 목록·상세 / `.env` 토글 GUI editor (`UI_EDITABLE_KEYS` 화이트리스트로 `ANTHROPIC_API_KEY`·`DB_PASSWORD` 보호) / reset-db 버튼. port preflight로 `UI_PORT=4000` 충돌 시 자동 fallback. [ARCHITECTURE.md](docs/ARCHITECTURE.md#ui-control-panel-npm-run-ui) 참조.
+- 2026-05-11  c85d93e  **API contract split layout** — `shared/api_contract.json`은 endpoint index만 (`{name, path, method, description}`), 각 detail은 `shared/router/<name>.json`. CodeChecker가 `api_contract` + `router_details` 두 필드로 emit → 시스템이 두 위치에 write + stale router 파일 자동 cleanup. `normalizeContract(contract, { routerDir })`이 in-memory에서 inline 확장 — Agent/PostTest는 항상 full form을 봄. 사이클 검증 PASS (1 라운드 + PostTest 65ms). [ARCHITECTURE.md](docs/ARCHITECTURE.md#api-contract-레이아웃-split-index--router) 참조.
 - 2026-05-11  f02ebdf  **단일 재사용 test 워크트리 정책** — `.claude/worktrees/test/` (branch `claude/test`) 한 번 만들고 모든 검증에서 재사용. 사이 정리는 `rm -rf BE FE`만 (bootstrap fresh, node_modules 보존). 매번 새 워크트리 만들지 말 것. [OPERATIONS.md](docs/OPERATIONS.md) 참조.
-- 2026-05-11  6cba494  **DB schema dynamic inject** — `db/schema.sql` 전체를 CodeChecker + BE Agent system prompt에 inject. BE 비즈니스는 `app_users`만 / `log_*`는 agent 전용 / contract example은 schema 타입과 일치. Phase 9에서 LLM이 `users` vs `app_users` 혼동해 500 fail나던 사이클 해결.
 
 ## Skill routing
 

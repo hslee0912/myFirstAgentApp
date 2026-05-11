@@ -3,7 +3,7 @@
 다음 작업 큐. 우선순위 순서. **잠금된 5단계 시퀀스**로 진행.
 
 ```
-[A] ✅ Deploy/Test → UI (+Observability) → [E] Tool use → [F] MCP → 멀티 프로젝트 → end-state
+[A] ✅ Deploy/Test → UI (+Observability) ✅ → [E] Tool use → [F] MCP → 멀티 프로젝트 → end-state
 ```
 
 이 시퀀스 끝나면 학생 시연용 **3대 AI Agent 패턴**이 같은 프로젝트에 모임:
@@ -159,6 +159,7 @@ lib/providers/
 
 ## 완료된 작업
 
+- 2026-05-11 **UI control panel** — `npm run ui` (Express + 정적 HTML, ~200 LOC). `ui/server.js` (REST 7개 endpoint, port preflight 재사용) + `ui/public/index.html` (1.5초 polling, .env GUI editor, reset-db 버튼, orchestrator spawn). `lib/env_writer.js` atomic key-scoped 갱신 + `UI_EDITABLE_KEYS` 화이트리스트로 sensitive 키 보호 (`ANTHROPIC_API_KEY`·`DB_PASSWORD` 비노출). `npm test` 122/122 (12 new env_writer cases). Smoke: `/api/env`·`/api/tasks`·`/api/run` 응답 OK.
 - 2026-05-11 **API contract split layout** — `shared/api_contract.json`을 index만 남기고 각 endpoint detail은 `shared/router/<name>.json`으로 분리. `normalizeContract`가 in-memory에서 inline 확장 → BE/FE Agent + Phase 9는 항상 full form. 사이클 검증: `task_20260511074027_33a2e1` PASS, Phase 9 65ms. `npm test` 110/110. 자세한 내용은 [DECISIONS.md](DECISIONS.md) 2026-05-11 split layout entry.
 - 2026-05-11 **First full-cycle hardening sweep** (8 commits `40c0675`→`f02ebdf`). Phase 8/9 commit(`89740ca`) 이후 첫 실제 end-to-end 실행 중 발견한 stack reset / dep guard (`validateAllowedDeps`) / FE eslint vitest globals / port preflight (OS + Docker 2 layer) / contract format normalizer (+ base_url 결합) / Continuation pattern (callJSON max_tokens 누적) / DB schema dynamic inject / 단일 재사용 test 워크트리 정책. 최종 사이클(task `task_20260511070429_2b5606`, VALIDATION_MODE=off): `verdict=PASS` + Phase 9 `PASS: 1/1 endpoints (150ms)`. 누적 8 robustness layer. `npm test` 104/104. 자세한 내용은 [DECISIONS.md](DECISIONS.md) 2026-05-11 entry.
 - 2026-05-08 [A] **Deploy + Post-deploy Test (Phase 8/9) 완료** (commit `89740ca`). docker compose 결정론 템플릿 (`lib/stack_templates/`) + api_contract 기반 fetch+schema 검증. `DEPLOY_MODE` 토글 (CLAUDE.md 절대 규칙 #9), 신규 env 7개, `log_agent_runs.agent_name` ENUM 확장(`Deploy`, `PostTest`). 변경 파일: `lib/stack_templates/docker-compose.yml`, `lib/stack_templates/{BE,FE}/Dockerfile`+`.dockerignore`, `agents/deploy_agent.js`, `agents/test_agent.js`, `lib/api_test.js`, `agents/orchestrator.js` (통합), `lib/stack.config.json` (protected files), `db/schema.sql` (ENUM).

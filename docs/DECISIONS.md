@@ -2,6 +2,37 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-11 — UI control panel (npm run ui)
+
+ROADMAP의 2순위 "UI (+Observability)" 항목 진입 후 완료. Express + 정적 HTML 추천(ROADMAP 명시) 그대로 채택 — Vite+React가 외관 좋지만 ~200 LOC 약속 지키려면 Express가 적절.
+
+**디자인 결정**:
+- **새 abstraction 안 만들고 기존 위에 얹음** — UI는 DB(`log_agent_runs`/`log_agent_decisions`/`log_task_state`) + `.env`의 얇은 GUI viewer/spawner. orchestrator·agents 코드 무변경.
+- **포트**: `UI_PORT=4000` (`.env`+`.env.example`에 신규). deploy_agent와 동일한 `net.createServer` probe로 충돌 시 +1..+20 자동 fallback.
+- **시작 명령**: `npm run ui` (foreground). orchestrator는 별도 (`npm start`)이라 두 prompt가 따로 떠도 됨.
+- **동시 실행 정책**: in-memory 단일 slot. UI에서 Run 누른 상태에 두 번째 누르면 409 응답 + 브라우저는 "busy" 표시.
+- **모드 토글 처리**: `.env` 직접 atomic 갱신 — ".env가 single source of truth, UI는 그것의 GUI editor" 결정(2026-05-08) 그대로. `lib/env_writer.js`가 temp file → rename atomic write 패턴, CRLF/주석/순서 보존.
+- **Security**: `UI_EDITABLE_KEYS` 화이트리스트 (16개 토글)만 PUT 허용. `ANTHROPIC_API_KEY`·`DB_PASSWORD`·`UI_PORT` 등은 UI에서 안 보이고 갱신도 못 함. PUT body에 화이트리스트 외 키 있으면 400.
+- **Polling**: 브라우저가 1.5초마다 `/api/tasks` + `/api/run` polling. SSE/WebSocket 없음 — ROADMAP의 단순 안 그대로.
+
+**구현**:
+- `lib/env_writer.js` (140 LOC) — `readEnv` + `updateEnv` + `UI_EDITABLE_KEYS`. `updateEnv`는 정확히 한 trailing newline 보장 + CRLF 보존 + missing key는 blank line 뒤에 append + tmp/rename atomic.
+- `ui/server.js` (190 LOC) — Express. 7 endpoint: `GET/PUT /api/env`, `GET /api/tasks`, `GET /api/tasks/:task_id`, `GET /api/tasks/:task_id/contract` (`normalizeContract`로 expand), `GET/POST /api/run`, `POST /api/reset-db`. `child_process.spawn`으로 orchestrator/reset-db 호출 — stdout 30KB tail 보존 + `task_id=...` regex 추출.
+- `ui/public/index.html` (220 LOC) — 단일 페이지 + 인라인 CSS/JS. dark theme. 왼쪽 패널(prompt 입력 + 토글 16개 GUI editor + reset-db) / 오른쪽 패널(최근 20 task 테이블 + 선택 시 decision/states/runs 타임라인).
+- `tests/env_writer.test.js` 12 케이스 — read, in-place update, append, mixed, CRLF, number/boolean coercion, atomic (`.tmp` 누수 없음), missing file 생성, 화이트리스트 frozen.
+- `.env` + `.env.example` 갱신 — `UI_PORT=4000`.
+- `package.json` — `"ui": "node ui/server.js"` script + `express: ^4.21.0` dependency.
+
+**검증**:
+- `npm test` 122/122 (110 prior + 12 new).
+- Smoke (`npm run ui`):
+  - `[ui] listening on http://localhost:4000`
+  - `GET /api/env` → 16 editable keys + 현재 값 정상
+  - `GET /api/tasks` → 직전 `task_20260511074027_33a2e1` (PASS) 정상 응답
+  - 종료 정상.
+
+**ROADMAP에 명시된 [E] 단계 후 BE_AGENT_MODE 토글**: `UI_EDITABLE_KEYS`에 추가만 하면 UI에서 즉시 토글 가능. [E] 완성 시 한 줄 추가로 마무리.
+
 ## 2026-05-11 — API contract split layout (index + router/)
 
 `shared/api_contract.json` 한 파일에 모든 endpoint detail이 몰려있던 구조를 둘로 분리:

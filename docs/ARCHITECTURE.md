@@ -18,6 +18,8 @@
 | `lib/api_test.js` | ❌ | api_contract 로드(+ split layout expansion) + simple JSON Schema validator + fetch 실행. test_agent의 helper |
 | `lib/bootstrap.js` | ❌ | 멱등 FE/BE 스캐폴딩 (Dockerfile, .dockerignore도 자동 복사) |
 | `lib/stack.js` | ❌ | `lib/stack.config.json` 로더 |
+| `lib/env_writer.js` | ❌ | `.env` 파일 atomic key-scoped 갱신. UI의 토글 저장에 사용. allowlist (`UI_EDITABLE_KEYS`)로 sensitive 키 보호 |
+| `ui/server.js`, `ui/public/index.html` | ❌ | Express 단일 control panel (`npm run ui`). DB polling 1.5초. orchestrator spawn + reset-db + .env GUI editor |
 
 ## LLM 모델 해석 순서 (각 Agent별)
 
@@ -42,6 +44,28 @@ shared/
 - `lib/api_test.js`의 `normalizeContract(contract, { routerDir })`이 index의 각 entry를 detail file로 inline 확장. 이 한 함수가 disk 형식(split)과 in-memory 형식(full)을 연결.
 - BE/FE Agent의 `readApiContractIfAny()`도 같은 `normalizeContract`를 호출하므로 prompt엔 항상 full form이 들어감 — Agent 코드는 split layout을 신경 쓸 필요 없음.
 - 새 endpoint 추가는 CodeChecker가 자동. 사람이 직접 추가하려면 (1) `shared/router/<name>.json` 파일 만들고 (2) `shared/api_contract.json` `endpoints` 배열에 index entry 한 줄 추가.
+
+## UI control panel (npm run ui)
+
+`ui/server.js` (Express, ~200 LOC) + `ui/public/index.html` (단일 페이지, 인라인 JS+CSS).
+
+**디자인 원칙**: UI는 "DB + .env의 얇은 GUI" — 새 abstraction 안 만들고 기존 위에 얹는다. orchestrator/agents는 그대로, UI는 옆에 붙는 viewer + spawner.
+
+**Endpoints**:
+- `GET /api/env` — `UI_EDITABLE_KEYS` 화이트리스트 + 현재 값
+- `PUT /api/env` — 화이트리스트만 받는 atomic `.env` 갱신 (`lib/env_writer.js`)
+- `GET /api/tasks` — 최근 20개 `log_agent_decisions`
+- `GET /api/tasks/:task_id` — decision + states + runs 합본
+- `GET /api/tasks/:task_id/contract` — `shared/api_contract.json` + router/ inline 확장
+- `POST /api/run` — `node agents/orchestrator.js [prompt]` spawn. 동시 1 run만 허용 (single in-memory slot, 두 번째는 409)
+- `GET /api/run` — 현재 진행 상태 + 실행 중인 task_id (stdout에서 `task_id=...` 추출) + 최근 logTail
+- `POST /api/reset-db` — `node lib/reset_db.js` spawn
+
+**Port preflight**: deploy_agent와 동일한 `net.createServer` probe로 `UI_PORT` (기본 4000) 충돌 시 +1..+20 fallback.
+
+**Polling**: 브라우저가 1.5초마다 `/api/tasks`+`/api/run` polling — SSE/WebSocket 없이 단순.
+
+**Security**: `lib/env_writer.UI_EDITABLE_KEYS`가 토글 가능한 키만 노출. `ANTHROPIC_API_KEY`/`DB_PASSWORD` 등은 UI에서 못 만짐.
 
 ## 스택 (단일 원천: `lib/stack.config.json`)
 

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>myFirstAgentApp — control panel</title>
+  <style>
+    :root {
+      --bg: #0f1116;
+      --panel: #181b22;
+      --panel-2: #1f232c;
+      --text: #e2e6ee;
+      --muted: #8089a0;
+      --accent: #6ea8ff;
+      --pass: #4ade80;
+      --fail: #ef4444;
+      --warn: #fbbf24;
+      --border: #2a2f3a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    header .muted { color: var(--muted); font-size: 12px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 16px;
+      padding: 16px;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    section h2 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    label { display: block; margin: 6px 0; font-size: 12px; color: var(--muted); }
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 7px 9px;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font: inherit;
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    button {
+      padding: 7px 12px;
+      background: var(--accent);
+      color: #0a0d14;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    .row > button { flex: 0; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .pill.PASS, .pill.SUCCESS { background: var(--pass); color: #0a0d14; }
+    .pill.FAIL, .pill.FAILED { background: var(--fail); color: #fff; }
+    .pill.ERROR { background: var(--fail); color: #fff; }
+    .pill.IN_PROGRESS, .pill.RUNNING, .pill.PENDING { background: var(--warn); color: #0a0d14; }
+    pre {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      overflow-x: auto;
+      font-size: 12px;
+      max-height: 360px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: var(--panel-2); }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .status { font-size: 12px; color: var(--muted); }
+    .timeline { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .phase {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .phase .label { flex: 1; }
+    .phase .ts { color: var(--muted); font-size: 11px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>myFirstAgentApp</h1>
+    <span class="muted">control panel (Phase 1~9 시각화 · .env GUI editor · 단일 실행 큐)</span>
+  </header>
+
+  <div class="grid">
+    <section>
+      <h2>새 실행</h2>
+      <label for="prompt">user_request (비우면 기본 시나리오)</label>
+      <textarea id="prompt" placeholder="이메일과 비밀번호로 회원가입할 수 있는 기능을 만들어줘..."></textarea>
+      <div class="toolbar" style="margin-top: 8px;">
+        <button id="runBtn">▶ Run pipeline</button>
+        <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
+        <button id="refreshBtn" class="secondary">↻ Refresh</button>
+      </div>
+      <div class="status" id="runStatus">idle</div>
+
+      <h2 style="margin-top: 18px;">.env 토글</h2>
+      <div id="envEditor"></div>
+    </section>
+
+    <section>
+      <h2>최근 task (클릭하면 상세)</h2>
+      <table id="taskTable">
+        <thead><tr><th>id</th><th>task_id</th><th>verdict</th><th>updated_at</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h2 style="margin-top: 18px;">상세 — <span id="detailTaskId" class="muted">(선택 안 됨)</span></h2>
+      <div id="detail"></div>
+    </section>
+  </div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const fmtTime = (ts) => ts ? new Date(ts).toLocaleString() : '';
+const pill = (val) => val ? `<span class="pill ${val}">${val}</span>` : '';
+
+let selectedTaskId = null;
+
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) {
+    return { _status: r.status, _text: await r.text() };
+  }
+  return r.json();
+}
+
+async function loadEnv() {
+  const data = await fetchJSON('/api/env');
+  const root = $('#envEditor');
+  root.innerHTML = '';
+  for (const k of data.editableKeys) {
+    const val = data.editable[k] ?? '';
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.style.marginBottom = '4px';
+    wrap.innerHTML =
+      `<label style="flex:0 0 200px; margin:0; font-family: ui-monospace, monospace;">${k}</label>` +
+      `<input type="text" data-key="${k}" value="${val.replace(/"/g, '&quot;')}" />` +
+      `<button class="secondary" data-save="${k}">save</button>`;
+    root.appendChild(wrap);
+  }
+  root.querySelectorAll('button[data-save]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-save');
+      const input = root.querySelector(`input[data-key="${key}"]`);
+      const value = input.value;
+      btn.disabled = true;
+      try {
+        const res = await fetchJSON('/api/env', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: value }),
+        });
+        if (res.ok) {
+          btn.textContent = 'saved';
+          setTimeout(() => { btn.textContent = 'save'; btn.disabled = false; }, 1200);
+        } else {
+          btn.textContent = 'fail';
+          setTimeout(() => { btn.textContent = 'save'; btn.disabled = false; }, 1500);
+        }
+      } catch (_) { btn.disabled = false; }
+    });
+  });
+}
+
+async function loadTasks() {
+  const data = await fetchJSON('/api/tasks');
+  const tbody = $('#taskTable tbody');
+  tbody.innerHTML = '';
+  for (const t of (data.tasks || [])) {
+    const tr = document.createElement('tr');
+    tr.className = 'clickable';
+    tr.innerHTML =
+      `<td>${t.id}</td>` +
+      `<td style="font-family: ui-monospace, monospace; font-size: 11px;">${t.task_id}</td>` +
+      `<td>${pill(t.final_verdict)}</td>` +
+      `<td class="muted">${fmtTime(t.updated_at)}</td>`;
+    tr.addEventListener('click', () => selectTask(t.task_id));
+    tbody.appendChild(tr);
+  }
+}
+
+function selectTask(task_id) {
+  selectedTaskId = task_id;
+  $('#detailTaskId').textContent = task_id;
+  loadDetail();
+}
+
+async function loadDetail() {
+  if (!selectedTaskId) return;
+  const data = await fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`);
+  const root = $('#detail');
+  const { decision, states, runs } = data;
+
+  let html = '';
+  if (decision) {
+    html += `<div><b>verdict:</b> ${pill(decision.final_verdict)} ` +
+            `<span class="muted">${fmtTime(decision.updated_at)}</span></div>`;
+    if (decision.final_result_text) {
+      html += `<pre>${(decision.final_result_text || '').replace(/</g, '&lt;')}</pre>`;
+    }
+  } else {
+    html += '<div class="muted">(no decision row)</div>';
+  }
+
+  html += '<div class="timeline">';
+  for (const r of (runs || [])) {
+    html += `<div class="phase">` +
+      `<span class="label"><b>${r.agent_name}</b>${r.target ? ' / ' + r.target : ''}</span>` +
+      `<span>${pill(r.status)}</span>` +
+      `<span class="ts">${fmtTime(r.started_at)} → ${r.ended_at ? fmtTime(r.ended_at) : '...'}</span>` +
+      `</div>`;
+  }
+  html += '</div>';
+
+  if (states && states.length > 0) {
+    html += '<h2 style="margin-top: 14px;">task_state</h2>';
+    html += '<table><thead><tr><th>target</th><th>status</th><th>retry</th><th>failed_stage</th></tr></thead><tbody>';
+    for (const s of states) {
+      html += `<tr><td>${s.target}</td><td>${pill(s.status)}</td>` +
+              `<td>${s.retry_count}</td><td>${s.failed_stage || ''}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  root.innerHTML = html;
+}
+
+async function pollRunStatus() {
+  const r = await fetchJSON('/api/run');
+  if (r.running) {
+    const cur = r.current || {};
+    const elapsed = cur.startedAt ? Math.round((Date.now() - cur.startedAt) / 1000) : 0;
+    $('#runStatus').innerHTML =
+      `<span class="pill RUNNING">RUNNING</span> pid=${cur.pid || '?'} ` +
+      `task_id=${cur.task_id || '(starting...)'} ` +
+      `elapsed=${elapsed}s`;
+    $('#runBtn').disabled = true;
+    if (cur.task_id && cur.task_id !== selectedTaskId) selectTask(cur.task_id);
+  } else {
+    $('#runStatus').textContent = 'idle';
+    $('#runBtn').disabled = false;
+  }
+}
+
+$('#runBtn').addEventListener('click', async () => {
+  $('#runBtn').disabled = true;
+  const prompt = $('#prompt').value;
+  const r = await fetchJSON('/api/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!r.ok && r._status === 409) {
+    $('#runStatus').textContent = 'busy — another run is already executing';
+  }
+});
+
+$('#resetDbBtn').addEventListener('click', async () => {
+  if (!confirm('app_users + log_* 모두 truncate합니다. 계속할까요?')) return;
+  $('#resetDbBtn').disabled = true;
+  const r = await fetchJSON('/api/reset-db', { method: 'POST' });
+  $('#resetDbBtn').disabled = false;
+  $('#resetDbBtn').textContent = r.ok ? '⟲ reset-db (done)' : '⟲ reset-db (fail)';
+  setTimeout(() => { $('#resetDbBtn').textContent = '⟲ reset-db'; }, 1500);
+  if (r.ok) loadTasks();
+});
+
+$('#refreshBtn').addEventListener('click', () => { loadTasks(); loadDetail(); });
+
+(async function main() {
+  await Promise.all([loadEnv(), loadTasks()]);
+  setInterval(() => { loadTasks(); loadDetail(); pollRunStatus(); }, 1500);
+  pollRunStatus();
+})();
+</script>
+</body>
+</html>

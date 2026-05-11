@@ -48,6 +48,14 @@ npm start                                          # 기본 시나리오 (회원
 node agents/orchestrator.js "기능 요청 자연어..."   # 커스텀
 # → verdict=PASS && COMMIT_MODE=auto면 종료 직전 BE/+FE/ 자동 commit (push 안 함)
 
+# UI control panel (http://localhost:4000)
+#   - prompt 입력 + Run 버튼 → orchestrator spawn (동시 1 run)
+#   - 최근 task 목록 + 클릭하면 decision/states/runs 상세 (1.5초 polling)
+#   - .env 토글 GUI editor (UI_EDITABLE_KEYS 화이트리스트만)
+#   - reset-db 버튼
+#   - 포트 충돌 시 자동 fallback (+1..+20)
+npm run ui
+
 # 검증 끄고 빠르게 LLM 원시 출력만 보고 싶을 때 (ablation)
 # 주의: dotenv override:true 정책으로 CLI inline override는 무시됨.
 #       반드시 .env에서 VALIDATION_MODE=off 토글 후 실행.
