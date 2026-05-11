@@ -33,6 +33,7 @@ const logger = require('../lib/logger');
 const db = require('../lib/db');
 const fsu = require('../lib/fs_util');
 const { runBootstrap } = require('../lib/bootstrap');
+const stack = require('../lib/stack');
 
 const codeChecker = require('./codechecker_agent');
 const beAgent = require('./be_agent');
@@ -92,7 +93,13 @@ async function fetchStateMap(decision_id) {
  */
 function snapshotArea(target) {
   const exts = target === 'FE' ? ['.js', '.jsx', '.json', '.html', '.css'] : ['.js', '.json'];
-  const files = fsu.listFiles(target, exts).filter((f) => !f.includes('/node_modules/'));
+  // Exclude protected config files (lint/docker/package). LLM should never
+  // see these as candidates for modification — they live outside src/ but
+  // the recursive listFiles picks them up.
+  const protectedFiles = new Set(stack.get(target).protectedConfigFiles || []);
+  const files = fsu.listFiles(target, exts)
+    .filter((f) => !f.includes('/node_modules/'))
+    .filter((f) => !protectedFiles.has(f));
   return fsu.snapshot(files);
 }
 
@@ -117,7 +124,11 @@ function extractAllowedPathsFromFix(target, fix) {
       out.add(p.replace(/\.(jsx|js)$/, '.test.$1'));
     }
   }
-  return [...out];
+  // X1: filter out protected config files (lint/docker/package configs) even if
+  // fix_instructions mentions them. The agent must NOT modify these — removing
+  // them from allowed_paths ensures the LLM never receives them as a target.
+  const protectedFiles = new Set(stack.get(target).protectedConfigFiles || []);
+  return [...out].filter((p) => !protectedFiles.has(p));
 }
 
 // ---------------- Phase 7 auto-commit ----------------
@@ -460,4 +471,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main };
+module.exports = { main, extractAllowedPathsFromFix, snapshotArea };

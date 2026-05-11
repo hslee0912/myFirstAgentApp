@@ -34,7 +34,8 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 - 응답 형식은 항상 JSON 객체. 반드시 "targets" 키 포함.
 - 회원가입 류의 흔한 요구사항이면 검증 규칙(예: 이메일 형식, 비밀번호 길이) 명시.
 - 보안: 비밀번호는 bcrypt 해시. SQL injection 방지를 위해 prepared statement.
-- 응답 형식 표준: { success: bool, data: any, error?: string }`;
+- 응답 형식 표준: { success: bool, data: any, error?: string }
+- be_spec / fe_spec에 lint 설정(.eslintrc), Docker 설정(Dockerfile, .dockerignore), 의존성 매니페스트(package.json, package-lock.json) 변경 가이드를 포함하지 말 것. 이 파일들은 protected이라 BE/FE Agent가 수정 못 한다.`;
 
 function buildUserPrompt(userRequirement) {
   return [
