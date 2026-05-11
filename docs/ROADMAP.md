@@ -159,7 +159,8 @@ lib/providers/
 
 ## 완료된 작업
 
-- 2026-05-08 [A] **Deploy + Post-deploy Test (Phase 8/9) 완료** (commit TBD). docker compose 결정론 템플릿 (`lib/stack_templates/`) + api_contract 기반 fetch+schema 검증. `DEPLOY_MODE` 토글 (CLAUDE.md 절대 규칙 #9), 신규 env 7개, `log_agent_runs.agent_name` ENUM 확장(`Deploy`, `PostTest`). 변경 파일: `lib/stack_templates/docker-compose.yml`, `lib/stack_templates/{BE,FE}/Dockerfile`+`.dockerignore`, `agents/deploy_agent.js`, `agents/test_agent.js`, `lib/api_test.js`, `agents/orchestrator.js` (통합), `lib/stack.config.json` (protected files), `db/schema.sql` (ENUM).
+- 2026-05-11 **First full-cycle hardening sweep** (8 commits `40c0675`→`f02ebdf`). Phase 8/9 commit(`89740ca`) 이후 첫 실제 end-to-end 실행 중 발견한 stack reset / dep guard (`validateAllowedDeps`) / FE eslint vitest globals / port preflight (OS + Docker 2 layer) / contract format normalizer (+ base_url 결합) / Continuation pattern (callJSON max_tokens 누적) / DB schema dynamic inject / 단일 재사용 test 워크트리 정책. 최종 사이클(task `task_20260511070429_2b5606`, VALIDATION_MODE=off): `verdict=PASS` + Phase 9 `PASS: 1/1 endpoints (150ms)`. 누적 8 robustness layer. `npm test` 104/104. 자세한 내용은 [DECISIONS.md](DECISIONS.md) 2026-05-11 entry.
+- 2026-05-08 [A] **Deploy + Post-deploy Test (Phase 8/9) 완료** (commit `89740ca`). docker compose 결정론 템플릿 (`lib/stack_templates/`) + api_contract 기반 fetch+schema 검증. `DEPLOY_MODE` 토글 (CLAUDE.md 절대 규칙 #9), 신규 env 7개, `log_agent_runs.agent_name` ENUM 확장(`Deploy`, `PostTest`). 변경 파일: `lib/stack_templates/docker-compose.yml`, `lib/stack_templates/{BE,FE}/Dockerfile`+`.dockerignore`, `agents/deploy_agent.js`, `agents/test_agent.js`, `lib/api_test.js`, `agents/orchestrator.js` (통합), `lib/stack.config.json` (protected files), `db/schema.sql` (ENUM).
 - 2026-05-08 **문서 구조 분리** (commit `5365d2d`, `ffa5d59`).
 - 2026-05-08 **Prompt caching** (commit `ffa5d59`).
 - 2026-05-08 [B] **VALIDATION_MODE 토글** (commit `c6417ac`).

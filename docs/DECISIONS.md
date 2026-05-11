@@ -2,6 +2,27 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-11 — First full-cycle hardening sweep
+
+[A] Phase 8/9 commit(`89740ca`) 이후 **end-to-end로 실제 풀 사이클을 처음 돌려본** 작업. main에 잔존하던 옛 LLM 산출물 + LLM 응답의 stochastic 결함이 줄줄이 드러나 한 commit씩 잡아냈고, 최종 사이클(VALIDATION_MODE=off 모드, task `task_20260511070429_2b5606`)에서 `[PASS]` + Phase 9 `PASS: 1/1 endpoints (150ms)` 달성. 누적 8 robustness layer (이전 7 + Continuation).
+
+순서대로:
+
+- **`40c0675` chore(reset): remove tracked BE/ FE/ artifacts** — main에 commit돼 있던 ~40개 BE/, FE/ 파일은 옛 LLM 사이클이 만든 stale baseline. `bootstrap.copyFileIfMissing` 정책상 새 워크트리에 stack_templates 새 버전이 안 깔리는 원인. 통째 삭제. 다음 사이클부터 fresh.
+- **`dc5253a` feat(guards): validateAllowedDeps + FE eslint jest globals** — LLM이 `email-validator` 같은 미허가 dep를 require해서 Stage 3에서 모듈 못 찾고 fail. `lib/prompt_util.js`에 require()/import 정적 분석 가드 추가 (Node builtin은 module.isBuiltin로 화이트리스트). 위반 시 `UNAUTHORIZED_DEPS` throw → 라운드 ERROR (즉시 fail-fast, fix_instructions retry 안 함). FE 측에선 `lib/stack.config.json` `eslintConfig.env.jest=true` + `globals.vi="readonly"` 추가 — test_codegen이 자동 생성한 smoke test의 `describe/it/expect/vi`가 eslint `no-undef`로 막히던 fail. `rules/{common,be,fe}.md`에 흔한 위반 카테고리 6종(검증 라이브러리 / HTTP 클라이언트 / UUID / lodash·moment / styling / JWT) 명시. unit test 12 추가.
+- **`fe63c89` feat(deploy): port preflight + auto-fallback (OS layer)** — `.env`의 `DEPLOY_PORT_DB=3306`이 호스트 MySQL과 충돌해 compose up exit 1. `agents/deploy_agent.js`에 `isPortFree(port)` (`net.createServer().listen` probe) + `findFreePort(start, label, max=20)` + `resolvePortsWithFallback()` 추가. 충돌 시 `+1..+20` walk로 첫 빈 포트 선택 후 `process.env.DEPLOY_PORT_{DB,BE,FE}` mutate → compose substitution + Phase 9 baseUrl이 같은 새 값 공유. 컨테이너 *내부* 포트는 그대로 (호스트 매핑만 바뀜). unit test 7 추가.
+- **`d95f901` fix(phase-9): contract format strictness + normalizer w/ base_url + legacy** — Phase 9가 `unexpected status 404 (declared statuses: none)`로 fail. 원인 두 개: (1) CodeChecker가 `response.{success, error_cases}` legacy shape으로 emit, `lib/api_test.js`는 `responses.{<code>}` 기대. (2) contract의 `base_url: "/api/v1"`이 fetch URL 생성 시 무시돼 404. fix: CodeChecker system prompt에 canonical format 명세 + 금지 형식 예시. `lib/api_test.js`에 `normalizeContract()` 추가 — legacy `response.success`/`error_cases` → `responses.{<code>}` 변환 + `base_url` prefix를 endpoint.path에 합침 (idempotent). unit test 17 추가.
+- **`db8a5c5` feat(llm): Continuation pattern in callJSON** — 사용자 결정으로 "마지막에 반드시 적용" (현재 truncation 빈도 0이지만 8번째 layer로 보험). `stop_reason='max_tokens'`일 때 throw 대신 부분 응답을 assistant message로 누적 + "이어서 계속" user message로 재호출. `MAX_CONTINUATIONS=3` 후 여전히 잘려있으면 기존 whole-call retry layer(`MAX_LLM_RETRIES=2`)로 fallback. `_client` opt-in 인자로 stub 주입 가능 — unit test 8 추가 (stub Anthropic client로 누적/종료/cache 보존 검증).
+- **`732e237` fix(deploy): port preflight also consults docker ps** — OS net layer만으로는 부족했음. Windows Docker Desktop quirk: 이전 FAIL 사이클의 stale 컨테이너(D6=B 정책으로 보존됨)가 host 포트 점유 중이어도 Node net.listen이 free라고 응답해 fallback이 그 포트로 가서 compose가 again fail. 2-layer 추가: `dockerPublishedPorts()` (`docker ps --format '{{.Ports}}'` 파싱 → Set<number>). `findFreePort`에 dockerPorts arg 추가 — 후보 포트를 docker Set과 먼저 비교, 다음에 OS probe. Docker CLI 부재 시 빈 Set 반환으로 graceful degrade. unit test 3 추가.
+- **`b670962` docs(operations): document the 2-layer port preflight** — OPERATIONS.md "포트 충돌 시" 섹션 2-layer 검출 명시.
+- **`6cba494` feat(schema): inject db/schema.sql into CodeChecker + BE Agent prompts** — Phase 9가 LLM 코드의 `SELECT ... FROM users` 때문에 `Table 'myfirstagentapp_db.users' doesn't exist`로 500 → fail. schema는 `app_users`. CodeChecker + BE Agent system prompt에 `db/schema.sql` 전체를 dynamic inject + 규칙 (BE 비즈니스는 `app_users`만, `log_*`는 agent system 전용, contract example은 schema 타입과 일치, INSERT 시 AUTO_INCREMENT/DEFAULT 컬럼 제외, password 컬럼명은 `password_hash`). `cache: 'system'` 덕분에 매 호출 재전송 안 됨 — input utilization 7~12% 유지. `rules/be.md §4`도 schema-driven bullet으로 강화.
+- **`f02ebdf` docs(operations): single reusable test worktree policy** — 이번 세션 동안 `verify-clean`/`verify-port-fix`/`finalize`/`deploy-check` 워크트리를 매 fix마다 새로 만들어 디스크·docker container·npm install이 누적. 정책 변경: `.claude/worktrees/test/` (branch `claude/test`) 한 번 만들고 재사용. 사이 정리는 `rm -rf BE FE` (bootstrap fresh 깔림, node_modules 보존). 정책을 OPERATIONS.md에 박아 향후 세션에도 적용.
+
+**최종 검증 사이클** (task `task_20260511070429_2b5606`, VALIDATION_MODE=off):
+- 1 라운드 PASS · LLM 호출 정확히 3회 · port preflight 3-fallback (3306→3309 / 3001→3003 / 5173→5175 — finalize+verify-port-fix stale 컨테이너들이 3307~3308 점유 중인 환경에서) · Deploy up 52186ms · PostTest 1/1 endpoints 150ms · Phase 7 auto-commit · Phase 7.5 teardown.
+
+`npm test`: 104/104 PASS (이전 57 + 이번 47 새 케이스).
+
 ## 2026-05-08
 
 - **89740ca**  [A] Phase 8/9 — **S8 (orchestrator integration + DB schema migration) sub-decision D38 잠금 + 코드 적용**.

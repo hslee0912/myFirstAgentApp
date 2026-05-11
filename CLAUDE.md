@@ -86,9 +86,9 @@ Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
-- 2026-05-08  (TBD)    [A] **Phase 8/9 (Deploy + Post-deploy Test) 완료** — docker compose 결정론 템플릿 + api_contract 기반 schema 검증. DEPLOY_MODE 토글, 신규 env 7개, agent_name ENUM에 Deploy/PostTest 추가.
-- 2026-05-08  (TBD)    Prompt caching API 단순화 + CodeChecker 추가 — `cache: true` → `cache: 'system' | 'user'`. BE/FE는 'system' (rules 캐시), CodeChecker는 'user' (큰 spec 캐시). 같은 user_request 재실행 시 ~90% 절감.
-- 2026-05-08  ffa5d59  Prompt caching 도입 (BE/FE system prompt). 재시도 호출에서 ~90% 절감.
+- 2026-05-11  f02ebdf  **단일 재사용 test 워크트리 정책** — `.claude/worktrees/test/` (branch `claude/test`) 한 번 만들고 모든 검증에서 재사용. 사이 정리는 `rm -rf BE FE`만 (bootstrap fresh, node_modules 보존). 매번 새 워크트리 만들지 말 것. [OPERATIONS.md](docs/OPERATIONS.md) 참조.
+- 2026-05-11  6cba494  **DB schema dynamic inject** — `db/schema.sql` 전체를 CodeChecker + BE Agent system prompt에 inject. BE 비즈니스는 `app_users`만 / `log_*`는 agent 전용 / contract example은 schema 타입과 일치. Phase 9에서 LLM이 `users` vs `app_users` 혼동해 500 fail나던 사이클 해결.
+- 2026-05-11  **First full-cycle hardening sweep** (8 commits, `40c0675`→`f02ebdf`) — Phase 8/9 첫 풀 사이클 검증 중 발견한 stack reset / validateAllowedDeps / port preflight (OS+Docker 2 layer) / contract normalizer / Continuation / schema inject / worktree 정책. 최종 verdict=PASS + PostTest 1/1 endpoints 150ms. 자세한 내용은 [DECISIONS.md](docs/DECISIONS.md).
 
 ## Skill routing
 
