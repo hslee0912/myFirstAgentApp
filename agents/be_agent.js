@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
+const { abridgeExistingFiles, abridgeForRetry } = require('../lib/prompt_util');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -52,7 +53,10 @@ function buildSystemPrompt(cfg) {
     protectedList || '  (없음)',
     '필요한 의존성·플러그인이 부족하면 코드를 만들지 말고 응답의 `notes`에 사유를 기록하라. 위 파일들에 대한 응답은 Orchestrator에서 거부된다.',
     '',
-    '- 기존 파일은 보존이 우선. 명시적으로 수정해야만 응답에 포함하라. 응답하지 않은 파일은 그대로 유지된다.',
+    '- 응답에 포함된 모든 file은 disk에 덮어씌워진다 (동일 내용이어도).',
+    '- 새로 만들거나 *실제로 변경한* file만 응답에 포함하라. 응답하지 않은 파일은 그대로 유지된다.',
+    '- placeholder 또는 변경 없는 file을 응답에 포함하면 출력 토큰 낭비 + truncation 위험.',
+    '- "변경 없음" file은 응답에서 완전히 제외. notes에 "kept N files unchanged" 정도만 명시.',
   ].join('\n');
 }
 
@@ -194,10 +198,11 @@ async function run(params) {
 
     let userPrompt;
     if (mode === 'retry') {
+      // O2: keep only allowed_paths in full, stub the rest.
       userPrompt = buildRetryUserPrompt({
         be_spec: params.be_spec || {},
         api_contract,
-        existing_files: params.existing_files || {},
+        existing_files: abridgeForRetry(params.existing_files || {}, params.allowed_paths || []),
         allowed_paths: params.allowed_paths || [],
         fix_instructions: params.fix_instructions || '',
       });
@@ -205,16 +210,19 @@ async function run(params) {
       const initialExisting =
         params.existing_files ||
         fsu.snapshot(fsu.listFiles(BASE, SNAPSHOT_EXTS).filter((f) => f.startsWith(SNAPSHOT_ROOT_GLOB)));
+      // O1: abridge large non-test files to keep input tokens manageable.
       userPrompt = buildInitialUserPrompt({
         be_spec: params.be_spec || {},
         api_contract,
-        existing_files: initialExisting,
+        existing_files: abridgeExistingFiles(initialExisting),
       });
     }
 
+    // S1: max_tokens explicit at the call site for tunability + visibility.
+    const max_tokens = 8192;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
-    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'be' });
-    const llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system' });
+    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'be', max_tokens });
+    const llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
     const files = llmOut.files || {};
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });

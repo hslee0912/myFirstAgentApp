@@ -29,7 +29,7 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 4) targets가 "BOTH"면 api_contract도 작성
 
 규칙:
-- be_spec / fe_spec은 구현 가이드 수준의 자연어 + 구조화 정보
+- be_spec / fe_spec은 **핵심만 간결히** (한 영역당 max ~600 tokens). 자연어 설명 최소화, 구조화된 list/object 우선.
 - api_contract: { version, endpoints: [{ path, method, request: {...JSON Schema...}, response: {...} }] }
 - 응답 형식은 항상 JSON 객체. 반드시 "targets" 키 포함.
 - 회원가입 류의 흔한 요구사항이면 검증 규칙(예: 이메일 형식, 비밀번호 길이) 명시.
@@ -79,12 +79,15 @@ async function run({ task_id, user_request }) {
 
   try {
     const userPrompt = buildUserPrompt(user_request);
+    // S1: max_tokens explicit at the call site for tunability + visibility.
+    const max_tokens = 8192;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
-    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'codechecker' });
+    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'codechecker', max_tokens });
     const llmOut = await callJSON({
       agent: 'codechecker',
       system: SYSTEM_PROMPT,
       user: userPrompt,
+      max_tokens,
       // CodeChecker는 user_request가 큰 spec일 때 캐시 효과. 같은 spec 재실행
       // (디버깅·시연 반복) 시 5분 TTL 안에서 ~90% 절감. user_request가 작으면
       // 캐시 임계값 미달로 자동 no-op.
