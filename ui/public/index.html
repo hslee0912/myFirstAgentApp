@@ -16,6 +16,25 @@
       --fail: #ef4444;
       --warn: #fbbf24;
       --border: #2a2f3a;
+
+      /* Area chip colours (label-level identification) */
+      --area-orchestrator: #6b7280;
+      --area-codechecker:  #a78bfa;
+      --area-be:           #4ade80;
+      --area-fe:           #6ea8ff;
+      --area-lint:         #fbbf24;
+      --area-deploy:       #38bdf8;
+      --area-posttest:     #f472b6;
+
+      /* Severity colours (box-level — error/warn/info/ok) */
+      --sev-error-fg: #ef4444;
+      --sev-error-bg: rgba(239, 68, 68, 0.10);
+      --sev-warn-fg:  #fb923c;
+      --sev-warn-bg:  rgba(251, 146, 60, 0.10);
+      --sev-info-fg:  #fbbf24;
+      --sev-info-bg:  rgba(251, 191, 36, 0.09);
+      --sev-ok-fg:    #4ade80;
+      --sev-ok-bg:    rgba(74, 222, 128, 0.08);
     }
     * { box-sizing: border-box; }
     body {
@@ -126,6 +145,136 @@
     }
     .phase .label { flex: 1; }
     .phase .ts { color: var(--muted); font-size: 11px; }
+
+    /* ───── Area chip — colours the agent name with its area colour ───── */
+    .area-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #0a0d14;
+      flex: 0 0 auto;
+    }
+    .area-chip.orchestrator { background: var(--area-orchestrator); color: #fff; }
+    .area-chip.codechecker  { background: var(--area-codechecker); color: #fff; }
+    .area-chip.be           { background: var(--area-be); }
+    .area-chip.fe           { background: var(--area-fe); }
+    .area-chip.lint         { background: var(--area-lint); }
+    .area-chip.deploy       { background: var(--area-deploy); }
+    .area-chip.posttest     { background: var(--area-posttest); }
+
+    /* ───── Error / warning card (severity-coloured box) ───── */
+    .err-card {
+      margin: 10px 0;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 12px 14px;
+    }
+    .err-card.sev-error { border-left-color: var(--sev-error-fg); background: var(--sev-error-bg); }
+    .err-card.sev-warn  { border-left-color: var(--sev-warn-fg);  background: var(--sev-warn-bg); }
+    .err-card.sev-info  { border-left-color: var(--sev-info-fg);  background: var(--sev-info-bg); }
+    .err-card.sev-ok    { border-left-color: var(--sev-ok-fg);    background: var(--sev-ok-bg); }
+
+    .err-card .err-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 6px;
+      font-size: 13px; font-weight: 600;
+    }
+    .err-card .err-title { flex: 1; }
+    .err-card .err-body { font-size: 12px; color: var(--text); }
+    .err-card .err-body p { margin: 4px 0; }
+    .err-card .err-body code,
+    .err-card .err-body kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--panel);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .err-card .err-reco {
+      margin-top: 8px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.04);
+      border-left: 2px solid var(--muted);
+      border-radius: 3px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .err-card .err-reco b { color: var(--text); }
+
+    /* ───── Expandable / collapsible disclosure ───── */
+    details.disclosure {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--panel-2);
+    }
+    details.disclosure > summary {
+      cursor: pointer;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      user-select: none;
+    }
+    details.disclosure[open] > summary { color: var(--text); border-bottom: 1px solid var(--border); }
+    details.disclosure > .disclosure-body { padding: 8px 10px; }
+
+    /* ───── Monospace code block for logs / stack traces ───── */
+    .code-block {
+      background: #0a0d14;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre;
+      color: #c8d2e0;
+    }
+    .code-block.wrap { white-space: pre-wrap; word-break: break-word; }
+    .code-block .dim { color: var(--muted); }
+
+    /* ───── Run row v2 (timeline) ───── */
+    .run-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .run-row.sev-error { border-left-color: var(--sev-error-fg); }
+    .run-row.sev-warn  { border-left-color: var(--sev-warn-fg); }
+    .run-row.sev-info  { border-left-color: var(--sev-info-fg); }
+    .run-row.sev-ok    { border-left-color: var(--sev-ok-fg); }
+    .run-row .name { font-weight: 600; }
+    .run-row .target { color: var(--muted); font-size: 11px; }
+    .run-row .ts { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+    .timeline { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+
+    /* ───── Tiny meta-row chips for silent warnings on SUCCESS runs ───── */
+    .meta-chip {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 7px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .meta-chip.warn { color: var(--sev-warn-fg); border-color: var(--sev-warn-fg); }
   </style>
 </head>
 <body>
@@ -308,6 +457,344 @@ function selectTask(task_id) {
   loadDetail();
 }
 
+// ─────────── Detail panel helpers ───────────
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function safeJson(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch (_) { return null; }
+}
+
+/** Area chip class for a (agent_name, target) pair. */
+function areaClass(agent, target) {
+  const a = String(agent || '').toLowerCase();
+  if (a === 'be' || (a === 'lint' && target === 'BE')) return a === 'lint' ? 'lint' : 'be';
+  if (a === 'fe' || (a === 'lint' && target === 'FE')) return a === 'lint' ? 'lint' : 'fe';
+  if (a === 'orchestrator') return 'orchestrator';
+  if (a === 'codechecker')  return 'codechecker';
+  if (a === 'deploy')       return 'deploy';
+  if (a === 'posttest')     return 'posttest';
+  return 'orchestrator';
+}
+
+/** Classify a FAILED log_agent_runs row → severity / category / label / recommendation. */
+function classifyRunError(run) {
+  const oj = safeJson(run.output_json) || {};
+  const err = String(oj.error || '');
+  const stack = String(oj.stack || '');
+  const all = err + '\n' + stack;
+
+  // UNAUTHORIZED_DEPS — validateAllowedDeps throw
+  if (/UNAUTHORIZED_DEPS/i.test(all) || /Unauthorized dependencies/i.test(err)) {
+    const m = err.match(/Unauthorized dependencies detected:\s*([^.]+)\./i);
+    return {
+      severity: 'error',
+      category: 'UNAUTHORIZED_DEPS',
+      label: '🚫 미허가 의존성 (allowedDeps 위반)',
+      detail: m ? m[1].trim() : err,
+      recommendation: 'rules/*.md에 그 패키지 명시 금지 추가하거나, 정말 필요하면 lib/stack.config.json의 allowedDeps 확장. 보통은 prompt를 더 명확히 — bcrypt vs bcryptjs 같은 함정은 rules에 NOT 표기 추가.',
+    };
+  }
+  // validatePaths throw — protected file or outside BE/FE
+  if (/protected stack config file/i.test(all) || /Disallowed path/i.test(all) || /not in allowed_paths/i.test(all)) {
+    return {
+      severity: 'error',
+      category: 'PROTECTED_PATH',
+      label: '🛡 Protected 파일 / 영역 침범',
+      detail: err,
+      recommendation: 'LLM이 package.json·vite.config·.eslintrc 같은 보호 파일에 쓰려 함. rules/common.md §9 보호 파일 항목 강조 또는 lib/stack.config.json protectedConfigFiles 점검.',
+    };
+  }
+  // LLM_TRUNCATED — callJSON throws this
+  if (/LLM_TRUNCATED/i.test(all) || /TRUNCATED after/i.test(err)) {
+    return {
+      severity: 'warn',
+      category: 'LLM_TRUNCATED',
+      label: '✂️ LLM 응답 잘림 (max_tokens 초과)',
+      detail: err,
+      recommendation: 'agent별 max_tokens 증가 또는 prompt 단축. lib/llm.js의 Continuation pattern이 3회 누적 후에도 실패하면 여기 도달.',
+    };
+  }
+  // JSON parse fail
+  if (/did not return valid JSON/i.test(all) || /JSON.*parse/i.test(all)) {
+    return {
+      severity: 'warn',
+      category: 'JSON_PARSE_FAIL',
+      label: '📝 LLM JSON 응답 파싱 실패',
+      detail: err,
+      recommendation: 'callJSON에 retry layer 있음 — 그래도 실패면 raw 응답 dump 위치 확인 (Temp 디렉터리). prompt에 escape 가이드 강화 가능.',
+    };
+  }
+  // Docker not installed
+  if (/Docker CLI not installed/i.test(all) || /Docker Compose not available/i.test(all)) {
+    return {
+      severity: 'error',
+      category: 'DOCKER_MISSING',
+      label: '🐳 Docker 미설치 / 미실행',
+      detail: err,
+      recommendation: 'Docker Desktop 설치 + 실행 확인. 또는 .env에서 DEPLOY_MODE=off로 Phase 8/9 skip.',
+    };
+  }
+  // Generic agent exception
+  return {
+    severity: 'error',
+    category: 'AGENT_EXCEPTION',
+    label: '❌ Agent 예외',
+    detail: err || '(no error message)',
+    recommendation: 'output_json.stack을 펼쳐 자세한 호출 위치 확인.',
+  };
+}
+
+/** Deploy/PostTest run's failed_stage → label. */
+function classifyDeployStage(failedStage) {
+  switch (failedStage) {
+    case 'docker_check':       return { label: '🐳 Docker 미설치', sev: 'error' };
+    case 'port_preflight':     return { label: '🔌 Port 충돌 (fallback 한계 초과)', sev: 'error' };
+    case 'compose_up':         return { label: '🐳 compose up 실패', sev: 'error' };
+    case 'compose_up_timeout': return { label: '⏱ compose up timeout', sev: 'error' };
+    default:                   return { label: failedStage || 'Deploy 실패', sev: 'error' };
+  }
+}
+
+/** Lint failed_stage → label. */
+function classifyLintStage(failedStage) {
+  switch (failedStage) {
+    case 'STAGE1': return { label: '🔧 Lint Stage 1 (eslint) 실패', sev: 'info', retryable: true };
+    case 'STAGE2': return { label: '🔧 Lint Stage 2 (build/syntax) 실패', sev: 'info', retryable: true };
+    case 'STAGE3': return { label: '🧪 Lint Stage 3 (tests) 실패 — retry 없음', sev: 'error', retryable: false };
+    default:       return { label: failedStage || 'Lint 실패', sev: 'warn', retryable: false };
+  }
+}
+
+/** Render a single error card. */
+function renderErrCard(c) {
+  const detailHtml = c.detail
+    ? `<div class="err-body"><p><code>${esc(c.detail)}</code></p></div>`
+    : '';
+  const recoHtml = c.recommendation
+    ? `<div class="err-reco"><b>권장 대응:</b> ${esc(c.recommendation)}</div>`
+    : '';
+  return `
+    <div class="err-card sev-${c.severity}">
+      <div class="err-head">
+        <span class="err-title">${esc(c.label)}</span>
+      </div>
+      ${detailHtml}
+      ${recoHtml}
+    </div>`;
+}
+
+/** Render a code block disclosure for big text (stdout/stderr/stack). */
+function renderCodeDisclosure(summary, text, opts = {}) {
+  if (!text || !String(text).trim()) return '';
+  const wrapCls = opts.wrap === false ? '' : ' wrap';
+  return `
+    <details class="disclosure">
+      <summary>${esc(summary)}</summary>
+      <div class="disclosure-body"><div class="code-block${wrapCls}">${esc(text)}</div></div>
+    </details>`;
+}
+
+/** Render meta chips for silent warnings on SUCCESS Agent runs. */
+function renderMetaChips(oj) {
+  const chips = [];
+  if (Array.isArray(oj.dropped_protected) && oj.dropped_protected.length) {
+    chips.push(`<span class="meta-chip warn" title="LLM 응답에 protected file 있었지만 silent drop됨">drop_protected: ${oj.dropped_protected.length}</span>`);
+  }
+  if (Array.isArray(oj.dropped_tests) && oj.dropped_tests.length) {
+    chips.push(`<span class="meta-chip" title="LLM이 만든 test 파일은 시스템이 결정론적으로 자동 생성하므로 silent drop됨">drop_tests: ${oj.dropped_tests.length}</span>`);
+  }
+  if (Array.isArray(oj.auto_generated_tests) && oj.auto_generated_tests.length) {
+    chips.push(`<span class="meta-chip" title="lib/test_codegen.js가 결정론적으로 만든 smoke test">auto_tests: ${oj.auto_generated_tests.length}</span>`);
+  }
+  if (oj.eslintrc_created) {
+    chips.push(`<span class="meta-chip">eslintrc 생성</span>`);
+  }
+  if (oj.skipped) {
+    chips.push(`<span class="meta-chip">skipped: ${esc(oj.skipped)}</span>`);
+  }
+  if (oj.ports_changed) {
+    chips.push(`<span class="meta-chip warn" title="port preflight fallback 발생">ports_changed</span>`);
+  }
+  return chips.length > 0 ? `<div style="margin-top: 4px;">${chips.join(' ')}</div>` : '';
+}
+
+/** Render the most-critical error summary card on top (Layer 1). */
+function renderTopErrorSummary(decision, states, runs) {
+  if (!decision) return '';
+  if (decision.final_verdict !== 'ERROR' && decision.final_verdict !== 'FAIL') return '';
+
+  // Pick the first FAILED log_agent_runs row — that's the exception path.
+  const failedRun = (runs || []).find((r) => r.status === 'FAILED');
+  if (failedRun) {
+    const c = classifyRunError(failedRun);
+    const area = areaClass(failedRun.agent_name, failedRun.target);
+    const tgt = failedRun.target ? ' / ' + failedRun.target : '';
+    return `
+      <div class="err-card sev-${c.severity}" style="margin-top: 10px;">
+        <div class="err-head">
+          <span class="area-chip ${area}">${esc(failedRun.agent_name)}${esc(tgt)}</span>
+          <span class="err-title">${esc(c.label)}</span>
+        </div>
+        ${c.detail ? `<div class="err-body"><p><code>${esc(c.detail)}</code></p></div>` : ''}
+        ${c.recommendation ? `<div class="err-reco"><b>권장 대응:</b> ${esc(c.recommendation)}</div>` : ''}
+      </div>`;
+  }
+
+  // No exception → FAIL from Lint stage3 or retry exhaustion. Surface the
+  // first FAILED task_state.
+  const failedState = (states || []).find((s) => s.status === 'FAILED');
+  if (failedState) {
+    const c = classifyLintStage(failedState.failed_stage);
+    return `
+      <div class="err-card sev-${c.sev}" style="margin-top: 10px;">
+        <div class="err-head">
+          <span class="area-chip lint">Lint / ${esc(failedState.target)}</span>
+          <span class="err-title">${esc(c.label)} (retry ${failedState.retry_count})</span>
+        </div>
+        <div class="err-body"><p>실패한 영역: <code>${esc(failedState.target)}</code></p></div>
+        <div class="err-reco"><b>권장 대응:</b> ${c.retryable
+          ? 'retry로 자동 회복 시도 중. retry_count가 MAX(3) 도달하면 verdict=FAIL.'
+          : 'Stage 3 (tests) 실패는 retry 없이 즉시 FAIL. 비즈니스 로직 점검 필요.'}</div>
+      </div>`;
+  }
+
+  // Fallback — generic.
+  if (decision.final_result_text) {
+    return `
+      <div class="err-card sev-error" style="margin-top: 10px;">
+        <div class="err-head"><span class="err-title">${esc(decision.final_verdict)}</span></div>
+        <div class="err-body"><div class="code-block wrap">${esc(decision.final_result_text)}</div></div>
+      </div>`;
+  }
+  return '';
+}
+
+/** Render the run timeline (Layer 2) — each row coloured by severity + area chip + expand. */
+function renderTimeline(runs) {
+  if (!runs || runs.length === 0) return '';
+  const rows = runs.map((r, idx) => {
+    const oj = safeJson(r.output_json) || {};
+    const area = areaClass(r.agent_name, r.target);
+    const tgt = r.target ? `<span class="target">/ ${esc(r.target)}</span>` : '';
+    const sev = r.status === 'FAILED' ? 'sev-error'
+              : r.status === 'RUNNING' ? 'sev-info'
+              : 'sev-ok';
+    const ts = `${fmtTime(r.started_at)} → ${r.ended_at ? fmtTime(r.ended_at) : '...'}`;
+
+    let expand = '';
+    if (r.status === 'FAILED') {
+      // Exception path — render full error card + stack disclosure
+      const c = classifyRunError(r);
+      expand += renderErrCard(c);
+      if (oj.stack) expand += renderCodeDisclosure('▼ stack trace', oj.stack, { wrap: true });
+
+      // Deploy-specific: failed_stage + compose_output + per-service logs
+      if (r.agent_name === 'Deploy') {
+        const ds = classifyDeployStage(oj.failed_stage);
+        expand += `<div class="err-card sev-${ds.sev}"><div class="err-head"><span class="err-title">${esc(ds.label)}</span></div></div>`;
+        if (oj.compose_output) expand += renderCodeDisclosure('▼ compose output (tail)', oj.compose_output);
+        if (oj.logs) {
+          for (const svc of Object.keys(oj.logs)) {
+            if (oj.logs[svc]) expand += renderCodeDisclosure(`▼ logs.${svc}`, oj.logs[svc]);
+          }
+        }
+      }
+      // PostTest-specific: per-endpoint trace
+      if (r.agent_name === 'PostTest' && Array.isArray(oj.results)) {
+        for (const ep of oj.results) {
+          if (ep.pass) continue;
+          const errs = (ep.errors || []).map((e) => `• ${esc(e)}`).join('<br>');
+          const trace = ep.trace || {};
+          expand += `
+            <div class="err-card sev-error">
+              <div class="err-head"><span class="area-chip posttest">PostTest</span><span class="err-title">${esc(ep.method || '')} ${esc(ep.endpoint || '')}</span></div>
+              <div class="err-body">
+                <p>url: <code>${esc(trace.url || '')}</code></p>
+                <p>status: <code>${esc(trace.status)}</code></p>
+                ${errs ? `<p>${errs}</p>` : ''}
+                ${trace.request_body  ? renderCodeDisclosure('▼ request body',  JSON.stringify(trace.request_body, null, 2))  : ''}
+                ${trace.response_body ? renderCodeDisclosure('▼ response body', JSON.stringify(trace.response_body, null, 2)) : ''}
+              </div>
+            </div>`;
+        }
+      }
+    } else if (r.status === 'SUCCESS') {
+      // Layer 3: silent warnings as chips
+      const chips = renderMetaChips(oj);
+      if (chips) expand += chips;
+      // Compact summary for Deploy / PostTest success
+      if (r.agent_name === 'Deploy' && oj.ports) {
+        expand += `<div class="muted" style="font-size:11px; margin-top:4px;">ports: mysql=${oj.ports.mysql} be=${oj.ports.be} fe=${oj.ports.fe} · up in ${oj.duration_ms}ms</div>`;
+      }
+      if (r.agent_name === 'PostTest' && oj.total != null) {
+        expand += `<div class="muted" style="font-size:11px; margin-top:4px;">${oj.passed}/${oj.total} endpoints · ${oj.duration_ms}ms · baseUrl=${esc(oj.baseUrl || '')}</div>`;
+      }
+    }
+
+    const expandWrapped = expand
+      ? `<details class="disclosure" data-runidx="${idx}"><summary>상세 보기</summary><div class="disclosure-body">${expand}</div></details>`
+      : '';
+
+    return `
+      <div class="run-row ${sev}">
+        <span class="area-chip ${area}">${esc(r.agent_name)}</span>
+        ${tgt}
+        <span>${pill(r.status)}</span>
+        <span class="ts">${ts}</span>
+      </div>
+      ${expandWrapped}`;
+  });
+  return `<h2 style="margin-top: 14px;">타임라인 (Phase 1~9)</h2><div class="timeline">${rows.join('')}</div>`;
+}
+
+/** Render task_state rows with stage_logs disclosure (Lint stage details). */
+function renderStates(states) {
+  if (!states || states.length === 0) return '';
+  const rows = states.map((s) => {
+    const cls = areaClass('lint', s.target);
+    const sev = s.status === 'FAILED' ? 'sev-error'
+              : s.status === 'SUCCESS' ? 'sev-ok'
+              : 'sev-info';
+    let detail = '';
+    if (s.status === 'FAILED') {
+      const ls = classifyLintStage(s.failed_stage);
+      const sl = safeJson(s.stage_logs);
+      detail += `<div class="err-card sev-${ls.sev}"><div class="err-head"><span class="err-title">${esc(ls.label)} · retry ${s.retry_count}/3</span></div></div>`;
+      if (sl) {
+        for (const stage of ['stage1', 'stage2', 'stage3']) {
+          const x = sl[stage];
+          if (!x) continue;
+          const head = `${stage}: ${x.pass ? '✓ pass' : '✗ fail'} · exit ${x.code} · ${esc(x.cmd || '')}`;
+          let body = '';
+          if (x.stdout) body += `<b>stdout:</b><div class="code-block">${esc(x.stdout)}</div>`;
+          if (x.stderr) body += `<b>stderr:</b><div class="code-block">${esc(x.stderr)}</div>`;
+          detail += `<details class="disclosure"${x.pass ? '' : ' open'}><summary>${head}</summary><div class="disclosure-body">${body || '<span class="dim">(empty)</span>'}</div></details>`;
+        }
+      }
+      if (s.fix_instructions) {
+        detail += renderCodeDisclosure('▼ 다음 라운드 BE/FE Agent에 전달될 fix_instructions', s.fix_instructions);
+      }
+    }
+    return `
+      <div class="run-row ${sev}">
+        <span class="area-chip ${cls}">Lint</span>
+        <span class="target">/ ${esc(s.target)}</span>
+        <span>${pill(s.status)}</span>
+        <span class="target">retry ${s.retry_count}${s.failed_stage ? ' · ' + esc(s.failed_stage) : ''}</span>
+        <span class="ts">${fmtTime(s.updated_at)}</span>
+      </div>
+      ${detail ? `<details class="disclosure" open><summary>Lint 상세</summary><div class="disclosure-body">${detail}</div></details>` : ''}`;
+  });
+  return `<h2 style="margin-top: 14px;">TASK_STATE (영역별)</h2><div class="timeline">${rows.join('')}</div>`;
+}
+
 async function loadDetail() {
   if (!selectedTaskId) return;
   const data = await fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`);
@@ -318,52 +805,36 @@ async function loadDetail() {
   if (decision) {
     html += `<div><b>verdict:</b> ${pill(decision.final_verdict)} ` +
             `<span class="muted">${fmtTime(decision.updated_at)}</span></div>`;
-    if (decision.final_result_text) {
-      html += `<pre>${(decision.final_result_text || '').replace(/</g, '&lt;')}</pre>`;
-    }
   } else {
     html += '<div class="muted">(no decision row)</div>';
   }
 
-  // Deploy run with ports → render "open FE/BE" + "stop containers" controls.
-  // The same row pattern that the canary container check uses, surfaced as a
-  // quick-access strip before the timeline.
+  // Layer 1 — top-of-panel error summary
+  html += renderTopErrorSummary(decision, states, runs);
+
+  // Deploy run with ports → "FE/BE 열기" + "Stop containers" strip (existing).
   const deployRun = (runs || []).find((r) => r.agent_name === 'Deploy' && r.status === 'SUCCESS');
-  if (deployRun && deployRun.output_json) {
-    let oj;
-    try { oj = typeof deployRun.output_json === 'string' ? JSON.parse(deployRun.output_json) : deployRun.output_json; }
-    catch (_) { oj = {}; }
+  if (deployRun) {
+    const oj = safeJson(deployRun.output_json) || {};
     if (oj.ports && !oj.skipped) {
-      const fePort = oj.ports.fe;
-      const bePort = oj.ports.be;
-      html += '<div style="margin-top: 10px; padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;">';
-      html += '<div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">배포된 서비스 (DEPLOY_TEARDOWN_ON_PASS=off일 때 PASS 후에도 유지)</div>';
-      html += `<a href="http://localhost:${fePort}" target="_blank" rel="noopener" style="margin-right: 8px; color: var(--accent); text-decoration: none; font-weight: 600;">🌐 FE 열기 (:${fePort})</a>`;
-      html += `<a href="http://localhost:${bePort}" target="_blank" rel="noopener" style="margin-right: 8px; color: var(--accent); text-decoration: none; font-weight: 600;">🔌 BE 열기 (:${bePort})</a>`;
-      html += `<button class="secondary" id="stopContainersBtn" style="margin-left: 6px;">🛑 Stop containers</button>`;
-      html += '</div>';
+      const { fe, be } = oj.ports;
+      html += `
+        <div class="err-card sev-ok" style="margin-top: 10px;">
+          <div class="err-head"><span class="err-title">배포된 서비스 (DEPLOY_TEARDOWN_ON_PASS=off일 때 PASS 후에도 유지)</span></div>
+          <div class="err-body">
+            <a href="http://localhost:${fe}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🌐 FE 열기 (:${fe})</a>
+            <a href="http://localhost:${be}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🔌 BE 열기 (:${be})</a>
+            <button class="secondary" id="stopContainersBtn" style="margin-left: 6px;">🛑 Stop containers</button>
+          </div>
+        </div>`;
     }
   }
 
-  html += '<div class="timeline">';
-  for (const r of (runs || [])) {
-    html += `<div class="phase">` +
-      `<span class="label"><b>${r.agent_name}</b>${r.target ? ' / ' + r.target : ''}</span>` +
-      `<span>${pill(r.status)}</span>` +
-      `<span class="ts">${fmtTime(r.started_at)} → ${r.ended_at ? fmtTime(r.ended_at) : '...'}</span>` +
-      `</div>`;
-  }
-  html += '</div>';
+  // Layer 2 — timeline with per-run area chip + severity colour + expand
+  html += renderTimeline(runs);
 
-  if (states && states.length > 0) {
-    html += '<h2 style="margin-top: 14px;">task_state</h2>';
-    html += '<table><thead><tr><th>target</th><th>status</th><th>retry</th><th>failed_stage</th></tr></thead><tbody>';
-    for (const s of states) {
-      html += `<tr><td>${s.target}</td><td>${pill(s.status)}</td>` +
-              `<td>${s.retry_count}</td><td>${s.failed_stage || ''}</td></tr>`;
-    }
-    html += '</tbody></table>';
-  }
+  // task_state rows (Lint) with stage_logs disclosure
+  html += renderStates(states);
 
   root.innerHTML = html;
 
