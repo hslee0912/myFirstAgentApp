@@ -46,6 +46,7 @@ export default signupHandler;
 - 저장 시: `bcrypt.hash(password, 10)`
 - 검증 시: `bcrypt.compare(plain, hashed)`
 - 평문 비교(`if (password === stored)`) 절대 금지.
+- **`bcrypt` 패키지만 사용 — `bcryptjs`는 NOT `bcrypt`** (이름은 비슷하지만 별도 패키지로, `allowedDeps`에 없음). `require('bcryptjs')` 절대 금지. `validateAllowedDeps` 가드가 즉시 ERROR로 잡음.
 
 ## 5-bis. 입력 검증 — allowedDeps만 사용 (위반 시 즉시 ERROR)
 

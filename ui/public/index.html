@@ -290,8 +290,10 @@
       <textarea id="prompt" placeholder="이메일과 비밀번호로 회원가입할 수 있는 기능을 만들어줘..."></textarea>
       <div class="toolbar" style="margin-top: 8px;">
         <button id="runBtn">▶ Run pipeline</button>
+        <button id="redeployBtn" class="secondary" title="현재 worktree 코드 그대로 docker compose up (PostTest 안 함)">🚀 Redeploy</button>
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
         <button id="refreshBtn" class="secondary">↻ Refresh</button>
+        <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
       </div>
       <div class="status" id="runStatus">idle</div>
 
@@ -895,6 +897,79 @@ $('#resetDbBtn').addEventListener('click', async () => {
 });
 
 $('#refreshBtn').addEventListener('click', () => { loadTasks(); loadDetail(); });
+
+$('#redeployBtn').addEventListener('click', async () => {
+  if (!confirm('현재 worktree 코드 그대로 docker compose up을 다시 실행합니다.\n\n• Phase 1~7 (생성·검증) skip\n• Phase 8 (Deploy)만 실행 — PostTest는 안 함\n• .env의 DEPLOY_MODE=off면 거부됨\n\n계속할까요?')) return;
+  $('#redeployBtn').disabled = true;
+  $('#redeployBtn').textContent = '🚀 deploying…';
+  try {
+    const r = await fetchJSON('/api/redeploy', { method: 'POST' });
+    if (r.ok) {
+      const p = r.ports || {};
+      alert(
+        `Redeploy 완료 (task_id=${r.task_id})\n\n` +
+        `🌐 FE: http://localhost:${p.fe}\n` +
+        `🔌 BE: http://localhost:${p.be}\n` +
+        `🗄  DB: localhost:${p.mysql}`
+      );
+    } else if (r._status === 400) {
+      // DEPLOY_MODE=off rejection — surface server message verbatim.
+      alert(r.error || 'Redeploy 거부됨 (DEPLOY_MODE=off).');
+    } else if (r._status === 409) {
+      alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
+    } else {
+      alert('Redeploy 실패: ' + (r.error || r._text || 'unknown'));
+    }
+  } catch (e) {
+    alert('Redeploy 호출 실패: ' + e.message);
+  } finally {
+    $('#redeployBtn').disabled = false;
+    $('#redeployBtn').textContent = '🚀 Redeploy';
+    loadTasks();
+  }
+});
+
+$('#rollbackBtn').addEventListener('click', async () => {
+  $('#rollbackBtn').disabled = true;
+  $('#rollbackBtn').textContent = '⏮ checking…';
+  try {
+    const p = await fetchJSON('/api/rollback-preview');
+    const ahead = p.ahead_commits || [];
+    const dirty = p.dirty_files || [];
+    if (!p.can_rollback) {
+      alert('롤백할 변경사항 없음 — 이미 origin/main 상태입니다.');
+      return;
+    }
+    const msg =
+      '⚠ origin/main 상태로 되돌립니다. 작업 손실 위험이 있습니다.\n\n' +
+      `로컬 commit ${ahead.length}개가 사라짐:\n` +
+      (ahead.slice(0, 8).map((c) => '  • ' + c).join('\n') || '  (없음)') +
+      (ahead.length > 8 ? `\n  ... 외 ${ahead.length - 8}개` : '') +
+      `\n\n작업 트리에서 정리될 파일 ${dirty.length}개:\n` +
+      (dirty.slice(0, 8).map((f) => '  • ' + f).join('\n') || '  (없음)') +
+      (dirty.length > 8 ? `\n  ... 외 ${dirty.length - 8}개` : '') +
+      (p.env_will_reset
+        ? '\n\n.env는 .env.example로 reset되고, 현재 .env는 .env.backup으로 백업됩니다 (기존 .env.backup 덮어씀).\nANTHROPIC_API_KEY와 DB_PASSWORD를 다시 입력해야 합니다.'
+        : '\n\n.env.example이 없어 .env는 그대로 유지됩니다.') +
+      '\n\n정말 진행할까요?';
+    if (!confirm(msg)) return;
+    $('#rollbackBtn').textContent = '⏮ resetting…';
+    const r = await fetchJSON('/api/rollback', { method: 'POST' });
+    if (r.ok) {
+      alert(`Rollback 완료 — ${r.reset_to}.\n\n${r.notice || ''}`);
+      // Reload everything since .env / BE / FE / tasks all may have changed.
+      await Promise.all([loadEnv(), loadTasks()]);
+      loadDetail();
+    } else {
+      alert('Rollback 실패: ' + (r.error || r._text || 'unknown'));
+    }
+  } catch (e) {
+    alert('Rollback 호출 실패: ' + e.message);
+  } finally {
+    $('#rollbackBtn').disabled = false;
+    $('#rollbackBtn').textContent = '⏮ Reset to origin/main';
+  }
+});
 
 (async function main() {
   await Promise.all([loadEnv(), loadTasks()]);

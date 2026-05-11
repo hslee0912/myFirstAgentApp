@@ -23,7 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const express = require('express');
 require('dotenv').config({ override: true });
 
@@ -240,6 +240,140 @@ app.post('/api/stop-containers', (_req, res) => {
   try {
     deployAgent.teardown();
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---------------- Reset to origin/main ----------------
+
+function gitOut(args) {
+  const r = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', windowsHide: true });
+  return { code: r.status ?? -1, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+app.get('/api/rollback-preview', (_req, res) => {
+  // Best-effort fetch so origin/main is current. Failures are non-fatal —
+  // we'll just preview against whatever local origin/main we have.
+  gitOut(['fetch', 'origin', 'main']);
+  const aheadOut = gitOut(['log', '--oneline', 'origin/main..HEAD']);
+  const ahead = aheadOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  const statusOut = gitOut(['status', '--porcelain']);
+  const dirty = statusOut.stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      // Only count paths we actually clean — BE/, FE/, shared/. Ignore
+      // node_modules / .claude / *.log / .env (these are preserved or untouched).
+      const m = line.match(/^..\s+(.+)$/);
+      const p = m ? m[1] : line;
+      if (/^node_modules\//.test(p) || /^\.claude\//.test(p) || /\.log$/.test(p)) return false;
+      if (p === '.env' || /\.env\.backup/.test(p)) return false;
+      return /^(BE|FE|shared)\//.test(p) || /^\.env\.tmp$/.test(p) || /^[^/]+$/.test(p);
+    });
+  const envExists = fs.existsSync(ENV_PATH);
+  const envExampleExists = fs.existsSync(path.join(ROOT, '.env.example'));
+  res.json({
+    ahead_commits: ahead,                // local commits that will disappear
+    dirty_files: dirty,                  // working-dir paths that will be cleaned
+    env_will_reset: envExists && envExampleExists,
+    backup_path: '.env.backup',          // existing backup will be overwritten
+    can_rollback: ahead.length > 0 || dirty.length > 0,
+  });
+});
+
+app.post('/api/rollback', (_req, res) => {
+  try {
+    // 1. .env backup (fixed name — overwrites any previous backup)
+    let envBackedUp = false;
+    if (fs.existsSync(ENV_PATH)) {
+      fs.copyFileSync(ENV_PATH, path.join(ROOT, '.env.backup'));
+      envBackedUp = true;
+    }
+
+    // 2. git reset --hard origin/main
+    const reset = gitOut(['reset', '--hard', 'origin/main']);
+    if (reset.code !== 0) {
+      return res.status(500).json({ ok: false, error: `git reset failed: ${reset.stderr}` });
+    }
+
+    // 3. git clean -fd for BE/, FE/, shared/ — untracked LLM artifacts.
+    //    .env / node_modules / .claude / *.log are excluded by -e patterns.
+    const clean = gitOut([
+      'clean', '-fd',
+      '-e', '.env', '-e', '.env.backup', '-e', 'node_modules', '-e', '.claude/', '-e', '*.log',
+      'BE/', 'FE/', 'shared/',
+    ]);
+    if (clean.code !== 0) {
+      // Non-fatal — partial cleanup still useful. Report stderr but mark ok.
+      console.warn(`[ui] rollback: git clean warning: ${clean.stderr}`);
+    }
+
+    // 4. .env reset from .env.example (placeholder values — user must re-enter secrets).
+    let envReset = false;
+    const examplePath = path.join(ROOT, '.env.example');
+    if (fs.existsSync(examplePath)) {
+      fs.copyFileSync(examplePath, ENV_PATH);
+      envReset = true;
+    }
+
+    res.json({
+      ok: true,
+      reset_to: 'origin/main',
+      env_backed_up: envBackedUp,
+      env_reset: envReset,
+      backup_path: '.env.backup',
+      notice: envReset
+        ? 'ANTHROPIC_API_KEY와 DB_PASSWORD를 다시 입력해야 합니다 (.env.example의 placeholder로 reset됨). 이전 .env는 .env.backup에 백업.'
+        : '.env.example을 찾지 못해 .env는 그대로 유지.',
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---------------- Redeploy (compose up only, no PostTest) ----------------
+
+app.post('/api/redeploy', async (_req, res) => {
+  // DEPLOY_MODE=off면 의도적 거부 — 사용자가 토글을 끈 상태에서 우연히 누른 경우 방지.
+  // *.env 디스크 상태*를 보고 판단 (UI 토글이 즉시 반영되어야 하므로 process.env 캐시 사용 X).
+  const diskEnv = readEnv(ENV_PATH);
+  const mode = (diskEnv.DEPLOY_MODE || process.env.DEPLOY_MODE || 'on').toLowerCase();
+  if (mode !== 'on') {
+    return res.status(400).json({
+      ok: false,
+      error: '.env의 DEPLOY_MODE가 off라 Redeploy 실행 안 됩니다. 좌측 토글을 on으로 바꾸고 다시 시도하세요.',
+    });
+  }
+  if (currentRun) {
+    return res.status(409).json({
+      ok: false,
+      error: '다른 작업 진행 중. 끝난 후 다시 시도하세요.',
+      current: { task_id: currentRun.task_id, pid: currentRun.pid },
+    });
+  }
+  try {
+    // Sync disk → process.env for the deploy-relevant keys so deployAgent.run()
+    // (which reads process.env directly) sees the UI's latest toggle state, not
+    // the stale snapshot from server startup.
+    for (const k of ['DEPLOY_MODE', 'DEPLOY_PORT_FE', 'DEPLOY_PORT_BE', 'DEPLOY_PORT_DB',
+                     'DEPLOY_TIMEOUT_SEC', 'LOG_TAIL_LINES', 'DEPLOY_TEARDOWN_ON_PASS']) {
+      if (diskEnv[k] != null && diskEnv[k] !== '') process.env[k] = diskEnv[k];
+    }
+    const taskId =
+      'manual_redeploy_' +
+      new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+    const result = await deployAgent.run({ task_id: taskId });
+    // deploy_agent.run() mutates process.env.DEPLOY_PORT_* with the resolved
+    // (post-fallback) host ports. Surface them so the UI can show "FE 열기"
+    // links pointing at the right places without round-tripping through DB.
+    const ports = {
+      mysql: Number(process.env.DEPLOY_PORT_DB || 3306),
+      be:    Number(process.env.DEPLOY_PORT_BE || 3001),
+      fe:    Number(process.env.DEPLOY_PORT_FE || 5173),
+    };
+    res.json({ ok: result.status === 'SUCCESS', task_id: taskId, status: result.status, ports });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

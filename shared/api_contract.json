@@ -6,7 +6,7 @@
       "name": "auth_signup",
       "path": "/auth/signup",
       "method": "POST",
-      "description": "이메일과 비밀번호로 회원가입"
+      "description": "이메일과 비밀번호로 사용자 회원가입"
     }
   ]
 }

@@ -90,6 +90,7 @@ async function isEmailTaken(email) { ... }
   - `require('jsonwebtoken')`, `require('uuid')` — `crypto.randomUUID()` (Node builtin)으로 충분.
   - `require('lodash')`, `require('ramda')`, `require('moment')`, `require('date-fns')` — 표준 라이브러리/직접 구현으로 처리.
   - `import 'styled-components'`, `import '@emotion/react'` — FE는 인라인 style 또는 plain CSS만.
+  - **`require('bcryptjs')` — NOT `bcrypt`**. 이름은 비슷하지만 별도 패키지. BE allowedDeps엔 `bcrypt`만 있음. **`bcrypt`만 사용**.
 - 이 가드는 *retry 없는 즉시 ERROR* 이다 (validatePaths와 동일). prompt 단계에서 룰을 따르는 게 정상 경로.
 
 ### 보호 파일 — 절대 수정·생성·참조 금지
