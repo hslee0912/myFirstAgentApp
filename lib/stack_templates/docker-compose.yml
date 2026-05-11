@@ -71,11 +71,17 @@ services:
       dockerfile: Dockerfile
     labels:
       com.myfirstagentapp.managed: "true"
+    environment:
+      # FE vite.config.js의 proxy target. compose 내부 network에서 BE 컨테이너
+      # service name 'be'로 접근. 브라우저 fetch가 상대경로 /api/*를 쓸 때
+      # Vite dev server가 받아 여기로 forward한다.
+      VITE_BE_PROXY_TARGET: http://be:3001
     ports:
       - "${DEPLOY_PORT_FE:-5173}:5173"
-    # FE Vite dev server runs in this container; the browser (on host) calls
-    # BE at host:DEPLOY_PORT_BE, not via internal compose network. So a
-    # service_healthy gate on BE is unnecessary — simple ordering is enough.
+    # FE Vite dev server runs in this container. 브라우저는 호스트 5173으로
+    # 들어와 vite에 도착하고, vite가 /api/*를 위 VITE_BE_PROXY_TARGET으로
+    # forward한다. BE 컨테이너의 외부 expose port(DEPLOY_PORT_BE)는 직접
+    # 호출하지 않음 — 브라우저는 같은 origin(5173)으로 비즈니스 API 호출.
     depends_on:
       - be
     restart: "no"
