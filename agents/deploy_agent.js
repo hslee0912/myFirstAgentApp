@@ -22,6 +22,7 @@
  */
 'use strict';
 
+const net = require('net');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -31,6 +32,7 @@ const ROOT = path.resolve(__dirname, '..');
 const COMPOSE_FILE = path.join(ROOT, 'lib', 'stack_templates', 'docker-compose.yml');
 
 const SERVICES = ['mysql', 'be', 'fe'];
+const PORT_FALLBACK_MAX_OFFSET = 20;
 
 // ---------------- compose CLI auto-detection ----------------
 
@@ -78,6 +80,90 @@ function getPorts() {
     be: Number(process.env.DEPLOY_PORT_BE || 3001),
     fe: Number(process.env.DEPLOY_PORT_FE || 5173),
   };
+}
+
+const PORT_ENV_KEY = { mysql: 'DEPLOY_PORT_DB', be: 'DEPLOY_PORT_BE', fe: 'DEPLOY_PORT_FE' };
+
+// ---------------- port availability + fallback ----------------
+
+/**
+ * Try to bind a server to `port` on 0.0.0.0. Returns true if the bind
+ * succeeds (port is free) and false if EADDRINUSE / EACCES occurs.
+ * The probe is short-lived; the listener is closed before resolving.
+ *
+ * @param {number} port
+ * @returns {Promise<boolean>}
+ */
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    let settled = false;
+    const finish = (free) => {
+      if (settled) return;
+      settled = true;
+      try { server.close(); } catch (_) { /* ignore */ }
+      resolve(free);
+    };
+    server.once('error', () => finish(false));
+    server.once('listening', () => {
+      server.close(() => finish(true));
+    });
+    try {
+      server.listen(port, '0.0.0.0');
+    } catch (_) {
+      finish(false);
+    }
+  });
+}
+
+/**
+ * Probe `start, start+1, ..., start+maxOffset` and return the first free one.
+ * Throws when none are free within the window.
+ *
+ * @param {number} start
+ * @param {string} label - 'mysql' | 'be' | 'fe' (drives the .env hint)
+ * @param {number} [maxOffset]
+ * @returns {Promise<number>}
+ */
+async function findFreePort(start, label, maxOffset = PORT_FALLBACK_MAX_OFFSET) {
+  for (let offset = 0; offset <= maxOffset; offset++) {
+    const port = start + offset;
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPortFree(port)) {
+      if (offset > 0) {
+        const envKey = PORT_ENV_KEY[label] || `DEPLOY_PORT_${label.toUpperCase()}`;
+        console.warn(
+          `[deploy] port ${start} (${label}) is in use — falling back to ${port}. ` +
+          `Set ${envKey}=${port} in .env to persist.`
+        );
+      }
+      return port;
+    }
+  }
+  throw new Error(
+    `[deploy] No free port found for ${label} in range ${start}..${start + maxOffset}`
+  );
+}
+
+/**
+ * Resolve every Deploy host port, falling back to the next free port on
+ * conflict (e.g. host MySQL already on 3306). Mutates process.env so docker
+ * compose's `${DEPLOY_PORT_*}` substitution and Phase 9 PostTest see the
+ * resolved values consistently. Container-internal ports are unaffected.
+ *
+ * @param {{mysql:number, be:number, fe:number}} requested
+ * @returns {Promise<{mysql:number, be:number, fe:number, changed:boolean}>}
+ */
+async function resolvePortsWithFallback(requested) {
+  const mysql = await findFreePort(requested.mysql, 'mysql');
+  const be = await findFreePort(requested.be, 'be');
+  const fe = await findFreePort(requested.fe, 'fe');
+  process.env.DEPLOY_PORT_DB = String(mysql);
+  process.env.DEPLOY_PORT_BE = String(be);
+  process.env.DEPLOY_PORT_FE = String(fe);
+  const changed =
+    mysql !== requested.mysql || be !== requested.be || fe !== requested.fe;
+  return { mysql, be, fe, changed };
 }
 
 // ---------------- compose invocation helpers ----------------
@@ -160,12 +246,12 @@ async function run({ task_id }) {
   const mode = getDeployMode();
   const timeoutMs = getTimeoutMs();
   const tail = getLogTailLines();
-  const ports = getPorts();
+  const requestedPorts = getPorts();
 
   const run_id = await logger.startRun({
     task_id,
     agent_name: 'Deploy',
-    input_json: { mode, ports, timeoutMs, compose_file: COMPOSE_FILE },
+    input_json: { mode, ports: requestedPorts, timeoutMs, compose_file: COMPOSE_FILE },
   });
 
   // D26=A: DEPLOY_MODE=off → skip with auto-SUCCESS, marked in output_json.
@@ -185,6 +271,33 @@ async function run({ task_id }) {
     await logger.endRun(run_id, {
       status: 'FAILED',
       output_json: { exit_code: -1, failed_stage: 'docker_check', error: dockerCheck.error },
+    });
+    return { status: 'FAILED' };
+  }
+
+  // Port pre-flight: probe each host port and fall back to the next free one
+  // when the requested port is occupied (e.g. host MySQL already on 3306).
+  // process.env is mutated so docker compose substitution + Phase 9 PostTest
+  // see the resolved port consistently.
+  let ports;
+  try {
+    ports = await resolvePortsWithFallback(requestedPorts);
+    if (ports.changed) {
+      console.log(
+        `[deploy] resolved ports: mysql=${ports.mysql} be=${ports.be} fe=${ports.fe} ` +
+        `(requested mysql=${requestedPorts.mysql} be=${requestedPorts.be} fe=${requestedPorts.fe})`
+      );
+    }
+  } catch (e) {
+    console.error(`[deploy] ${e.message}`);
+    await logger.endRun(run_id, {
+      status: 'FAILED',
+      output_json: {
+        exit_code: -1,
+        failed_stage: 'port_preflight',
+        error: e.message,
+        requested_ports: requestedPorts,
+      },
     });
     return { status: 'FAILED' };
   }
@@ -253,6 +366,8 @@ async function run({ task_id }) {
       duration_ms,
       services: { mysql: 'healthy', be: 'running', fe: 'running' },
       ports,
+      requested_ports: requestedPorts,
+      ports_changed: ports.changed,
     },
   });
   return { status: 'SUCCESS' };
@@ -267,4 +382,4 @@ function teardown() {
   composeDown();
 }
 
-module.exports = { run, teardown };
+module.exports = { run, teardown, isPortFree, findFreePort, resolvePortsWithFallback };

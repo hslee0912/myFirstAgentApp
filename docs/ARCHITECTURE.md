@@ -111,7 +111,8 @@ CLAUDE.md의 다이어그램이 핵심 요약. 본 섹션은 Phase별 부가 정
 ### Phase 8 — Deploy Agent (결정론, 선택적)
 - 1차 verdict가 PASS일 때만 1회 실행 (D25=B). FAIL/ERROR면 skip.
 - `DEPLOY_MODE=off`면 SUCCESS+skipped로 자동 통과 (`output_json.skipped='DEPLOY_MODE=off'`).
-- 호출 시퀀스: Docker 설치 check (D27=A) → pre-cleanup (D6=B) → `docker compose up --build --detach [--wait]` (timeout `DEPLOY_TIMEOUT_SEC`) → output_json 분기 (D31=C: PASS는 가벼움 / FAIL은 service별 logs).
+- 호출 시퀀스: Docker 설치 check (D27=A) → **port preflight (자동 fallback, D34)** → pre-cleanup (D6=B) → `docker compose up --build --detach [--wait]` (timeout `DEPLOY_TIMEOUT_SEC`) → output_json 분기 (D31=C: PASS는 가벼움 / FAIL은 service별 logs).
+- **Port preflight**: 매 실행 시작 시 `DEPLOY_PORT_{DB,BE,FE}` 호스트 포트 3개를 `net.createServer().listen(port)`로 probe. 충돌이면 `+1..+20` 시도 후 첫 빈 포트로 fallback. `process.env` 갱신 후 compose 호출(`${DEPLOY_PORT_*}` substitution)과 Phase 9 PostTest (`baseUrl`) 가 같은 새 값 공유. fallback 발생 시 console에 `.env` 영구 설정 힌트 출력. 윈도우 모두 실패 시 `failed_stage='port_preflight'` FAIL. 자세한 내용은 [OPERATIONS.md](OPERATIONS.md) "포트 충돌 시" 참조.
 - compose CLI: v2 (`docker compose`) 우선, v1 fallback. `--wait`는 v2 전용 (mysql healthcheck 통과까지 대기 — D14=B 시너지).
 
 ### Phase 9 — PostTest Agent (결정론, 선택적)
