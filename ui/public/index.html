@@ -178,11 +178,50 @@ async function fetchJSON(url, opts) {
   return r.json();
 }
 
+// 3-state toggle keys: each maps an on/off checkbox to two string values.
+// Anything else falls back to the text+save row layout below.
+const TOGGLE_KEYS = {
+  COMMIT_MODE:     { on: 'auto', off: 'manual' },
+  VALIDATION_MODE: { on: 'on',   off: 'off' },
+  DEPLOY_MODE:     { on: 'on',   off: 'off' },
+};
+
+async function putEnv(key, value) {
+  return fetchJSON('/api/env', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [key]: value }),
+  });
+}
+
 async function loadEnv() {
   const data = await fetchJSON('/api/env');
   const root = $('#envEditor');
   root.innerHTML = '';
+
+  // Toggle row at the top — checked = "on value", unchecked = "off value".
+  // change event writes to .env immediately.
   for (const k of data.editableKeys) {
+    if (!TOGGLE_KEYS[k]) continue;
+    const t = TOGGLE_KEYS[k];
+    const val = data.editable[k] ?? '';
+    const checked = val === t.on;
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.style.marginBottom = '4px';
+    wrap.innerHTML =
+      `<label style="flex:0 0 200px; margin:0; font-family: ui-monospace, monospace;">${k}</label>` +
+      `<label style="flex:1; display:flex; align-items:center; gap:8px; margin:0;">` +
+        `<input type="checkbox" data-toggle="${k}" ${checked ? 'checked' : ''} />` +
+        `<span data-toggle-value="${k}" style="font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px;">${checked ? t.on : t.off}</span>` +
+      `</label>` +
+      `<span data-toggle-status="${k}" class="status" style="flex:0 0 60px; text-align:right;"></span>`;
+    root.appendChild(wrap);
+  }
+
+  // The remaining keys (models, ports, retries, ...) keep the text+save layout.
+  for (const k of data.editableKeys) {
+    if (TOGGLE_KEYS[k]) continue;
     const val = data.editable[k] ?? '';
     const wrap = document.createElement('div');
     wrap.className = 'row';
@@ -193,6 +232,38 @@ async function loadEnv() {
       `<button class="secondary" data-save="${k}">save</button>`;
     root.appendChild(wrap);
   }
+
+  // Wire toggle change → immediate PUT.
+  root.querySelectorAll('input[data-toggle]').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      const key = cb.getAttribute('data-toggle');
+      const t = TOGGLE_KEYS[key];
+      const value = cb.checked ? t.on : t.off;
+      const valueEl = root.querySelector(`[data-toggle-value="${key}"]`);
+      const statusEl = root.querySelector(`[data-toggle-status="${key}"]`);
+      cb.disabled = true;
+      statusEl.textContent = 'saving…';
+      try {
+        const res = await putEnv(key, value);
+        if (res.ok) {
+          valueEl.textContent = value;
+          statusEl.textContent = '✓ saved';
+        } else {
+          // Revert checkbox state on failure.
+          cb.checked = !cb.checked;
+          statusEl.textContent = '✗ fail';
+        }
+      } catch (_) {
+        cb.checked = !cb.checked;
+        statusEl.textContent = '✗ fail';
+      } finally {
+        cb.disabled = false;
+        setTimeout(() => { statusEl.textContent = ''; }, 1500);
+      }
+    });
+  });
+
+  // Wire text+save buttons (unchanged behavior).
   root.querySelectorAll('button[data-save]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const key = btn.getAttribute('data-save');
@@ -200,11 +271,7 @@ async function loadEnv() {
       const value = input.value;
       btn.disabled = true;
       try {
-        const res = await fetchJSON('/api/env', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [key]: value }),
-        });
+        const res = await putEnv(key, value);
         if (res.ok) {
           btn.textContent = 'saved';
           setTimeout(() => { btn.textContent = 'save'; btn.disabled = false; }, 1200);
