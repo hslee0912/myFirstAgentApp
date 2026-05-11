@@ -2,6 +2,34 @@
 
 표준 명령, 정상 소요 시간, 자주 하는 작업, 트러블슈팅. 시스템 구조는 [ARCHITECTURE.md](ARCHITECTURE.md) 참조.
 
+## 테스트·검증 워크트리 정책 (단일 재사용)
+
+orchestrator·BE Agent·FE Agent를 돌리는 모든 실행은 **main 프로젝트 디렉터리에서 직접 돌리지 말 것**. 대신 다음 단일 워크트리를 사용:
+
+- 경로: `.claude/worktrees/test/`
+- 브랜치: `claude/test`
+
+**처음 한 번 만들기** (이미 있으면 skip):
+```bash
+git worktree add .claude/worktrees/test -b claude/test
+cp .env .claude/worktrees/test/.env
+```
+
+**그 이후 모든 실행은 같은 워크트리 재사용** — 매번 새 워크트리 만들지 말 것. 이유:
+- `npm install` 캐시 절약 (FE 366 + BE 475 패키지를 매번 새로 깔지 않음)
+- 디스크에 워크트리 누적 방지 (`finalize`, `verify-port-fix`, `deploy-check` 식으로 쌓이지 않음)
+- stale docker 컨테이너 누적 방지 (Phase 7.5 teardown은 PASS일 때만 동작 — 새 워크트리는 새 compose project name이라 따로 teardown 안 됨)
+
+**다음 사이클 사이 정리** (필요할 때만):
+```bash
+cd .claude/worktrees/test && rm -rf BE FE
+# bootstrap이 fresh 템플릿 다시 깔아줌. node_modules는 보존 (재설치 불필요)
+```
+
+**별도 feature 브랜치가 정말 필요할 때**만 새 워크트리 만들기. 일반 검증·실험은 `test` 워크트리 하나로 충분.
+
+`main` 프로젝트 디렉터리는 코드 편집·git history 관리용. orchestrator 실행 영역이 아님.
+
 ## 표준 명령
 
 ```bash
