@@ -52,8 +52,12 @@ node agents/orchestrator.js "기능 요청 자연어..."   # 커스텀
 #   - prompt 입력 + Run 버튼 → orchestrator spawn (동시 1 run)
 #   - 최근 task 목록 + 클릭하면 decision/states/runs 상세 (1.5초 polling)
 #   - .env 토글 GUI editor (UI_EDITABLE_KEYS 화이트리스트만)
-#   - reset-db 버튼
-#   - 포트 충돌 시 자동 fallback (+1..+20)
+#   - reset-db / Stop containers / FE/BE 열기 (Deploy PASS 시)
+#   - 시작 시 4개 포트(UI_PORT/DEPLOY_PORT_FE/BE/DB) 자동 정리:
+#     · node.exe 좀비만 강제 종료 (KILLABLE)
+#     · mysqld/postgres/docker daemon은 PROTECTED — 절대 안 건드림
+#     · 그 외(unknown)·이미 죽은 socket(opaque)은 skip + 경고만
+#   - 그래도 포트 충돌이면 자동 +1..+20 fallback (dual-stack probe)
 npm run ui
 
 # 검증 끄고 빠르게 LLM 원시 출력만 보고 싶을 때 (ablation)

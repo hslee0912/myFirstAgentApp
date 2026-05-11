@@ -29,6 +29,7 @@ require('dotenv').config({ override: true });
 
 const { readEnv, updateEnv, UI_EDITABLE_KEYS } = require('../lib/env_writer');
 const { normalizeContract } = require('../lib/api_test');
+const { killHostHolders } = require('../lib/port_killer');
 const deployAgent = require('../agents/deploy_agent');
 const db = require('../lib/db');
 
@@ -262,6 +263,21 @@ app.post('/api/reset-db', async (_req, res) => {
 // ---------------- bootstrap ----------------
 
 async function main() {
+  // Kill stale node.exe processes holding any canonical project port
+  // (UI_PORT + the three DEPLOY_PORT_*). System services (mysqld, postgres,
+  // docker daemon) are explicitly protected. Settle 500ms so the OS
+  // actually releases the socket before findFreePort probes.
+  const sweepPorts = [
+    REQUESTED_PORT,
+    Number(process.env.DEPLOY_PORT_FE || 5173),
+    Number(process.env.DEPLOY_PORT_BE || 3001),
+    Number(process.env.DEPLOY_PORT_DB || 3306),
+  ];
+  const sweepResult = killHostHolders(sweepPorts, 'ui');
+  if (sweepResult.killed.length > 0) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
   const port = await findFreePort(REQUESTED_PORT);
   // Bind explicitly to IPv4 0.0.0.0 (not dual-stack). Avoids the failure
   // mode where IPv4 probe says free but a stale IPv6 listener forces
