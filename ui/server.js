@@ -90,8 +90,14 @@ function startOrchestrator(userPrompt) {
 
 // ---------------- port preflight (mirror deploy_agent) ----------------
 
+/**
+ * Probe `port` on both IPv4 (0.0.0.0) and IPv6 (::) so we don't get bitten
+ * by a stale process holding only one stack while the other looks free.
+ * Without this, IPv4 probe says "free" → `app.listen(port)` opens dual-stack
+ * → EADDRINUSE on the IPv6 side. Both must be free for us to commit.
+ */
 function isPortFree(port) {
-  return new Promise((resolve) => {
+  const probe = (host) => new Promise((resolve) => {
     const server = net.createServer();
     let settled = false;
     const finish = (free) => {
@@ -102,8 +108,11 @@ function isPortFree(port) {
     };
     server.once('error', () => finish(false));
     server.once('listening', () => server.close(() => finish(true)));
-    try { server.listen(port, '0.0.0.0'); } catch (_) { finish(false); }
+    try { server.listen(port, host); } catch (_) { finish(false); }
   });
+  return Promise.all([probe('0.0.0.0'), probe('::')]).then(
+    ([v4, v6]) => v4 && v6,
+  );
 }
 
 async function findFreePort(start, max = 20) {
@@ -244,9 +253,26 @@ app.post('/api/reset-db', async (_req, res) => {
 
 async function main() {
   const port = await findFreePort(REQUESTED_PORT);
-  app.listen(port, () => {
+  // Bind explicitly to IPv4 0.0.0.0 (not dual-stack). Avoids the failure
+  // mode where IPv4 probe says free but a stale IPv6 listener forces
+  // app.listen to EADDRINUSE on `:::PORT`. localhost browser access still
+  // works — the OS resolves localhost to 127.0.0.1 first.
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`[ui] listening on http://localhost:${port}`);
     console.log(`[ui] open the URL in a browser to drive the orchestrator`);
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `[ui] port ${port} taken between preflight and listen — likely a ` +
+        `stale node process. Find + kill with:\n` +
+        `      Get-NetTCPConnection -LocalPort ${port} | Select OwningProcess\n` +
+        `      Stop-Process -Id <pid> -Force`
+      );
+    } else {
+      console.error('[ui] listen error:', err);
+    }
+    process.exit(1);
   });
 }
 
