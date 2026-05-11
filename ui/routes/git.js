@@ -168,10 +168,17 @@ function restoreEnvFromExampleAndBackup() {
  *   - can_merge:       위 세 조건이 모두 우호적인지
  *   - reason:          can_merge=false일 때 사람이 읽을 안내
  */
-router.get('/merge-preview', (_req, res) => {
+router.get('/merge-preview', (req, res) => {
   // origin/main 최신 정보 확보. 실패는 non-fatal — 그 경우 *마지막으로 알려진*
   // origin/main 기준으로 preview를 보여줌.
-  gitOut(['fetch', 'origin', 'main']);
+  //
+  // ?fetch=0 query는 polling용 경량 호출 (network round-trip 생략). UI 측의
+  // pollMergeStatus는 1.5초마다 이걸 호출해 버튼 enable 여부를 결정하는데
+  // 매번 fetch까지 하면 git server에 부담이라 옵트아웃 가능하게 둠. 사용자가
+  // 실제 버튼을 누르는 시점엔 query 없이 호출해 fresh fetch.
+  if (req.query.fetch !== '0') {
+    gitOut(['fetch', 'origin', 'main']);
+  }
 
   const branchOut = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']);
   const branch = (branchOut.stdout || '').trim() || 'HEAD';

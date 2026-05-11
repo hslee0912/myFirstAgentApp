@@ -345,7 +345,9 @@
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
         <button id="refreshBtn" class="secondary">↻ Refresh</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
-        <button id="mergeBtn" class="secondary" style="border-color: var(--accent); color: var(--accent);" title="현재 브랜치를 push + origin/main으로 fast-forward push">🔀 Merge to main</button>
+        <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
+             ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
+        <button id="mergeBtn" class="secondary" disabled style="border-color: var(--accent); color: var(--accent);" title="merge 가능 여부 확인 중...">🔀 Merge to main</button>
       </div>
       <div class="status" id="runStatus">idle</div>
 
@@ -1175,15 +1177,64 @@ $('#rollbackBtn').addEventListener('click', async () => {
   }
 });
 
+/**
+ * Merge to main 버튼의 enable/disable 상태를 polling으로 동기화.
+ *
+ * - ahead commit이 없거나 / dirty가 있거나 / ff 불가하면 → button.disabled=true,
+ *   title 속성에 사유 표기 (마우스 호버 시 tooltip).
+ * - 사용자가 commit하면 다음 polling cycle(1.5s)에 자동으로 활성화.
+ *
+ * ?fetch=0 옵션으로 git fetch는 생략 — 네트워크 round-trip 부담을 피한다.
+ * 사용자가 실제 클릭하는 시점엔 click handler에서 fetch 포함된 preview를
+ * 다시 호출해 freshness를 보장.
+ */
+async function pollMergeStatus() {
+  const btn = $('#mergeBtn');
+  if (!btn) return;
+  try {
+    const p = await fetchJSON('/api/merge-preview?fetch=0');
+    if (p.can_merge) {
+      btn.disabled = false;
+      const aheadCount = (p.ahead_commits || []).length;
+      btn.title = `${p.branch} → origin/main fast-forward (${aheadCount}개 commit)`;
+    } else {
+      btn.disabled = true;
+      btn.title = p.reason || 'merge 불가 상태';
+    }
+  } catch (_) {
+    // API 실패 시엔 안전을 위해 disabled 유지 (이미 disabled면 그대로).
+    btn.disabled = true;
+    btn.title = 'merge 상태 확인 실패';
+  }
+}
+
 $('#mergeBtn').addEventListener('click', async () => {
   $('#mergeBtn').disabled = true;
   $('#mergeBtn').textContent = '🔀 checking…';
   try {
+    // 클릭 시엔 query 없이 호출 → fresh fetch + 정확한 사유. polling은 fetch=0
+    // 으로 경량이지만, 사용자가 직접 행동하는 순간엔 최신 origin/main을 확인.
     const p = await fetchJSON('/api/merge-preview');
     if (!p.can_merge) {
-      alert('Merge 불가\n\n' + (p.reason || '알 수 없는 사유') +
-            (p.ahead_commits && p.ahead_commits.length ? `\n\n현재 ahead commit ${p.ahead_commits.length}개:\n` +
-              p.ahead_commits.slice(0, 5).map((c) => '  • ' + c).join('\n') : ''));
+      // 사유별로 더 친절한 alert (어떤 파일이 dirty인지 / ff 안 되면 어떻게 풀지).
+      let msg = 'Merge 불가\n\n사유: ' + (p.reason || '알 수 없음');
+      if (p.dirty_files && p.dirty_files.length > 0) {
+        msg += `\n\ncommit 안 된 파일 ${p.dirty_files.length}개:\n` +
+          p.dirty_files.slice(0, 8).map((f) => '  • ' + f).join('\n') +
+          (p.dirty_files.length > 8 ? `\n  ... 외 ${p.dirty_files.length - 8}개` : '') +
+          '\n\n→ 먼저 git commit 또는 정리 후 다시 시도하세요.';
+      } else if (!p.ff_possible) {
+        msg += '\n\n→ 해결 방법:\n' +
+          '  • 로컬에서 git rebase origin/main 후 충돌 해결\n' +
+          '  • 또는 GitHub에서 PR을 만들어 머지';
+      } else if (p.ahead_commits && p.ahead_commits.length === 0) {
+        msg += '\n\n→ 새로 commit한 뒤에만 Merge 버튼이 활성화됩니다.';
+      }
+      if (p.ahead_commits && p.ahead_commits.length > 0) {
+        msg += `\n\n현재 ahead commit ${p.ahead_commits.length}개:\n` +
+          p.ahead_commits.slice(0, 5).map((c) => '  • ' + c).join('\n');
+      }
+      alert(msg);
       return;
     }
     const ahead = p.ahead_commits || [];
@@ -1224,8 +1275,9 @@ $('#mergeBtn').addEventListener('click', async () => {
 
 (async function main() {
   await Promise.all([loadEnv(), loadTasks()]);
-  setInterval(() => { loadTasks(); loadDetail(); pollRunStatus(); }, 1500);
+  setInterval(() => { loadTasks(); loadDetail(); pollRunStatus(); pollMergeStatus(); }, 1500);
   pollRunStatus();
+  pollMergeStatus();
 })();
 </script>
 </body>
