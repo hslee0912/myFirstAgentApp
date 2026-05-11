@@ -33,8 +33,15 @@ cd .claude/worktrees/test && rm -rf BE FE
 ## 표준 명령
 
 ```bash
-# DB 초기화
+# DB 초기화 (CREATE DATABASE/TABLE — 처음 한 번)
 npm run init-db
+
+# DB 전체 wipe (모든 테이블 truncate — 사이 정리, AUTO_INCREMENT 리셋)
+#   log_task_state.decision_id → log_agent_decisions(id) FK 때문에 일반
+#   TRUNCATE는 막힘. 스크립트가 FOREIGN_KEY_CHECKS=0 토글 후 4 테이블
+#   (app_users, log_task_state, log_agent_decisions, log_agent_runs) 전부
+#   truncate하고 다시 1로 복원. schema는 보존.
+npm run reset-db
 
 # 파이프라인 실행
 npm start                                          # 기본 시나리오 (회원가입)
