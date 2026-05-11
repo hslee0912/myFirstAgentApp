@@ -134,6 +134,53 @@
     th { color: var(--muted); font-weight: 500; }
     tr.clickable { cursor: pointer; }
     tr.clickable:hover { background: var(--panel-2); }
+    /* (C) Task table verdict-based row highlight — 한눈에 ERROR/FAIL/PASS 구분 */
+    tr.verdict-ERROR td:first-child,
+    tr.verdict-FAIL  td:first-child,
+    tr.verdict-FAILED td:first-child { box-shadow: inset 3px 0 0 var(--fail); }
+    tr.verdict-PASS  td:first-child,
+    tr.verdict-SUCCESS td:first-child { box-shadow: inset 3px 0 0 var(--pass); }
+    tr.verdict-IN_PROGRESS td:first-child,
+    tr.verdict-RUNNING td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
+    /* (B) Final-result banner — Detail panel 최상단, 한 화면 안에 즉시 보이도록 큼직하게 */
+    .final-card {
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border-left: 6px solid var(--muted);
+      background: var(--panel-2);
+    }
+    .final-card.v-ERROR, .final-card.v-FAIL, .final-card.v-FAILED {
+      border-left-color: var(--fail);
+      background: var(--sev-error-bg);
+    }
+    .final-card.v-PASS, .final-card.v-SUCCESS {
+      border-left-color: var(--pass);
+      background: var(--sev-ok-bg);
+    }
+    .final-card.v-IN_PROGRESS, .final-card.v-RUNNING {
+      border-left-color: var(--warn);
+      background: var(--sev-warn-bg);
+    }
+    .final-card .final-head {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 6px;
+    }
+    .final-card .final-title {
+      font-size: 14px; font-weight: 600; color: var(--text);
+    }
+    .final-card .final-msg {
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+      margin-top: 4px;
+    }
+    .final-card .final-meta {
+      font-size: 11px; color: var(--muted); margin-top: 6px;
+    }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
     .status { font-size: 12px; color: var(--muted); }
     .timeline { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
@@ -324,6 +371,14 @@ const pill = (val) => val ? `<span class="pill ${val}">${val}</span>` : '';
 
 let selectedTaskId = null;
 
+// (D-fix) Detail panel re-render 방지용 캐시.
+//   - lastDetailHash: 직전에 그린 응답의 fingerprint. 1.5s polling에서 data가
+//     안 바뀌면 innerHTML을 다시 안 쓴다 → 사용자가 펼친 <details>가 안 닫힘.
+//   - lastDetailTerminal: verdict가 PASS/FAIL/ERROR로 확정되면 더 fetch도 안 함
+//     (값이 변할 일 없음). selectTask()는 이 둘을 reset해 강제 re-render.
+let lastDetailHash = '';
+let lastDetailTerminal = false;
+
 // Browser host for FE/BE service links. Initial value comes from the
 // <meta name="public-host"> that ui/server.js injects per request (from
 // .env PUBLIC_HOST). loadEnv() refreshes it on every poll so a UI toggle
@@ -461,7 +516,9 @@ async function loadTasks() {
   tbody.innerHTML = '';
   for (const t of (data.tasks || [])) {
     const tr = document.createElement('tr');
-    tr.className = 'clickable';
+    // (C) verdict class를 추가해 CSS의 좌측 변 강조가 ERROR/PASS row에 자동 적용.
+    tr.className = `clickable${t.final_verdict ? ' verdict-' + t.final_verdict : ''}`;
+    if (selectedTaskId && t.task_id === selectedTaskId) tr.classList.add('selected');
     tr.innerHTML =
       `<td>${t.id}</td>` +
       `<td style="font-family: ui-monospace, monospace; font-size: 11px;">${t.task_id}</td>` +
@@ -473,8 +530,12 @@ async function loadTasks() {
 }
 
 function selectTask(task_id) {
+  if (selectedTaskId === task_id) return; // already selected — don't kick off a re-render
   selectedTaskId = task_id;
   $('#detailTaskId').textContent = task_id;
+  // 새 task 선택 시엔 강제로 re-render (이전 task의 hash/terminal 캐시 무효화).
+  lastDetailHash = '';
+  lastDetailTerminal = false;
   loadDetail();
 }
 
@@ -646,6 +707,67 @@ function renderMetaChips(oj) {
   return chips.length > 0 ? `<div style="margin-top: 4px;">${chips.join(' ')}</div>` : '';
 }
 
+/**
+ * (B) Render the top-of-panel "최종 결과" banner.
+ *
+ * 항상 표시 (verdict 무관) — Detail panel을 열자마자 사용자가 한눈에:
+ *   - verdict pill
+ *   - orchestrator가 결정한 최종 메시지 (final_result_text)
+ *   - ERROR/FAIL이면 첫 FAILED run의 에러 메시지 한 줄 요약 (drill-down 없이)
+ *   - 진행 중이면 retry 정보
+ *
+ * 이전 구현은 ERROR/FAIL일 때만 분류 카드를 띄웠고 final_result_text는
+ * fallback이라 묻혀서 안 보였음. 이제 둘 다 같은 카드 안에 노출.
+ */
+function renderFinalResultCard(decision, states, runs) {
+  if (!decision) return '';
+  const v = decision.final_verdict || 'IN_PROGRESS';
+  const cls = `v-${esc(v)}`;
+  const titleMap = {
+    PASS:        '✅ PASS — 모든 phase 통과',
+    SUCCESS:     '✅ SUCCESS',
+    ERROR:       '🚨 ERROR — Agent 예외로 phase 중단',
+    FAIL:        '❌ FAIL — 검증 단계에서 실패',
+    FAILED:      '❌ FAILED',
+    IN_PROGRESS: '⏳ IN_PROGRESS — 아직 실행 중',
+    RUNNING:     '⏳ RUNNING',
+  };
+  const title = titleMap[v] || v;
+
+  // 최종 결과 메시지 후보: final_result_text가 우선, 없으면 첫 FAILED run의
+  // 카테고리화된 에러 메시지를 짧게 추출 (drill-down 안 해도 보이도록).
+  let msg = (decision.final_result_text || '').trim();
+  if (!msg && (v === 'ERROR' || v === 'FAIL')) {
+    const failedRun = (runs || []).find((r) => r.status === 'FAILED');
+    if (failedRun) {
+      const c = classifyRunError(failedRun);
+      const tgt = failedRun.target ? ` / ${failedRun.target}` : '';
+      msg = `[${failedRun.agent_name}${tgt}] ${c.label}\n${c.detail || ''}`.trim();
+    } else {
+      const failedState = (states || []).find((s) => s.status === 'FAILED');
+      if (failedState) {
+        const c = classifyLintStage(failedState.failed_stage);
+        msg = `[Lint / ${failedState.target}] ${c.label} (retry ${failedState.retry_count})`;
+      }
+    }
+  }
+
+  const metaBits = [];
+  if (decision.updated_at) metaBits.push(`updated_at=${fmtTime(decision.updated_at)}`);
+  if (decision.task_id) metaBits.push(`task_id=${esc(decision.task_id)}`);
+  const meta = metaBits.length ? `<div class="final-meta">${metaBits.join(' · ')}</div>` : '';
+
+  return `
+    <div class="final-card ${cls}">
+      <div class="final-head">
+        ${pill(v)}
+        <span class="final-title">${esc(title)}</span>
+      </div>
+      ${msg ? `<div class="final-msg">${esc(msg)}</div>` : ''}
+      ${meta}
+    </div>`;
+}
+
 /** Render the most-critical error summary card on top (Layer 1). */
 function renderTopErrorSummary(decision, states, runs) {
   if (!decision) return '';
@@ -796,7 +918,7 @@ function renderStates(states) {
           let body = '';
           if (x.stdout) body += `<b>stdout:</b><div class="code-block">${esc(x.stdout)}</div>`;
           if (x.stderr) body += `<b>stderr:</b><div class="code-block">${esc(x.stderr)}</div>`;
-          detail += `<details class="disclosure"${x.pass ? '' : ' open'}><summary>${head}</summary><div class="disclosure-body">${body || '<span class="dim">(empty)</span>'}</div></details>`;
+          detail += `<details class="disclosure"><summary>${head}</summary><div class="disclosure-body">${body || '<span class="dim">(empty)</span>'}</div></details>`;
         }
       }
       if (s.fix_instructions) {
@@ -811,26 +933,45 @@ function renderStates(states) {
         <span class="target">retry ${s.retry_count}${s.failed_stage ? ' · ' + esc(s.failed_stage) : ''}</span>
         <span class="ts">${fmtTime(s.updated_at)}</span>
       </div>
-      ${detail ? `<details class="disclosure" open><summary>Lint 상세</summary><div class="disclosure-body">${detail}</div></details>` : ''}`;
+      ${detail ? `<details class="disclosure"><summary>Lint 상세</summary><div class="disclosure-body">${detail}</div></details>` : ''}`;
   });
   return `<h2 style="margin-top: 14px;">TASK_STATE (영역별)</h2><div class="timeline">${rows.join('')}</div>`;
 }
 
 async function loadDetail() {
   if (!selectedTaskId) return;
+  // Terminal 상태(verdict 확정)면 더 변할 일 없으니 polling 자체를 건너뜀.
+  // 펼친 disclosure가 그대로 살아남는다.
+  if (lastDetailTerminal) return;
+
   const data = await fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`);
-  const root = $('#detail');
   const { decision, states, runs } = data;
 
+  // 직전 응답과 비교 — RUNNING 중에도 의미 있는 변화가 없으면 re-render skip.
+  // runs/states는 timestamp 일부만 fingerprint에 포함 (id+status면 충분).
+  const fingerprint = JSON.stringify({
+    d: decision && {
+      v: decision.final_verdict,
+      t: decision.final_result_text,
+      u: decision.updated_at,
+    },
+    s: (states || []).map((s) => [s.id, s.target, s.status, s.retry_count, s.failed_stage]),
+    r: (runs || []).map((r) => [r.id, r.agent_name, r.target, r.status, r.ended_at]),
+  });
+  if (fingerprint === lastDetailHash) return;
+  lastDetailHash = fingerprint;
+
+  const root = $('#detail');
   let html = '';
-  if (decision) {
-    html += `<div><b>verdict:</b> ${pill(decision.final_verdict)} ` +
-            `<span class="muted">${fmtTime(decision.updated_at)}</span></div>`;
-  } else {
-    html += '<div class="muted">(no decision row)</div>';
+
+  // (B) "최종 결과" 큰 카드 — verdict + final_result_text를 가장 위에 풀 노출.
+  html += renderFinalResultCard(decision, states, runs);
+
+  if (!decision) {
+    html += '<div class="muted" style="margin-top: 8px;">(아직 log_agent_decisions row 없음 — orchestrator가 Phase 1 진입 전이거나, 일반 cycle이 아닌 manual 작업[Redeploy 등])</div>';
   }
 
-  // Layer 1 — top-of-panel error summary
+  // Layer 1 — drill-down용 분류 카드 (final-card와 중복일 수 있지만 권장 대응이 같이 보임).
   html += renderTopErrorSummary(decision, states, runs);
 
   // Deploy run with ports → "FE/BE 열기" + "Stop containers" strip (existing).
@@ -859,6 +1000,12 @@ async function loadDetail() {
 
   root.innerHTML = html;
 
+  // verdict가 확정되면 이후 polling이 detail을 건드리지 않도록 잠금.
+  // selectTask()가 호출되면 이 잠금이 해제된다.
+  if (decision && ['PASS', 'FAIL', 'ERROR', 'SUCCESS', 'FAILED'].includes(decision.final_verdict)) {
+    lastDetailTerminal = true;
+  }
+
   // Bind Stop containers button if it was rendered.
   const stopBtn = document.getElementById('stopContainersBtn');
   if (stopBtn) {
@@ -886,9 +1033,33 @@ async function pollRunStatus() {
       `elapsed=${elapsed}s`;
     $('#runBtn').disabled = true;
     if (cur.task_id && cur.task_id !== selectedTaskId) selectTask(cur.task_id);
-  } else {
+    return;
+  }
+  $('#runBtn').disabled = false;
+
+  // (A) idle일 때 마지막 task의 verdict + 짧은 에러 메시지를 노출 — 시선
+  // 1순위 영역인데 "idle"만 보였던 것을 보완. 클릭하면 detail panel로 점프.
+  // loadTasks 결과를 그대로 활용 (별도 fetch 없음).
+  const lastTaskRow = document.querySelector('#taskTable tbody tr');
+  if (!lastTaskRow) {
     $('#runStatus').textContent = 'idle';
-    $('#runBtn').disabled = false;
+    return;
+  }
+  const v = (lastTaskRow.className.match(/verdict-(\S+)/) || [])[1] || '';
+  const tid = lastTaskRow.children[1]?.textContent || '';
+  let snippet = '';
+  if (v === 'ERROR' || v === 'FAIL' || v === 'FAILED') {
+    snippet = ' — 자세한 에러 메시지는 우측 상세 패널 최상단 카드 참고';
+  } else if (v === 'PASS' || v === 'SUCCESS') {
+    snippet = ' — 통과';
+  }
+  $('#runStatus').innerHTML =
+    `idle &nbsp;|&nbsp; 마지막 task: ${pill(v)} ` +
+    `<a href="#" id="runStatusJump" style="font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent);">${esc(tid)}</a>` +
+    `<span class="muted">${esc(snippet)}</span>`;
+  const jump = document.getElementById('runStatusJump');
+  if (jump && tid) {
+    jump.addEventListener('click', (e) => { e.preventDefault(); selectTask(tid); });
   }
 }
 
