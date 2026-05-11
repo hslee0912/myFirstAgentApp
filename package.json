@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node agents/orchestrator.js",
     "ui": "node ui/server.js",
+    "ui:test": "cd .claude/worktrees/test && npm run ui",
     "init-db": "node lib/init_db.js",
     "reset-db": "node lib/reset_db.js",
     "test": "node --test tests/prompt_util.test.js tests/orchestrator_util.test.js tests/test_codegen.test.js tests/deploy_agent.test.js tests/api_test.test.js tests/llm_continuation.test.js tests/env_writer.test.js tests/port_killer.test.js tests/container_cleanup.test.js",
