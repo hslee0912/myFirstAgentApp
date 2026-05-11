@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.local
 .env.backup
+.ui-server.pid
 *.log
 .DS_Store
 
