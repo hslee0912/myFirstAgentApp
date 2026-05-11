@@ -345,6 +345,7 @@
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
         <button id="refreshBtn" class="secondary">↻ Refresh</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
+        <button id="mergeBtn" class="secondary" style="border-color: var(--accent); color: var(--accent);" title="현재 브랜치를 push + origin/main으로 fast-forward push">🔀 Merge to main</button>
       </div>
       <div class="status" id="runStatus">idle</div>
 
@@ -1171,6 +1172,53 @@ $('#rollbackBtn').addEventListener('click', async () => {
   } finally {
     $('#rollbackBtn').disabled = false;
     $('#rollbackBtn').textContent = '⏮ Reset to origin/main';
+  }
+});
+
+$('#mergeBtn').addEventListener('click', async () => {
+  $('#mergeBtn').disabled = true;
+  $('#mergeBtn').textContent = '🔀 checking…';
+  try {
+    const p = await fetchJSON('/api/merge-preview');
+    if (!p.can_merge) {
+      alert('Merge 불가\n\n' + (p.reason || '알 수 없는 사유') +
+            (p.ahead_commits && p.ahead_commits.length ? `\n\n현재 ahead commit ${p.ahead_commits.length}개:\n` +
+              p.ahead_commits.slice(0, 5).map((c) => '  • ' + c).join('\n') : ''));
+      return;
+    }
+    const ahead = p.ahead_commits || [];
+    const msg =
+      `🔀 ${p.branch} → origin/main fast-forward merge\n\n` +
+      `1) git push origin ${p.branch}\n` +
+      `2) git push origin ${p.branch}:main\n\n` +
+      `다음 ${ahead.length}개 commit이 origin/main으로 전진:\n` +
+      ahead.slice(0, 10).map((c) => '  • ' + c).join('\n') +
+      (ahead.length > 10 ? `\n  ... 외 ${ahead.length - 10}개` : '') +
+      '\n\nforce push 아닌 fast-forward만 시도합니다. 진행할까요?';
+    if (!confirm(msg)) return;
+    $('#mergeBtn').textContent = '🔀 merging…';
+    const r = await fetchJSON('/api/merge', { method: 'POST' });
+    if (r.ok) {
+      const lines = [
+        r.no_op ? '✓ 이미 동기화 상태' : `✓ Merge 완료 (${r.pushed_commits ? r.pushed_commits.length : 0}개 commit)`,
+        r.pushed_branch ? `  • origin/${r.branch} push 완료` : '',
+        r.merged_to_main ? '  • origin/main fast-forward 완료' : '',
+        '',
+        r.notice || '',
+      ].filter(Boolean);
+      alert(lines.join('\n'));
+    } else {
+      // 부분 성공 케이스 (branch는 push됐는데 main push 실패) 명시
+      const partial = r.pushed_branch && !r.merged_to_main
+        ? `\n\n(부분 성공: origin/${p.branch}는 push됐지만 origin/main ff는 실패)`
+        : '';
+      alert('Merge 실패: ' + (r.error || r._text || 'unknown') + partial);
+    }
+  } catch (e) {
+    alert('Merge 호출 실패: ' + e.message);
+  } finally {
+    $('#mergeBtn').disabled = false;
+    $('#mergeBtn').textContent = '🔀 Merge to main';
   }
 });
 

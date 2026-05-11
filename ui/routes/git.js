@@ -154,6 +154,134 @@ function restoreEnvFromExampleAndBackup() {
   return { envReset: true, restoredKeys: Object.keys(overlay).sort(), backupMissing: false };
 }
 
+// ---------------- Merge to main (push branch + ff origin/main) ----------------
+
+/**
+ * Preview what "🔀 Merge to main" 버튼이 origin에 보낼지 — 클릭 전 사용자가
+ * 명확히 확인할 수 있도록.
+ *
+ * Returns:
+ *   - branch:          현재 브랜치 이름
+ *   - ahead_commits:   origin/main..HEAD (main에 합쳐질 commit들, oneline)
+ *   - ff_possible:     origin/main이 HEAD의 조상 → ff push 가능?
+ *   - dirty_files:     commit 안 한 작업 (있으면 merge 거부)
+ *   - can_merge:       위 세 조건이 모두 우호적인지
+ *   - reason:          can_merge=false일 때 사람이 읽을 안내
+ */
+router.get('/merge-preview', (_req, res) => {
+  // origin/main 최신 정보 확보. 실패는 non-fatal — 그 경우 *마지막으로 알려진*
+  // origin/main 기준으로 preview를 보여줌.
+  gitOut(['fetch', 'origin', 'main']);
+
+  const branchOut = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']);
+  const branch = (branchOut.stdout || '').trim() || 'HEAD';
+
+  const aheadOut = gitOut(['log', '--oneline', 'origin/main..HEAD']);
+  const ahead = aheadOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+
+  // origin/main 이 HEAD의 조상이면 fast-forward 가능.
+  const ancestry = gitOut(['merge-base', '--is-ancestor', 'origin/main', 'HEAD']);
+  const ff_possible = ancestry.code === 0;
+
+  // commit 안 한 변경 (.env / node_modules / .claude / log 제외 — 다른 곳과 동일).
+  const statusOut = gitOut(['status', '--porcelain']);
+  const dirty = statusOut.stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const m = line.match(/^..\s+(.+)$/);
+      const p = m ? m[1] : line;
+      if (/^node_modules\//.test(p) || /^\.claude\//.test(p) || /\.log$/.test(p)) return false;
+      if (p === '.env' || /\.env\.backup/.test(p)) return false;
+      return true;
+    });
+
+  const canMerge = ahead.length > 0 && ff_possible && dirty.length === 0;
+  let reason = '';
+  if (ahead.length === 0) reason = '이미 origin/main과 동일 — push할 commit이 없습니다.';
+  else if (dirty.length > 0) reason = `commit 안 된 변경 ${dirty.length}개가 있습니다. 먼저 commit하거나 정리 후 다시 시도하세요.`;
+  else if (!ff_possible) reason = 'origin/main이 현재 브랜치보다 앞서있어 fast-forward 불가. 먼저 origin/main을 rebase하거나 GitHub PR로 처리하세요.';
+
+  res.json({ branch, ahead_commits: ahead, ff_possible, dirty_files: dirty, can_merge: canMerge, reason });
+});
+
+/**
+ * 1) git push origin <branch>            — 현재 브랜치를 원격에 백업 push
+ * 2) git push origin <branch>:main       — origin/main으로 fast-forward push
+ *
+ * force/lease는 절대 사용하지 않음. ff 실패는 그대로 사용자에게 전파.
+ * dirty/ff-impossible/no-ahead은 호출 전에 거부 — preview API와 동일 조건.
+ */
+router.post('/merge', (_req, res) => {
+  try {
+    // 사전 검증 — preview와 같은 조건. 사용자가 preview 안 보고 직접 호출한
+    // 경우에도 보호.
+    gitOut(['fetch', 'origin', 'main']);
+
+    const branchOut = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = (branchOut.stdout || '').trim();
+    if (!branch || branch === 'HEAD') {
+      return res.status(400).json({ ok: false, error: 'detached HEAD 상태로는 merge할 수 없습니다. 브랜치를 명시적으로 checkout하세요.' });
+    }
+    if (branch === 'main') {
+      return res.status(400).json({ ok: false, error: '현재 브랜치가 이미 main입니다. UI는 feature branch에서만 사용하세요.' });
+    }
+
+    const aheadOut = gitOut(['log', '--oneline', 'origin/main..HEAD']);
+    const ahead = aheadOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (ahead.length === 0) {
+      return res.json({ ok: true, no_op: true, pushed_branch: false, merged_to_main: false, notice: '이미 origin/main과 동일 — 아무것도 안 함.' });
+    }
+
+    const ancestry = gitOut(['merge-base', '--is-ancestor', 'origin/main', 'HEAD']);
+    if (ancestry.code !== 0) {
+      return res.status(409).json({ ok: false, error: 'origin/main이 현재 브랜치보다 앞서있어 fast-forward 불가. rebase 또는 PR로 처리하세요.' });
+    }
+
+    const statusOut = gitOut(['status', '--porcelain']);
+    const dirty = statusOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+      .filter((line) => {
+        const m = line.match(/^..\s+(.+)$/);
+        const p = m ? m[1] : line;
+        if (/^node_modules\//.test(p) || /^\.claude\//.test(p) || /\.log$/.test(p)) return false;
+        if (p === '.env' || /\.env\.backup/.test(p)) return false;
+        return true;
+      });
+    if (dirty.length > 0) {
+      return res.status(409).json({ ok: false, error: `commit 안 된 변경 ${dirty.length}개가 있습니다. 먼저 commit하세요.`, dirty_files: dirty });
+    }
+
+    // 1) push current branch — 히스토리 백업
+    const pushBranch = gitOut(['push', 'origin', branch]);
+    if (pushBranch.code !== 0) {
+      return res.status(500).json({ ok: false, error: `git push origin ${branch} 실패: ${pushBranch.stderr.trim()}` });
+    }
+
+    // 2) ff push to main — 실제 "merge"
+    const pushMain = gitOut(['push', 'origin', `${branch}:main`]);
+    if (pushMain.code !== 0) {
+      return res.status(500).json({
+        ok: false,
+        error: `git push origin ${branch}:main 실패: ${pushMain.stderr.trim()}`,
+        pushed_branch: true,
+        merged_to_main: false,
+      });
+    }
+
+    res.json({
+      ok: true,
+      branch,
+      pushed_commits: ahead,
+      pushed_branch: true,
+      merged_to_main: true,
+      notice: `${ahead.length}개 commit이 origin/${branch} 와 origin/main 양쪽에 fast-forward됨.`,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 function buildRollbackNotice({ envReset, restoredKeys, backupMissing }) {
   if (!envReset) return '.env.example을 찾지 못해 .env는 그대로 유지.';
   if (backupMissing) {
