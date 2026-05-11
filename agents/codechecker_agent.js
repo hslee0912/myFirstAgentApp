@@ -30,12 +30,37 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 
 규칙:
 - be_spec / fe_spec은 **핵심만 간결히** (한 영역당 max ~600 tokens). 자연어 설명 최소화, 구조화된 list/object 우선.
-- api_contract: { version, endpoints: [{ path, method, request: {...JSON Schema...}, response: {...} }] }
 - 응답 형식은 항상 JSON 객체. 반드시 "targets" 키 포함.
 - 회원가입 류의 흔한 요구사항이면 검증 규칙(예: 이메일 형식, 비밀번호 길이) 명시.
 - 보안: 비밀번호는 bcrypt 해시. SQL injection 방지를 위해 prepared statement.
 - 응답 형식 표준: { success: bool, data: any, error?: string }
-- be_spec / fe_spec에 lint 설정(.eslintrc), Docker 설정(Dockerfile, .dockerignore), 의존성 매니페스트(package.json, package-lock.json) 변경 가이드를 포함하지 말 것. 이 파일들은 protected이라 BE/FE Agent가 수정 못 한다.`;
+- be_spec / fe_spec에 lint 설정(.eslintrc), Docker 설정(Dockerfile, .dockerignore), 의존성 매니페스트(package.json, package-lock.json) 변경 가이드를 포함하지 말 것. 이 파일들은 protected이라 BE/FE Agent가 수정 못 한다.
+
+## api_contract format (Phase 9 PostTest와 정확히 매칭 — 이 형식만 사용)
+
+\`\`\`json
+{
+  "version": "1.0.0",
+  "base_url": "/api/v1",          // optional. BE는 이 prefix 아래 라우트 등록. Phase 9도 base_url을 baseUrl에 이어붙여 fetch.
+  "endpoints": [
+    {
+      "path": "/auth/signup",      // base_url 제외한 endpoint 자체 path
+      "method": "POST",
+      "request": {
+        "schema": { ... JSON Schema ... },  // properties.<field>.example 으로 request body 자동 구성
+        "example": { ... }                  // optional, 참고용
+      },
+      "responses": {                // **반드시 객체** — key는 status code(string), value는 { schema }
+        "201": { "schema": { ... } },
+        "400": { "schema": { ... } },
+        "409": { "schema": { ... } }
+      }
+    }
+  ]
+}
+\`\`\`
+
+**금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식. responses 객체의 key가 status code여야 한다. base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.`;
 
 function buildUserPrompt(userRequirement) {
   return [
