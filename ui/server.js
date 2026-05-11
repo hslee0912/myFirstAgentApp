@@ -134,7 +134,35 @@ app.use('/api', gitRoutes);
 
 // ---------------- bootstrap ----------------
 
+/**
+ * Snapshot the current .env to .env.backup at server start.
+ *
+ * This is the "safety net" half of the rollback restore flow: if the user
+ * later hits "Reset to origin/main", rollback rebuilds .env from .env.example
+ * (so newly-added keys land with placeholders) and then overlays the values
+ * stashed here — secrets and per-user toggles survive across the reset.
+ *
+ * Idempotent overwrite: every UI start replaces the previous snapshot so
+ * the backup always reflects the latest known-good state (the .env the user
+ * was actively running with). Skipped if .env doesn't exist (fresh checkout).
+ */
+function snapshotEnvOnStart() {
+  if (!fs.existsSync(ENV_PATH)) {
+    console.log('[ui] .env not found — skipping startup backup');
+    return;
+  }
+  const backupPath = path.join(ROOT, '.env.backup');
+  try {
+    fs.copyFileSync(ENV_PATH, backupPath);
+    console.log(`[ui] .env snapshot saved to ${path.basename(backupPath)} (rollback safety net)`);
+  } catch (e) {
+    console.warn(`[ui] failed to snapshot .env: ${e.message} (non-fatal)`);
+  }
+}
+
 async function main() {
+  snapshotEnvOnStart();
+
   // Kill stale node.exe processes holding any canonical project port
   // (UI_PORT + the three DEPLOY_PORT_*). System services (mysqld, postgres,
   // docker daemon) are explicitly protected. Settle 500ms so the OS

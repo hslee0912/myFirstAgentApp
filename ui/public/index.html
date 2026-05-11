@@ -959,6 +959,21 @@ $('#rollbackBtn').addEventListener('click', async () => {
       alert('롤백할 변경사항 없음 — 이미 origin/main 상태입니다.');
       return;
     }
+    // .env 복원 단계 안내. 백업이 있고 복원 가능한 키가 있으면 secret이
+    // 자동 복원됨을 명시 — 사용자가 옛 UX(수동 재입력) 가정으로 멈칫하지
+    // 않도록.
+    let envMsg;
+    if (!p.env_will_reset) {
+      envMsg = '\n\n.env.example을 찾지 못해 .env는 그대로 유지됩니다.';
+    } else if (p.backup_exists && p.restorable_key_count > 0) {
+      envMsg =
+        `\n\n.env는 .env.example 구조로 reset되고, ` +
+        `UI 시작 시 만든 .env.backup의 ${p.restorable_key_count}개 값(secret 포함)으로 자동 복원됩니다.`;
+    } else {
+      envMsg =
+        '\n\n.env는 .env.example로 reset됩니다. .env.backup이 없거나 비어있어 ' +
+        'ANTHROPIC_API_KEY · DB_PASSWORD 등을 다시 입력해야 합니다.';
+    }
     const msg =
       '⚠ origin/main 상태로 되돌립니다. 작업 손실 위험이 있습니다.\n\n' +
       `로컬 commit ${ahead.length}개가 사라짐:\n` +
@@ -967,9 +982,7 @@ $('#rollbackBtn').addEventListener('click', async () => {
       `\n\n작업 트리에서 정리될 파일 ${dirty.length}개:\n` +
       (dirty.slice(0, 8).map((f) => '  • ' + f).join('\n') || '  (없음)') +
       (dirty.length > 8 ? `\n  ... 외 ${dirty.length - 8}개` : '') +
-      (p.env_will_reset
-        ? '\n\n.env는 .env.example로 reset되고, 현재 .env는 .env.backup으로 백업됩니다 (기존 .env.backup 덮어씀).\nANTHROPIC_API_KEY와 DB_PASSWORD를 다시 입력해야 합니다.'
-        : '\n\n.env.example이 없어 .env는 그대로 유지됩니다.') +
+      envMsg +
       '\n\n정말 진행할까요?';
     if (!confirm(msg)) return;
     $('#rollbackBtn').textContent = '⏮ resetting…';
