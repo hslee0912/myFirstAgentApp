@@ -27,6 +27,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const logger = require('../lib/logger');
+const { cleanupOurContainers } = require('../lib/container_cleanup');
 
 const ROOT = path.resolve(__dirname, '..');
 const COMPOSE_FILE = path.join(ROOT, 'lib', 'stack_templates', 'docker-compose.yml');
@@ -325,10 +326,20 @@ async function run({ task_id }) {
     return { status: 'FAILED' };
   }
 
-  // Port pre-flight: probe each host port and fall back to the next free one
-  // when the requested port is occupied (e.g. host MySQL already on 3306).
-  // process.env is mutated so docker compose substitution + Phase 9 PostTest
-  // see the resolved port consistently.
+  // D6=B+: pre-cleanup. Sweep EVERY container this PoC has managed (by label
+  // first, by name+image convention for legacy containers without the label).
+  // This is broader than the old `compose down` (which only touched the
+  // current project) and is what prevents port drift across cycles —
+  // finalize-*, verify-port-fix-* etc. are removed here so the next port
+  // preflight finds 5173/3001/3306 free.
+  console.log('[deploy] pre-cleanup: sweeping managed + legacy containers');
+  cleanupOurContainers();
+
+  // Port pre-flight: probe each host port and fall back to the next free one.
+  // After the sweep above, the only conflicts left should be host-level
+  // services (host MySQL on 3306, host Vite dev server, etc.) — those still
+  // trigger fallback. process.env is mutated so docker compose substitution
+  // + Phase 9 PostTest see the resolved port consistently.
   let ports;
   try {
     ports = await resolvePortsWithFallback(requestedPorts);
@@ -351,11 +362,6 @@ async function run({ task_id }) {
     });
     return { status: 'FAILED' };
   }
-
-  // D6=B: pre-cleanup so leftover containers from a previous FAIL don't conflict.
-  // Best-effort — failures here are silently ignored.
-  console.log('[deploy] pre-cleanup: compose down --remove-orphans');
-  composeDown();
 
   // up --build [--wait when v2]
   const upArgs = ['up', '--build', '--detach'];

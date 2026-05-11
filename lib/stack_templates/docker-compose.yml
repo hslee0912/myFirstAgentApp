@@ -21,6 +21,11 @@
 services:
   mysql:
     image: mysql:8
+    labels:
+      # Marks this container as "owned" by myFirstAgentApp so pre-cleanup
+      # (lib/container_cleanup.js) can sweep it on the next Phase 8 cycle
+      # regardless of compose project name (test / finalize / verify-* etc.).
+      com.myfirstagentapp.managed: "true"
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: myfirstagentapp_db
@@ -42,6 +47,8 @@ services:
     build:
       context: ./BE
       dockerfile: Dockerfile
+    labels:
+      com.myfirstagentapp.managed: "true"
     environment:
       # D16=A: hardcoded here — these override anything BE's own dotenv would
       # load inside the container. Host .env is intentionally NOT mounted.
@@ -62,6 +69,8 @@ services:
     build:
       context: ./FE
       dockerfile: Dockerfile
+    labels:
+      com.myfirstagentapp.managed: "true"
     ports:
       - "${DEPLOY_PORT_FE:-5173}:5173"
     # FE Vite dev server runs in this container; the browser (on host) calls

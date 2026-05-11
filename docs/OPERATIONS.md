@@ -185,6 +185,39 @@ DEPLOY_TEARDOWN_ON_PASS=off   # .env 또는 UI 체크박스 (4번째 토글)
 
 학생 시연 시 추천 조합: `DEPLOY_MODE=on` + `DEPLOY_TEARDOWN_ON_PASS=off` → 풀 사이클 끝나면 UI에서 한 클릭으로 실제 페이지 확인.
 
+### Phase 8 pre-cleanup — 우리 컨테이너 광역 정리 (label + convention)
+
+매 Phase 8 시작 시 `lib/container_cleanup.js`의 `cleanupOurContainers()`가 호출돼 **이 PoC가 만들어둔 모든 컨테이너**를 `docker rm -f`로 정리합니다. 그 후 port preflight가 동작하므로 — docker 누적 점유가 없어 **호스트 포트가 매 사이클 같은 값(5173/3001/3306)으로 잡힘**. UI의 "FE/BE 열기" 링크가 영구 유효.
+
+**식별 기준 (2-tier)**:
+1. **Label** — compose가 만든 새 컨테이너는 `com.myfirstagentapp.managed=true` 라벨 (docker-compose.yml에 정의). 이게 매칭되면 무조건 victim.
+2. **Convention (legacy)** — 옛 라벨 없는 컨테이너용. **이름 패턴 + image 둘 다 매칭**해야 victim:
+   - FE:    `*-fe-<n>$` AND image endsWith `-fe`
+   - BE:    `*-be-<n>$` AND image endsWith `-be`
+   - MySQL: `*-mysql-<n>$` AND image startsWith `mysql:`
+
+**false-positive 방지** (단위 테스트로 보호됨, `tests/container_cleanup.test.js` 36 케이스):
+- 누가 nginx 컨테이너를 `nginx-fe-1`로 이름 지어도 image 매칭 안 돼 안 죽임
+- 사용자의 standalone `mysql:8` 컨테이너는 이름 패턴 다르면 안 죽임
+- postgres / redis / jenkins 등 무관한 컨테이너 모두 보존
+
+**Log 예시**:
+```
+[deploy] pre-cleanup: sweeping managed + legacy containers
+[deploy] cleanup: removing 6 stale container(s)
+  - finalize-fe-1 (finalize-fe) via convention
+  - finalize-be-1 (finalize-be) via convention
+  - verify-port-fix-mysql-1 (mysql:8) via convention
+  ...
+```
+
+수동 정리 (테스트 외 일반 사용):
+```powershell
+# 모두 죽이고 정리
+docker ps -a --format '{{.ID}}' --filter "label=com.myfirstagentapp.managed=true" | %{ docker rm -f $_ }
+docker network prune -f
+```
+
 ### 포트 충돌 시 — 자동 fallback (2-layer 검출)
 
 학생 환경에서 5173/3001/3306 충돌 흔함 (특히 호스트에 이미 MySQL 돌고 있거나, 이전 FAIL 사이클의 컨테이너가 D6=B 정책으로 보존돼 있을 때). Phase 8 시작 직전에 deploy_agent가 두 layer로 host 포트 가용성을 검증하고 충돌 시 자동으로 `+1, +2, ...` (최대 +20)에서 빈 포트로 fallback한다.
