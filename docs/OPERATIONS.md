@@ -157,7 +157,7 @@ mysql -u root -p myfirstagentapp_db -e "ALTER TABLE log_agent_runs MODIFY agent_
 
 ### Deploy 실패 시 디버깅 (D6=B 시너지)
 
-Phase 8/9가 FAIL이면 컨테이너가 보존됩니다 (PASS면 자동 down).
+Phase 8/9가 FAIL이면 컨테이너가 보존됩니다. PASS여도 `DEPLOY_TEARDOWN_ON_PASS=off`로 보존 가능.
 
 ```bash
 docker ps                                       # 살아있는 컨테이너 ID
@@ -166,7 +166,20 @@ docker exec -it <mysql_container> mysql -uroot -proot myfirstagentapp_db   # DB 
 
 # 수동 cleanup (디버깅 끝나고)
 docker compose --project-directory . -f lib/stack_templates/docker-compose.yml down --remove-orphans
+# 또는 UI에서: 상세 패널의 "🛑 Stop containers" 버튼 (POST /api/stop-containers)
 ```
+
+### Phase 7.5 teardown 토글 — `DEPLOY_TEARDOWN_ON_PASS`
+
+기본 `on` — verdict=PASS면 즉시 `docker compose down`. 깨끗하지만 사용자가 배포된 FE/BE를 브라우저로 직접 볼 수 없음 (1초도 안 됨).
+
+`off`로 토글하면 — PASS여도 컨테이너 보존. UI 상세 패널의 **🌐 FE 열기 / 🔌 BE 열기** 링크가 클릭 가능. 다 보고 나면 **🛑 Stop containers** 버튼으로 명시 종료. FAIL/ERROR는 정책 무관 항상 보존.
+
+```
+DEPLOY_TEARDOWN_ON_PASS=off   # .env 또는 UI 체크박스 (4번째 토글)
+```
+
+학생 시연 시 추천 조합: `DEPLOY_MODE=on` + `DEPLOY_TEARDOWN_ON_PASS=off` → 풀 사이클 끝나면 UI에서 한 클릭으로 실제 페이지 확인.
 
 ### 포트 충돌 시 — 자동 fallback (2-layer 검출)
 

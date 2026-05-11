@@ -29,6 +29,7 @@ require('dotenv').config({ override: true });
 
 const { readEnv, updateEnv, UI_EDITABLE_KEYS } = require('../lib/env_writer');
 const { normalizeContract } = require('../lib/api_test');
+const deployAgent = require('../agents/deploy_agent');
 const db = require('../lib/db');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -232,6 +233,15 @@ app.post('/api/run', (req, res) => {
   const result = startOrchestrator(prompt);
   if (!result.ok) return res.status(409).json(result);
   res.json({ ok: true, pid: result.pid });
+});
+
+app.post('/api/stop-containers', (_req, res) => {
+  try {
+    deployAgent.teardown();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.post('/api/reset-db', async (_req, res) => {

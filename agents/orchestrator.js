@@ -457,12 +457,24 @@ async function main() {
   }
 
   // Phase 7.5: deploy teardown (D6=B PASS branch).
-  // Only when final verdict is PASS AND DEPLOY_MODE=on (skipped runs have nothing to tear down).
-  // FAIL/ERROR keeps containers alive for debugging.
+  // Conditions:
+  //   - DEPLOY_MODE=on (skipped runs have nothing to tear down)
+  //   - finalVerdict === 'PASS' (FAIL/ERROR always keeps containers for debugging)
+  //   - DEPLOY_TEARDOWN_ON_PASS === 'on' (default; 'off' keeps containers so the
+  //     UI's "FE/BE 열기" buttons remain functional. User stops via the
+  //     "Stop containers" button or `npm run ui` → POST /api/stop-containers.)
   try {
     const deployMode = (process.env.DEPLOY_MODE || 'on').toLowerCase();
+    const teardownOnPass = (process.env.DEPLOY_TEARDOWN_ON_PASS || 'on').toLowerCase();
     if (finalVerdict === 'PASS' && deployMode === 'on') {
-      deployAgent.teardown();
+      if (teardownOnPass === 'on') {
+        deployAgent.teardown();
+      } else {
+        console.log(
+          '[teardown] kept alive — DEPLOY_TEARDOWN_ON_PASS=off. ' +
+          'Stop via UI "Stop containers" or docker compose down manually.'
+        );
+      }
     } else if (finalVerdict !== 'PASS' && deployMode === 'on') {
       console.log('[teardown] skipped — verdict is not PASS, containers kept for debugging (D6=B)');
     }

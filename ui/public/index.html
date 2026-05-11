@@ -181,9 +181,10 @@ async function fetchJSON(url, opts) {
 // 3-state toggle keys: each maps an on/off checkbox to two string values.
 // Anything else falls back to the text+save row layout below.
 const TOGGLE_KEYS = {
-  COMMIT_MODE:     { on: 'auto', off: 'manual' },
-  VALIDATION_MODE: { on: 'on',   off: 'off' },
-  DEPLOY_MODE:     { on: 'on',   off: 'off' },
+  COMMIT_MODE:              { on: 'auto', off: 'manual' },
+  VALIDATION_MODE:          { on: 'on',   off: 'off' },
+  DEPLOY_MODE:              { on: 'on',   off: 'off' },
+  DEPLOY_TEARDOWN_ON_PASS:  { on: 'on',   off: 'off' },
 };
 
 async function putEnv(key, value) {
@@ -324,6 +325,26 @@ async function loadDetail() {
     html += '<div class="muted">(no decision row)</div>';
   }
 
+  // Deploy run with ports → render "open FE/BE" + "stop containers" controls.
+  // The same row pattern that the canary container check uses, surfaced as a
+  // quick-access strip before the timeline.
+  const deployRun = (runs || []).find((r) => r.agent_name === 'Deploy' && r.status === 'SUCCESS');
+  if (deployRun && deployRun.output_json) {
+    let oj;
+    try { oj = typeof deployRun.output_json === 'string' ? JSON.parse(deployRun.output_json) : deployRun.output_json; }
+    catch (_) { oj = {}; }
+    if (oj.ports && !oj.skipped) {
+      const fePort = oj.ports.fe;
+      const bePort = oj.ports.be;
+      html += '<div style="margin-top: 10px; padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;">';
+      html += '<div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">배포된 서비스 (DEPLOY_TEARDOWN_ON_PASS=off일 때 PASS 후에도 유지)</div>';
+      html += `<a href="http://localhost:${fePort}" target="_blank" rel="noopener" style="margin-right: 8px; color: var(--accent); text-decoration: none; font-weight: 600;">🌐 FE 열기 (:${fePort})</a>`;
+      html += `<a href="http://localhost:${bePort}" target="_blank" rel="noopener" style="margin-right: 8px; color: var(--accent); text-decoration: none; font-weight: 600;">🔌 BE 열기 (:${bePort})</a>`;
+      html += `<button class="secondary" id="stopContainersBtn" style="margin-left: 6px;">🛑 Stop containers</button>`;
+      html += '</div>';
+    }
+  }
+
   html += '<div class="timeline">';
   for (const r of (runs || [])) {
     html += `<div class="phase">` +
@@ -345,6 +366,21 @@ async function loadDetail() {
   }
 
   root.innerHTML = html;
+
+  // Bind Stop containers button if it was rendered.
+  const stopBtn = document.getElementById('stopContainersBtn');
+  if (stopBtn) {
+    stopBtn.addEventListener('click', async () => {
+      if (!confirm('현재 워크트리의 docker compose down 실행. 계속할까요?')) return;
+      stopBtn.disabled = true;
+      stopBtn.textContent = '🛑 stopping…';
+      try {
+        const r = await fetchJSON('/api/stop-containers', { method: 'POST' });
+        stopBtn.textContent = r.ok ? '🛑 stopped' : '🛑 failed';
+      } catch (_) { stopBtn.textContent = '🛑 failed'; }
+      setTimeout(() => { stopBtn.disabled = false; stopBtn.textContent = '🛑 Stop containers'; }, 1800);
+    });
+  }
 }
 
 async function pollRunStatus() {
