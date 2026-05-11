@@ -38,6 +38,8 @@ const codeChecker = require('./codechecker_agent');
 const beAgent = require('./be_agent');
 const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
+const deployAgent = require('./deploy_agent');
+const testAgent = require('./test_agent');
 const { resolveModel } = require('../lib/llm');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -207,6 +209,26 @@ async function evaluateVerdict(task_id, decision_id) {
   return { verdict: 'CONTINUE', reason: 'retry FAILED areas' };
 }
 
+/**
+ * D40: combine round-loop verdict with Phase 8 (Deploy) and Phase 9 (PostTest)
+ * results into the final verdict.
+ *
+ * Rules:
+ *   - initialVerdict (from evaluateVerdict) NOT 'PASS' → return as-is (no deploy attempted).
+ *   - deployStatus === 'FAILED' → final 'FAIL'.
+ *   - posttestStatus === 'FAILED' → final 'FAIL'.
+ *   - all SUCCESS → 'PASS'.
+ *
+ * SKIPPED states (DEPLOY_MODE=off) are reported as status='SUCCESS' by both
+ * agents, so they cleanly pass through without changing the verdict.
+ */
+function evaluateFinalVerdict({ initialVerdict, deployStatus, posttestStatus }) {
+  if (initialVerdict !== 'PASS') return initialVerdict;
+  if (deployStatus === 'FAILED') return 'FAIL';
+  if (posttestStatus === 'FAILED') return 'FAIL';
+  return 'PASS';
+}
+
 // ---------------- main flow ----------------
 
 async function main() {
@@ -352,6 +374,37 @@ async function main() {
       }
       // else loop again — only FAILED areas re-enter via the needBE/needFE check
     }
+
+    // Phase 8 (Deploy) + Phase 9 (PostTest): only if round loop ended in PASS.
+    // D25=B: round loop 밖, verdict 후보가 PASS일 때만 1회 실행.
+    if (finalVerdict === 'PASS') {
+      console.log('[phase 8] Deploy Agent running...');
+      const deployResult = await deployAgent.run({ task_id });
+
+      let posttestResult = { status: 'SUCCESS', skipped: true };
+      if (deployResult.status === 'SUCCESS') {
+        console.log('[phase 9] PostTest Agent running...');
+        posttestResult = await testAgent.run({ task_id });
+      } else {
+        console.log('[phase 9] skipped — Phase 8 did not succeed');
+      }
+
+      // D40: combine into final verdict.
+      const newVerdict = evaluateFinalVerdict({
+        initialVerdict: 'PASS',
+        deployStatus: deployResult.status,
+        posttestStatus: posttestResult.status,
+      });
+
+      if (newVerdict !== finalVerdict) {
+        finalVerdict = newVerdict;
+        if (deployResult.status === 'FAILED') {
+          finalText = 'Phase 8 (Deploy) FAILED — see Deploy run output_json for details';
+        } else if (posttestResult.status === 'FAILED') {
+          finalText = 'Phase 9 (PostTest) FAILED — see PostTest run output_json for details';
+        }
+      }
+    }
   } catch (e) {
     finalVerdict = 'ERROR';
     finalText = `[orchestrator exception] ${e.message}\n${(e.stack || '').slice(0, 1500)}`;
@@ -383,6 +436,20 @@ async function main() {
     maybeAutoCommit({ task_id, userRequest, finalVerdict });
   } catch (e) {
     console.warn(`[commit] unexpected error: ${e.message}`);
+  }
+
+  // Phase 7.5: deploy teardown (D6=B PASS branch).
+  // Only when final verdict is PASS AND DEPLOY_MODE=on (skipped runs have nothing to tear down).
+  // FAIL/ERROR keeps containers alive for debugging.
+  try {
+    const deployMode = (process.env.DEPLOY_MODE || 'on').toLowerCase();
+    if (finalVerdict === 'PASS' && deployMode === 'on') {
+      deployAgent.teardown();
+    } else if (finalVerdict !== 'PASS' && deployMode === 'on') {
+      console.log('[teardown] skipped — verdict is not PASS, containers kept for debugging (D6=B)');
+    }
+  } catch (e) {
+    console.warn(`[teardown] unexpected error: ${e.message}`);
   }
 
   console.log(`\n[${finalVerdict}] task_id=${task_id}`);

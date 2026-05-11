@@ -1,0 +1,12 @@
+# Source: lib/stack_templates/FE/.dockerignore.
+# Copied to FE/.dockerignore by lib/bootstrap.js (idempotent, missing-only).
+# Excludes from `COPY . .` in FE/Dockerfile to keep image small / secret-safe.
+
+node_modules
+dist
+coverage
+.git
+*.log
+.env
+.env.local
+.eslintcache

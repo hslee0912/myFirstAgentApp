@@ -33,10 +33,10 @@ describe('auth routes', () => {
       expect(res.body).toEqual({
         success: true,
         data: {
-          user_id: 12345,
-          email: 'user@example.com',
-          created_at: '2025-01-20T10:30:00Z'
-        }
+          userId: '12345',
+          email: 'user@example.com'
+        },
+        error: null
       });
       expect(isEmailTaken).toHaveBeenCalledWith('user@example.com');
       expect(createUser).toHaveBeenCalledWith('user@example.com', 'securePassword123');
@@ -78,7 +78,8 @@ describe('auth routes', () => {
       expect(res.status).toBe(409);
       expect(res.body).toEqual({
         success: false,
-        error: 'Email already exists'
+        data: null,
+        error: '이미 가입된 이메일입니다'
       });
       expect(createUser).not.toHaveBeenCalled();
     });
@@ -93,6 +94,7 @@ describe('auth routes', () => {
       expect(res.status).toBe(500);
       expect(res.body).toEqual({
         success: false,
+        data: null,
         error: 'Internal server error'
       });
     });

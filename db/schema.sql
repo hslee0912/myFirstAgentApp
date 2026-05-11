@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS app_users (
 CREATE TABLE IF NOT EXISTS log_agent_runs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id VARCHAR(64) NOT NULL,
-    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint') NOT NULL,
+    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint','Deploy','PostTest') NOT NULL,
     target ENUM('FE','BE') NULL,
     input_json JSON,
     output_json JSON,

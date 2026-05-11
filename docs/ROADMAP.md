@@ -3,7 +3,7 @@
 다음 작업 큐. 우선순위 순서. **잠금된 5단계 시퀀스**로 진행.
 
 ```
-[A] Deploy/Test → UI (+Observability) → [E] Tool use → [F] MCP → 멀티 프로젝트 → end-state
+[A] ✅ Deploy/Test → UI (+Observability) → [E] Tool use → [F] MCP → 멀티 프로젝트 → end-state
 ```
 
 이 시퀀스 끝나면 학생 시연용 **3대 AI Agent 패턴**이 같은 프로젝트에 모임:
@@ -159,6 +159,7 @@ lib/providers/
 
 ## 완료된 작업
 
+- 2026-05-08 [A] **Deploy + Post-deploy Test (Phase 8/9) 완료** (commit TBD). docker compose 결정론 템플릿 (`lib/stack_templates/`) + api_contract 기반 fetch+schema 검증. `DEPLOY_MODE` 토글 (CLAUDE.md 절대 규칙 #9), 신규 env 7개, `log_agent_runs.agent_name` ENUM 확장(`Deploy`, `PostTest`). 변경 파일: `lib/stack_templates/docker-compose.yml`, `lib/stack_templates/{BE,FE}/Dockerfile`+`.dockerignore`, `agents/deploy_agent.js`, `agents/test_agent.js`, `lib/api_test.js`, `agents/orchestrator.js` (통합), `lib/stack.config.json` (protected files), `db/schema.sql` (ENUM).
 - 2026-05-08 **문서 구조 분리** (commit `5365d2d`, `ffa5d59`).
 - 2026-05-08 **Prompt caching** (commit `ffa5d59`).
 - 2026-05-08 [B] **VALIDATION_MODE 토글** (commit `c6417ac`).

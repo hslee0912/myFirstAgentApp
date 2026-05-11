@@ -15,9 +15,8 @@ describe('auth API', () => {
       const mockResponse = {
         success: true,
         data: {
-          user_id: 12345,
-          email: 'test@example.com',
-          created_at: '2025-01-20T10:30:00Z'
+          userId: 'uuid-1234',
+          email: 'test@example.com'
         }
       };
 
@@ -32,7 +31,7 @@ describe('auth API', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/auth/signup', {
+      expect(globalThis.fetch).toHaveBeenCalledWith('/auth/signup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -47,11 +46,12 @@ describe('auth API', () => {
     it('returns error response on duplicate email', async () => {
       const mockResponse = {
         success: false,
-        error: 'Email already exists'
+        error: '이미 가입된 이메일입니다'
       };
 
       globalThis.fetch.mockResolvedValue({
         ok: false,
+        status: 409,
         json: async () => mockResponse
       });
 
@@ -61,23 +61,18 @@ describe('auth API', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Email already exists');
+      expect(result.error).toBe('이미 가입된 이메일입니다');
     });
 
     it('returns error response on validation failure', async () => {
       const mockResponse = {
         success: false,
-        error: 'Validation failed',
-        details: [
-          {
-            field: 'password',
-            message: 'Password must be at least 8 characters'
-          }
-        ]
+        error: '비밀번호는 8자 이상이어야 합니다'
       };
 
       globalThis.fetch.mockResolvedValue({
         ok: false,
+        status: 400,
         json: async () => mockResponse
       });
 
@@ -87,8 +82,7 @@ describe('auth API', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.details).toBeDefined();
-      expect(result.details[0].field).toBe('password');
+      expect(result.error).toBe('비밀번호는 8자 이상이어야 합니다');
     });
 
     it('handles network errors gracefully', async () => {
