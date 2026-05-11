@@ -98,7 +98,13 @@ function readApiContractIfAny() {
   const p = path.join(ROOT, 'shared', 'api_contract.json');
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    // Inline shared/router/<name>.json into each index entry so the LLM prompt
+    // sees the full endpoint spec (request/responses), not just the index.
+    const { normalizeContract } = require('../lib/api_test');
+    return normalizeContract(raw, {
+      routerDir: path.join(ROOT, 'shared', 'router'),
+    });
   } catch (_) {
     return null;
   }

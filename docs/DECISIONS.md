@@ -2,6 +2,23 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-11 — API contract split layout (index + router/)
+
+`shared/api_contract.json` 한 파일에 모든 endpoint detail이 몰려있던 구조를 둘로 분리:
+- `shared/api_contract.json` — index (`{ version, base_url, endpoints: [{name, path, method, description}] }`)
+- `shared/router/<name>.json` — 개별 endpoint full detail (`{ path, method, description?, request, responses }`)
+
+**Why**: endpoint가 많아지면 한 파일이 빠르게 커지고 변경 영향 추적이 어려움. 각 endpoint를 한 파일로 분리하면 디스크에서 한눈에 어떤 API가 정의돼 있는지 보임 + LLM이 한 endpoint 단위로 수정할 때 컨텍스트도 좁아짐.
+
+**구현**:
+- `lib/api_test.js`: `normalizeContract(contract, { routerDir })` — `endpoint.name`이 있고 `request`/`responses`/`response`가 없으면 index entry로 판정 → `routerDir/<name>.json` 로드해서 inline. 기존 base_url 결합 + legacy `response.{success, error_cases}` 매핑 로직은 그대로 유지 (3 dialect 지원). `runContract()`는 contract 파일과 같은 디렉터리의 `router/`를 default routerDir로 사용.
+- `agents/codechecker_agent.js`: SYSTEM_PROMPT의 contract format 섹션을 split 형식으로 바꾸고, LLM 응답 schema에 `router_details` 필드 추가. `run()`이 (1) index ↔ details 매칭 검증 (orphan/missing 양방향 throw), (2) `shared/api_contract.json` 작성, (3) `shared/router/` mkdir + 새 detail file write + stale file unlink. CodeChecker output의 `api_contract`는 in-memory에서 `normalizeContract`로 expand한 full form (BE/FE Agent로 그대로 전달돼 prompt에 inject).
+- `agents/be_agent.js`, `agents/fe_agent.js`: `readApiContractIfAny()`가 `normalizeContract`를 호출하도록 갱신. retry 라운드·standalone 실행에서도 같은 full form을 본다.
+- `tests/api_test.test.js`: split layout 6 케이스 추가 (index expansion / base_url 결합 / detail 안의 legacy response shape / 누락 router file throw / routerDir 생략 시 legacy path / 이미 full인 endpoint 재expansion 안 함).
+- 마이그레이션: 기존 main의 `shared/api_contract.json`을 두 파일로 분리 — 사용자가 추가 손질 (description, schema 정밀화).
+
+**검증**: 새 사이클(`task_20260511074027_33a2e1`, VALIDATION_MODE=on) 풀 통과 — Phase 5 verdict=PASS · Phase 8 Deploy `up complete in 17073ms` · Phase 9 PostTest `PASS: 1/1 endpoints (65ms)` (이전 사이클 150ms 대비 빠름, 더 작은 detail file 로드 영향). `npm test` 110/110.
+
 ## 2026-05-11 — First full-cycle hardening sweep
 
 [A] Phase 8/9 commit(`89740ca`) 이후 **end-to-end로 실제 풀 사이클을 처음 돌려본** 작업. main에 잔존하던 옛 LLM 산출물 + LLM 응답의 stochastic 결함이 줄줄이 드러나 한 commit씩 잡아냈고, 최종 사이클(VALIDATION_MODE=off 모드, task `task_20260511070429_2b5606`)에서 `[PASS]` + Phase 9 `PASS: 1/1 endpoints (150ms)` 달성. 누적 8 robustness layer (이전 7 + Continuation).

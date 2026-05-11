@@ -1,95 +1,12 @@
 {
   "version": "1.0.0",
+  "base_url": "/api/v1",
   "endpoints": [
     {
+      "name": "auth_signup",
       "path": "/auth/signup",
       "method": "POST",
-      "description": "새로운 사용자 회원가입",
-      "request": {
-        "type": "object",
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email",
-            "description": "사용자 이메일"
-          },
-          "password": {
-            "type": "string",
-            "minLength": 8,
-            "description": "비밀번호 (8자 이상)"
-          }
-        },
-        "required": [
-          "email",
-          "password"
-        ],
-        "example": {
-          "email": "user@example.com",
-          "password": "SecurePass123"
-        }
-      },
-      "response": {
-        "success": {
-          "type": "object",
-          "properties": {
-            "success": {
-              "type": "boolean",
-              "example": true
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "userId": {
-                  "type": "string",
-                  "example": "uuid-1234"
-                },
-                "email": {
-                  "type": "string",
-                  "example": "user@example.com"
-                }
-              }
-            },
-            "error": {
-              "type": "null"
-            }
-          },
-          "statusCode": 201
-        },
-        "duplicate_email": {
-          "type": "object",
-          "properties": {
-            "success": {
-              "type": "boolean",
-              "example": false
-            },
-            "data": {
-              "type": "null"
-            },
-            "error": {
-              "type": "string",
-              "example": "이미 가입된 이메일입니다"
-            }
-          },
-          "statusCode": 409
-        },
-        "validation_error": {
-          "type": "object",
-          "properties": {
-            "success": {
-              "type": "boolean",
-              "example": false
-            },
-            "data": {
-              "type": "null"
-            },
-            "error": {
-              "type": "string",
-              "example": "비밀번호는 8자 이상이어야 합니다"
-            }
-          },
-          "statusCode": 400
-        }
-      }
+      "description": "이메일과 비밀번호로 회원가입"
     }
   ]
 }

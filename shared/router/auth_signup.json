@@ -1,0 +1,107 @@
+{
+  "path": "/auth/signup",
+  "method": "POST",
+  "description": "이메일과 비밀번호로 회원가입. 이메일 중복 체크 및 비밀번호 길이 검증 후 사용자 저장.",
+  "request": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 255,
+          "example": "user@example.com"
+        },
+        "password": {
+          "type": "string",
+          "minLength": 8,
+          "example": "SecurePass123"
+        }
+      },
+      "required": [
+        "email",
+        "password"
+      ]
+    }
+  },
+  "responses": {
+    "201": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "example": 1
+              },
+              "email": {
+                "type": "string",
+                "example": "user@example.com"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "example": "2024-01-15T10:30:00Z"
+              }
+            }
+          }
+        }
+      }
+    },
+    "400": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "INVALID_EMAIL",
+              "PASSWORD_TOO_SHORT"
+            ],
+            "example": "PASSWORD_TOO_SHORT"
+          }
+        }
+      }
+    },
+    "409": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string",
+            "example": "EMAIL_ALREADY_EXISTS"
+          }
+        }
+      }
+    },
+    "500": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string",
+            "example": "INTERNAL_SERVER_ERROR"
+          }
+        }
+      }
+    }
+  }
+}

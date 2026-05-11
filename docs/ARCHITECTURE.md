@@ -15,7 +15,7 @@
 | `agents/test_agent.js` | ❌ | Phase 9: api_test.runContract 호출. log_agent_runs row 1개 (`agent_name='PostTest'`) |
 | `lib/db.js`, `logger.js` | ❌ | mysql2 + 로그 헬퍼 |
 | `lib/llm.js` | — | @anthropic-ai/sdk 래퍼 + jsonrepair 폴백 + `resolveModel()` |
-| `lib/api_test.js` | ❌ | api_contract 로드 + simple JSON Schema validator + fetch 실행. test_agent의 helper |
+| `lib/api_test.js` | ❌ | api_contract 로드(+ split layout expansion) + simple JSON Schema validator + fetch 실행. test_agent의 helper |
 | `lib/bootstrap.js` | ❌ | 멱등 FE/BE 스캐폴딩 (Dockerfile, .dockerignore도 자동 복사) |
 | `lib/stack.js` | ❌ | `lib/stack.config.json` 로더 |
 
@@ -26,6 +26,22 @@
 3. **`claude-sonnet-4-5`** — 하드코딩 마지막 보루
 
 → Agent별로 다른 모델 사용 가능. 예: CodeChecker는 빠른 Haiku, BE/FE는 Sonnet.
+
+## API contract 레이아웃 (split: index + router/)
+
+```
+shared/
+├── api_contract.json    ← index. { version, base_url, endpoints: [{name, path, method, description}] }
+└── router/
+    └── <name>.json      ← per-endpoint detail. { path, method, description?, request, responses }
+```
+
+- **`api_contract.json` (index)**: 어떤 endpoint가 정의돼 있나 한눈에 — path/method/한 줄 description만. base_url은 BE가 `app.use` prefix로 깔고 Phase 9도 fetch URL 만들 때 결합.
+- **`router/<name>.json` (detail)**: 각 endpoint의 request/responses schema. `name`은 snake_case로 path에서 유도 (`/auth/signup` → `auth_signup`).
+- CodeChecker가 LLM 응답의 `api_contract` + `router_details` 두 필드를 받아 위 두 곳에 따로 write. 시작 시 기존 `shared/router/`의 stale `.json`은 새 contract에 없는 것 자동 정리.
+- `lib/api_test.js`의 `normalizeContract(contract, { routerDir })`이 index의 각 entry를 detail file로 inline 확장. 이 한 함수가 disk 형식(split)과 in-memory 형식(full)을 연결.
+- BE/FE Agent의 `readApiContractIfAny()`도 같은 `normalizeContract`를 호출하므로 prompt엔 항상 full form이 들어감 — Agent 코드는 split layout을 신경 쓸 필요 없음.
+- 새 endpoint 추가는 CodeChecker가 자동. 사람이 직접 추가하려면 (1) `shared/router/<name>.json` 파일 만들고 (2) `shared/api_contract.json` `endpoints` 배열에 index entry 한 줄 추가.
 
 ## 스택 (단일 원천: `lib/stack.config.json`)
 

@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
+const { normalizeContract } = require('../lib/api_test');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -62,31 +63,51 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 - 응답 형식 표준: { success: bool, data: any, error?: string }
 - be_spec / fe_spec에 lint 설정(.eslintrc), Docker 설정(Dockerfile, .dockerignore), 의존성 매니페스트(package.json, package-lock.json) 변경 가이드를 포함하지 말 것. 이 파일들은 protected이라 BE/FE Agent가 수정 못 한다.
 
-## api_contract format (Phase 9 PostTest와 정확히 매칭 — 이 형식만 사용)
+## api_contract / router_details 형식 (split layout)
 
+응답의 \`api_contract\`는 **endpoint index만** 담는다 (각 endpoint의 detail은 \`router_details\`에 별도로). 시스템이 두 부분을 받아 \`shared/api_contract.json\` + \`shared/router/<name>.json\` 두 위치에 저장한다.
+
+\`api_contract\` (= index):
 \`\`\`json
 {
   "version": "1.0.0",
-  "base_url": "/api/v1",          // optional. BE는 이 prefix 아래 라우트 등록. Phase 9도 base_url을 baseUrl에 이어붙여 fetch.
+  "base_url": "/api/v1",                   // optional. BE는 이 prefix를 \`app.use\`에 적용.
   "endpoints": [
     {
-      "path": "/auth/signup",      // base_url 제외한 endpoint 자체 path
+      "name": "auth_signup",               // shared/router/<name>.json 파일명과 일치 (snake_case)
+      "path": "/auth/signup",              // base_url 제외
       "method": "POST",
-      "request": {
-        "schema": { ... JSON Schema ... },  // properties.<field>.example 으로 request body 자동 구성
-        "example": { ... }                  // optional, 참고용
-      },
-      "responses": {                // **반드시 객체** — key는 status code(string), value는 { schema }
-        "201": { "schema": { ... } },
-        "400": { "schema": { ... } },
-        "409": { "schema": { ... } }
-      }
+      "description": "사용자 회원가입"     // 한 줄 요약
     }
   ]
 }
 \`\`\`
 
-**금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식. responses 객체의 key가 status code여야 한다. base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
+\`router_details\` (= per-endpoint full spec, key는 위의 \`name\`):
+\`\`\`json
+{
+  "auth_signup": {
+    "path": "/auth/signup",
+    "method": "POST",
+    "description": "사용자 회원가입",
+    "request": {
+      "schema": { ... JSON Schema ... },   // properties.<field>.example 으로 request body 자동 구성
+      "example": { ... }                   // optional
+    },
+    "responses": {                          // **반드시 객체** — key는 status code(string), value는 { schema }
+      "201": { "schema": { ... } },
+      "400": { "schema": { ... } },
+      "409": { "schema": { ... } }
+    }
+  }
+}
+\`\`\`
+
+규칙:
+- \`api_contract.endpoints\`의 모든 \`name\`이 \`router_details\`에 1:1로 있어야 한다. 누락 시 Phase 9 PostTest가 throw.
+- \`name\`은 snake_case. path를 기준으로 자연스러운 이름 (\`/auth/signup\` → \`auth_signup\`).
+- **금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식, endpoint detail을 \`api_contract\` 자체에 inline 두는 형식. **반드시 index + router_details 분리**.
+- base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
   return [
@@ -100,12 +121,13 @@ function buildUserPrompt(userRequirement) {
     `  "targets": "FE" | "BE" | "BOTH",`,
     `  "be_spec": { ... } | null,`,
     `  "fe_spec": { ... } | null,`,
-    `  "api_contract": { ... } | null,`,
+    `  "api_contract": { version, base_url?, endpoints: [{ name, path, method, description }] } | null,`,
+    `  "router_details": { "<name>": { path, method, description?, request, responses } } | null,`,
     `  "rationale": "분류 근거 1-2문장"`,
     `}`,
     '',
     '"targets"가 "BOTH"가 아니면 해당 영역의 spec은 null로 두어도 된다.',
-    '"BOTH"인 경우 api_contract는 반드시 채워라.',
+    '"BOTH"인 경우 api_contract + router_details 둘 다 반드시 채워라. router_details의 키는 api_contract.endpoints[].name과 1:1 매칭이어야 한다.',
   ].join('\n');
 }
 
@@ -151,13 +173,52 @@ async function run({ task_id, user_request }) {
       throw new Error(`Invalid targets from LLM: ${JSON.stringify(targets)}`);
     }
 
-    // Persist api_contract.json if BOTH
+    // Persist api_contract.json (index) + shared/router/<name>.json (details) if BOTH
     if (targets === 'BOTH') {
       if (!llmOut.api_contract) {
         throw new Error('targets=BOTH but api_contract is missing in LLM response');
       }
+      if (!llmOut.router_details || typeof llmOut.router_details !== 'object') {
+        throw new Error('targets=BOTH but router_details is missing in LLM response');
+      }
+      // Verify every index entry has a matching detail (and vice versa) so we
+      // don't write a half-broken contract.
+      const indexNames = (llmOut.api_contract.endpoints || []).map((e) => e.name);
+      const detailNames = Object.keys(llmOut.router_details);
+      const missingDetails = indexNames.filter((n) => !detailNames.includes(n));
+      const orphanDetails = detailNames.filter((n) => !indexNames.includes(n));
+      if (missingDetails.length > 0) {
+        throw new Error(
+          `api_contract endpoints reference names with no matching router_details entry: ${missingDetails.join(', ')}`
+        );
+      }
+      if (orphanDetails.length > 0) {
+        throw new Error(
+          `router_details contains entries with no matching api_contract endpoint: ${orphanDetails.join(', ')}`
+        );
+      }
+
+      // Write index.
       const contractPath = path.join(ROOT, 'shared', 'api_contract.json');
       fs.writeFileSync(contractPath, JSON.stringify(llmOut.api_contract, null, 2) + '\n', 'utf8');
+
+      // Write per-endpoint detail files. mkdir is idempotent.
+      const routerDir = path.join(ROOT, 'shared', 'router');
+      fs.mkdirSync(routerDir, { recursive: true });
+      // Remove any stale detail files no longer in the new contract — keeps
+      // shared/router/ in sync with the current api_contract.
+      for (const f of fs.readdirSync(routerDir)) {
+        if (f.endsWith('.json')) {
+          const base = f.slice(0, -'.json'.length);
+          if (!detailNames.includes(base)) {
+            try { fs.unlinkSync(path.join(routerDir, f)); } catch (_) { /* best-effort */ }
+          }
+        }
+      }
+      for (const [name, detail] of Object.entries(llmOut.router_details)) {
+        const detailPath = path.join(routerDir, `${name}.json`);
+        fs.writeFileSync(detailPath, JSON.stringify(detail, null, 2) + '\n', 'utf8');
+      }
     }
 
     // INSERT decision (1 row)
@@ -172,11 +233,23 @@ async function run({ task_id, user_request }) {
       state_ids.FE = await logger.insertTaskState(decision_id, 'FE');
     }
 
+    // Build the in-memory expanded contract (split layout merged into the
+    // canonical full form runEndpoint expects). Downstream BE/FE Agents see
+    // this full form via api_contract in their params; disk stays split.
+    let expandedContract = llmOut.api_contract || null;
+    if (expandedContract && llmOut.router_details) {
+      const inlined = (expandedContract.endpoints || []).map((e) => ({
+        ...e,
+        ...(llmOut.router_details[e.name] || {}),
+      }));
+      expandedContract = normalizeContract({ ...expandedContract, endpoints: inlined });
+    }
+
     const output = {
       targets,
       be_spec: llmOut.be_spec || null,
       fe_spec: llmOut.fe_spec || null,
-      api_contract: llmOut.api_contract || null,
+      api_contract: expandedContract,
       rationale: llmOut.rationale || '',
       decision_id,
       state_ids,

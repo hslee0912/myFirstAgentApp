@@ -86,9 +86,9 @@ Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
+- 2026-05-11  (TBD)  **API contract split layout** — `shared/api_contract.json`은 endpoint index만 (`{name, path, method, description}`), 각 detail은 `shared/router/<name>.json`. CodeChecker가 `api_contract` + `router_details` 두 필드로 emit → 시스템이 두 위치에 write + stale router 파일 자동 cleanup. `normalizeContract(contract, { routerDir })`이 in-memory에서 inline 확장 — Agent/PostTest는 항상 full form을 봄. 사이클 검증 PASS (1 라운드 + PostTest 65ms). [ARCHITECTURE.md](docs/ARCHITECTURE.md#api-contract-레이아웃-split-index--router) 참조.
 - 2026-05-11  f02ebdf  **단일 재사용 test 워크트리 정책** — `.claude/worktrees/test/` (branch `claude/test`) 한 번 만들고 모든 검증에서 재사용. 사이 정리는 `rm -rf BE FE`만 (bootstrap fresh, node_modules 보존). 매번 새 워크트리 만들지 말 것. [OPERATIONS.md](docs/OPERATIONS.md) 참조.
 - 2026-05-11  6cba494  **DB schema dynamic inject** — `db/schema.sql` 전체를 CodeChecker + BE Agent system prompt에 inject. BE 비즈니스는 `app_users`만 / `log_*`는 agent 전용 / contract example은 schema 타입과 일치. Phase 9에서 LLM이 `users` vs `app_users` 혼동해 500 fail나던 사이클 해결.
-- 2026-05-11  **First full-cycle hardening sweep** (8 commits, `40c0675`→`f02ebdf`) — Phase 8/9 첫 풀 사이클 검증 중 발견한 stack reset / validateAllowedDeps / port preflight (OS+Docker 2 layer) / contract normalizer / Continuation / schema inject / worktree 정책. 최종 verdict=PASS + PostTest 1/1 endpoints 150ms. 자세한 내용은 [DECISIONS.md](docs/DECISIONS.md).
 
 ## Skill routing
 

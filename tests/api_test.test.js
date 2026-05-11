@@ -210,3 +210,126 @@ test('validate: email format loose check', () => {
   assert.equal(bad.length, 1);
   assert.match(bad[0], /expected email format/);
 });
+
+// ─────────── normalizeContract: split layout (routerDir option) ───────────
+
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+
+/** Create a temp router/ directory with the given files inside it. */
+function mkTempRouter(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'router-'));
+  for (const [name, body] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, name), JSON.stringify(body));
+  }
+  return dir;
+}
+
+test('normalizeContract: index entry expands via routerDir', () => {
+  const routerDir = mkTempRouter({
+    'auth_signup.json': {
+      path: '/auth/signup',
+      method: 'POST',
+      request: { schema: { type: 'object' } },
+      responses: { '201': { schema: { type: 'object' } } },
+    },
+  });
+  const input = {
+    version: '1.0.0',
+    endpoints: [
+      { name: 'auth_signup', path: '/auth/signup', method: 'POST', description: '...' },
+    ],
+  };
+  const out = normalizeContract(input, { routerDir });
+  const ep = out.endpoints[0];
+  assert.equal(ep.path, '/auth/signup');
+  assert.equal(ep.method, 'POST');
+  assert.ok(ep.request);
+  assert.deepEqual(Object.keys(ep.responses), ['201']);
+});
+
+test('normalizeContract: index + base_url combine through expansion', () => {
+  const routerDir = mkTempRouter({
+    'auth_signup.json': {
+      path: '/auth/signup',
+      method: 'POST',
+      request: { schema: { type: 'object' } },
+      responses: { '201': { schema: { type: 'object' } } },
+    },
+  });
+  const out = normalizeContract(
+    {
+      version: '1.0.0',
+      base_url: '/api/v1',
+      endpoints: [{ name: 'auth_signup', path: '/auth/signup', method: 'POST' }],
+    },
+    { routerDir },
+  );
+  assert.equal(out.endpoints[0].path, '/api/v1/auth/signup');
+});
+
+test('normalizeContract: index entry maps legacy responses dialect from detail file', () => {
+  const routerDir = mkTempRouter({
+    'auth_signup.json': {
+      path: '/auth/signup',
+      method: 'POST',
+      response: {
+        success: { status_code: 201, schema: { type: 'object' } },
+        error_cases: [{ status_code: 400 }],
+      },
+    },
+  });
+  const out = normalizeContract(
+    {
+      endpoints: [{ name: 'auth_signup', path: '/auth/signup', method: 'POST' }],
+    },
+    { routerDir },
+  );
+  const ep = out.endpoints[0];
+  assert.deepEqual(Object.keys(ep.responses).sort(), ['201', '400']);
+  assert.ok(ep.responses['201'].schema);
+  assert.deepEqual(ep.responses['400'], {});
+});
+
+test('normalizeContract: missing router file throws a clear error', () => {
+  const routerDir = mkTempRouter({});
+  assert.throws(
+    () => normalizeContract(
+      { endpoints: [{ name: 'auth_signup', path: '/auth/signup', method: 'POST' }] },
+      { routerDir },
+    ),
+    /endpoint 'auth_signup' declared in api_contract.json but/,
+  );
+});
+
+test('normalizeContract: routerDir omitted leaves index entries as-is (legacy path)', () => {
+  const out = normalizeContract({
+    endpoints: [{ name: 'auth_signup', path: '/auth/signup', method: 'POST' }],
+  });
+  const ep = out.endpoints[0];
+  assert.equal(ep.name, 'auth_signup');
+  assert.equal(ep.path, '/auth/signup');
+  // No detail expansion happened — responses defaults to empty object.
+  assert.deepEqual(ep.responses, {});
+});
+
+test('normalizeContract: routerDir set but endpoint already has request/responses → no detail read', () => {
+  // routerDir points at empty dir; if expansion were triggered we'd throw.
+  const routerDir = mkTempRouter({});
+  const out = normalizeContract(
+    {
+      endpoints: [
+        {
+          name: 'auth_signup',
+          path: '/auth/signup',
+          method: 'POST',
+          request: { schema: { type: 'object' } },
+          responses: { '201': { schema: { type: 'object' } } },
+        },
+      ],
+    },
+    { routerDir },
+  );
+  assert.equal(out.endpoints[0].path, '/auth/signup');
+});
