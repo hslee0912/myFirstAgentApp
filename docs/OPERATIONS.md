@@ -125,9 +125,13 @@ docker exec -it <mysql_container> mysql -uroot -proot myfirstagentapp_db   # DB 
 docker compose --project-directory . -f lib/stack_templates/docker-compose.yml down --remove-orphans
 ```
 
-### 포트 충돌 시 — 자동 fallback
+### 포트 충돌 시 — 자동 fallback (2-layer 검출)
 
-학생 환경에서 5173/3001/3306 충돌 흔함 (특히 호스트에 이미 MySQL 돌고 있을 때). Phase 8 시작 직전에 **deploy_agent가 host 포트 가용성을 직접 probe**해 충돌 발견 시 자동으로 `+1, +2, ...` (최대 +20)에서 빈 포트로 fallback한다.
+학생 환경에서 5173/3001/3306 충돌 흔함 (특히 호스트에 이미 MySQL 돌고 있거나, 이전 FAIL 사이클의 컨테이너가 D6=B 정책으로 보존돼 있을 때). Phase 8 시작 직전에 deploy_agent가 두 layer로 host 포트 가용성을 검증하고 충돌 시 자동으로 `+1, +2, ...` (최대 +20)에서 빈 포트로 fallback한다.
+
+**두 layer 모두 통과해야 free로 판정**:
+1. **Docker layer** — `docker ps --format '{{.Ports}}'` 파싱해 출판된 host 포트 Set 작성. 이전 FAIL 사이클이 남긴 컨테이너가 점유한 포트를 미리 skip. Docker CLI 부재 시 빈 Set 반환 — graceful degrade.
+2. **OS layer** — `net.createServer().listen(port, '0.0.0.0')` probe. 호스트 MySQL / 다른 process 등 non-docker 충돌 검출.
 
 ```
 [deploy] port 3306 (mysql) is in use — falling back to 3307. Set DEPLOY_PORT_DB=3307 in .env to persist.
@@ -138,6 +142,7 @@ docker compose --project-directory . -f lib/stack_templates/docker-compose.yml d
 - `.env` 파일은 그대로 둠 (single source of truth 정책). console hint 보고 사용자가 명시적으로 영구 설정하려면 `.env` 직접 편집.
 - 컨테이너 *내부* 포트는 그대로 (3306/3001/5173) — 호스트 매핑만 바뀜.
 - 20번 시도 후에도 빈 포트 못 찾으면 `failed_stage='port_preflight'` 로 즉시 FAIL.
+- 디버깅: `docker ps --format 'table {{.Names}}\t{{.Ports}}'` + `netstat -ano | findstr :3306` (Windows) / `ss -tlnp | grep :3306` (Linux).
 
 수동 강제 설정 (예: 항상 3307 쓰고 싶을 때):
 ```
