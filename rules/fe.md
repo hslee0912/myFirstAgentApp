@@ -37,15 +37,41 @@ module.exports = SignupForm;
 ## 5. API 호출 패턴
 
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
+- **URL은 항상 상대 경로** (`/api/...` 형태). absolute URL (`http://...`)이나 BE host hardcode 금지.
+  - Vite dev server에 `server.proxy['/api']`가 설정되어 있어 `/api/*` 요청을
+    자동으로 BE 컨테이너로 forward한다. FE Agent는 BE의 host/port를 *알 필요
+    없음*. dev/docker/EC2 환경 분기, CORS 헤더, `VITE_BE_URL` 같은 env 변수는
+    *인프라 영역* — LLM이 절대 신경 쓰지 말 것.
+- 경로는 `shared/api_contract.json`의 `base_url` + `endpoint.path`로 조합.
+  예: `base_url='/api/v1'`, `endpoint.path='/auth/signup'` → 최종 fetch URL은
+  `'/api/v1/auth/signup'`.
 - 응답 형식은 공통 규칙 §3 — `{ success, data, error }`.
   ```js
-  const res = await fetch('/api/signup', {
+  // 좋음 (상대경로 + base_url + path 조합)
+  const res = await fetch('/api/v1/auth/signup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error);
+  ```
+- **흔한 함정 — 절대 금지**:
+  ```js
+  // 나쁨 1: BE host hardcode
+  fetch('http://localhost:3001/api/v1/auth/signup', ...)
+  // → 브라우저 cross-origin 호출 → CORS 차단되거나 환경 의존(EC2 도메인 등).
+
+  // 나쁨 2: env 분기 시도
+  const BE_URL = import.meta.env.VITE_BE_URL || 'http://localhost:3001';
+  fetch(`${BE_URL}/api/v1/auth/signup`, ...)
+  // → 인프라 영역 침범. Vite proxy로 이미 해결된 문제를 FE 코드에서 다시 풀려는
+  //   안티패턴. proxy 설정 자체가 protected file이라 FE Agent는 그게 어떻게
+  //   세팅됐는지 알 필요도 없다.
+
+  // 나쁨 3: base_url 누락
+  fetch('/auth/signup', ...)
+  // → BE의 mount path는 base_url 포함. base_url 빼면 404.
   ```
 
 ## 6. 테스트 (FE) — 시스템이 자동 생성
