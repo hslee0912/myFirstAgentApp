@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles } = require('../lib/prompt_util');
+const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 
 // ─────────── abridgeExistingFiles ───────────
 
@@ -150,4 +150,110 @@ test('dropProtectedFiles: handles null protectedList', () => {
   const result = dropProtectedFiles({ 'a.js': '1' }, null);
   assert.deepEqual(Object.keys(result.files), ['a.js']);
   assert.deepEqual(result.dropped, []);
+});
+
+// ─────────── validateAllowedDeps ───────────
+
+test('validateAllowedDeps: passes when all requires are allowed', () => {
+  const files = {
+    'BE/src/server.js': `const express = require('express');\nconst bcrypt = require('bcrypt');`,
+  };
+  assert.doesNotThrow(() =>
+    validateAllowedDeps(files, 'express, bcrypt, mysql2', 'BE Agent')
+  );
+});
+
+test('validateAllowedDeps: throws on unauthorized require', () => {
+  const files = {
+    'BE/src/auth.js': `const validator = require('email-validator');`,
+  };
+  assert.throws(
+    () => validateAllowedDeps(files, 'express, bcrypt', 'BE Agent'),
+    (err) => err.code === 'UNAUTHORIZED_DEPS' && /email-validator/.test(err.message)
+  );
+});
+
+test('validateAllowedDeps: throws on unauthorized ES import', () => {
+  const files = {
+    'FE/src/App.jsx': `import axios from 'axios';\nimport { useState } from 'react';`,
+  };
+  assert.throws(
+    () => validateAllowedDeps(files, 'react, react-dom', 'FE Agent'),
+    (err) => err.code === 'UNAUTHORIZED_DEPS' && /axios/.test(err.message)
+  );
+});
+
+test('validateAllowedDeps: allows relative paths', () => {
+  const files = {
+    'BE/src/server.js': `const auth = require('./routes/auth');\nconst util = require('../lib/util');`,
+  };
+  assert.doesNotThrow(() => validateAllowedDeps(files, '', 'BE Agent'));
+});
+
+test('validateAllowedDeps: allows Node builtins', () => {
+  const files = {
+    'BE/src/util.js': `const fs = require('fs');\nconst path = require('node:path');\nconst { isBuiltin } = require('module');`,
+  };
+  assert.doesNotThrow(() => validateAllowedDeps(files, 'express', 'BE Agent'));
+});
+
+test('validateAllowedDeps: handles scoped packages', () => {
+  const files = {
+    'FE/src/Test.jsx': `import { render } from '@testing-library/react';\nimport '@testing-library/jest-dom';`,
+  };
+  assert.doesNotThrow(() =>
+    validateAllowedDeps(files, '@testing-library/react, @testing-library/jest-dom', 'FE Agent')
+  );
+});
+
+test('validateAllowedDeps: throws on unauthorized scoped package', () => {
+  const files = {
+    'FE/src/Style.jsx': `import styled from '@emotion/styled';`,
+  };
+  assert.throws(
+    () => validateAllowedDeps(files, 'react', 'FE Agent'),
+    (err) => err.code === 'UNAUTHORIZED_DEPS' && /@emotion\/styled/.test(err.message)
+  );
+});
+
+test('validateAllowedDeps: accepts array allowedDeps as well as csv string', () => {
+  const files = { 'a.js': `const x = require('express');` };
+  assert.doesNotThrow(() => validateAllowedDeps(files, ['express'], 'L'));
+  assert.doesNotThrow(() => validateAllowedDeps(files, 'express', 'L'));
+});
+
+test('validateAllowedDeps: handles deep import path (e.g. mysql2/promise)', () => {
+  const files = {
+    'BE/src/db.js': `const mysql = require('mysql2/promise');\nconst pool = mysql.createPool({});`,
+  };
+  assert.doesNotThrow(() => validateAllowedDeps(files, 'mysql2', 'BE Agent'));
+});
+
+test('validateAllowedDeps: skips non-js files', () => {
+  const files = {
+    'BE/src/data.json': '{"requires": "evil"}',
+    'BE/README.md': "require('whatever')",
+  };
+  assert.doesNotThrow(() => validateAllowedDeps(files, '', 'BE Agent'));
+});
+
+test('validateAllowedDeps: violations list shape', () => {
+  const files = {
+    'BE/src/auth.js': `const v = require('email-validator');\nconst j = require('joi');`,
+  };
+  try {
+    validateAllowedDeps(files, 'express', 'BE Agent');
+    assert.fail('should have thrown');
+  } catch (e) {
+    assert.equal(e.code, 'UNAUTHORIZED_DEPS');
+    assert.equal(e.violations.length, 2);
+    const mods = e.violations.map((v) => v.module).sort();
+    assert.deepEqual(mods, ['email-validator', 'joi']);
+  }
+});
+
+test('validateAllowedDeps: handles empty/null files input', () => {
+  assert.doesNotThrow(() => validateAllowedDeps({}, 'express', 'L'));
+  assert.doesNotThrow(() => validateAllowedDeps(null, 'express', 'L'));
+  assert.doesNotThrow(() => validateAllowedDeps(undefined, 'express', 'L'));
 });

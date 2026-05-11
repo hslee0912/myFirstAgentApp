@@ -53,7 +53,8 @@
       "FE/.dockerignore"
     ],
     "eslintConfig": {
-      "env": { "browser": true, "es2022": true, "node": true },
+      "env": { "browser": true, "es2022": true, "node": true, "jest": true },
+      "globals": { "vi": "readonly" },
       "extends": ["eslint:recommended", "plugin:react/recommended", "plugin:react-hooks/recommended"],
       "parserOptions": { "ecmaVersion": 2022, "sourceType": "module", "ecmaFeatures": { "jsx": true } },
       "settings": { "react": { "version": "detect" } },

@@ -44,6 +44,15 @@ export default signupHandler;
 - 검증 시: `bcrypt.compare(plain, hashed)`
 - 평문 비교(`if (password === stored)`) 절대 금지.
 
+## 5-bis. 입력 검증 — allowedDeps만 사용 (위반 시 즉시 ERROR)
+
+- 이메일 검증: **regex로 직접** 처리. `/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)` 정도면 충분.
+- 비밀번호 길이: `password.length >= 8` 같은 단순 검사.
+- **`require('email-validator')`, `require('joi')`, `require('zod')`, `require('validator')` 절대 금지** — 응답 시점에 `validateAllowedDeps` 가드가 잡아 라운드 ERROR.
+- 외부 HTTP 호출: Node.js builtin `https`/`http`, 또는 Node 18+ global `fetch`만. `axios` 등 금지.
+- UUID: `crypto.randomUUID()` (Node builtin) 사용. `uuid` 패키지 금지.
+- JWT/세션: 본 PoC 스코프에선 사용 안 함. 필요하면 `notes`에 적고 코드는 만들지 말 것.
+
 ## 6. 에러 핸들링
 
 - try/catch로 잡고, 5xx로 응답할 때는 `{ success: false, error: '...' }` 형식 유지.

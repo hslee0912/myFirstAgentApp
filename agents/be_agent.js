@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
-const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles } = require('../lib/prompt_util');
+const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
@@ -234,6 +234,11 @@ async function run(params) {
     // Auto-generate smoke tests for new code files (deterministic, no LLM).
     const autoTests = generateSmokeTests(filesB);
     const files = { ...filesB, ...autoTests };
+
+    // Dep guard: scan require()/import in response files for unauthorized deps.
+    // Throws on first violation to fail fast before stage 3 (Jest) chokes on
+    // require('email-validator') etc.
+    validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'BE Agent');
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });
     applyFiles(files);

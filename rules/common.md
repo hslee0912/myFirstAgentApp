@@ -81,6 +81,17 @@ async function isEmailTaken(email) { ... }
 - "다른 라이브러리가 더 좋다"는 판단으로 **새 의존성을 추가하거나 매니페스트를 수정하지 말 것**. 필요한 경우 응답의 `notes`에 사유를 기록만 하고, 패키지 매니페스트는 절대 건드리지 말 것.
 - bootstrap이 정한 모듈 시스템(시스템 프롬프트의 `moduleSystem` 항목)을 임의로 바꾸지 말 것. 스택을 바꾸는 결정은 사람의 작업이며, 그 절차는 `README.md`의 "스택 변경 체크리스트"에 따라 진행된다.
 
+### 9-bis. allowedDeps 위반 가드 (결정론, 매 응답 검증)
+
+- 응답의 모든 `.js` / `.jsx` 파일은 `require()` / `import` 정적 분석 대상이다. 외부 모듈 (상대경로 `./`/`../` 아니고 Node.js builtin 아닌 것) 중 `allowedDeps`에 없는 것이 발견되면 **즉시 `UNAUTHORIZED_DEPS` 오류로 라운드 ERROR 종료**.
+- 흔한 위반 사례 (절대 시도하지 말 것):
+  - `require('email-validator')`, `require('joi')`, `require('zod')`, `require('validator')` — 이메일/입력 검증은 직접 regex 또는 단순 string 검사로 처리하라. 모든 검증 라이브러리 금지.
+  - `require('axios')`, `require('node-fetch')` — BE는 외부 HTTP 호출 시 Node.js builtin `https`/`http` 또는 `fetch` (Node 18+ global) 사용. FE는 global `fetch`만.
+  - `require('jsonwebtoken')`, `require('uuid')` — `crypto.randomUUID()` (Node builtin)으로 충분.
+  - `require('lodash')`, `require('ramda')`, `require('moment')`, `require('date-fns')` — 표준 라이브러리/직접 구현으로 처리.
+  - `import 'styled-components'`, `import '@emotion/react'` — FE는 인라인 style 또는 plain CSS만.
+- 이 가드는 *retry 없는 즉시 ERROR* 이다 (validatePaths와 동일). prompt 단계에서 룰을 따르는 게 정상 경로.
+
 ### 보호 파일 — 절대 수정·생성·참조 금지
 
 각 스택의 빌드/매니페스트 설정 파일은 **placeholder 상태 그대로 보존**한다. 어떤 파일이 보호 대상인지는 `lib/stack.config.json`의 `<AREA>.protectedConfigFiles`에 정의되어 있고, **시스템 프롬프트에 자동 주입되어 매 호출마다 Agent에게 전달**된다.

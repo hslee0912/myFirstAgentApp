@@ -36,7 +36,7 @@ module.exports = SignupForm;
 
 ## 5. API 호출 패턴
 
-- `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음.
+- `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
 - 응답 형식은 공통 규칙 §3 — `{ success, data, error }`.
   ```js
   const res = await fetch('/api/signup', {
@@ -77,6 +77,16 @@ module.exports = SignupForm;
 
 - 스택에 CSS-in-JS 라이브러리는 없음. 인라인 style 또는 `<style>` 태그 또는 별도 `.css` 파일 import 사용.
 - Tailwind 등 외부 의존성 도입 금지.
+- `styled-components`, `@emotion/*`, `tailwindcss`, `clsx`, `classnames` 등 **모두 `validateAllowedDeps` 가드가 즉시 ERROR**.
+
+## 7-bis. 흔한 위반 (절대 시도하지 말 것)
+
+- 검증 라이브러리: `validator`, `yup`, `zod`, `joi` — regex 또는 직접 검사로 처리.
+- HTTP: `axios`, `node-fetch` — 항상 global `fetch`.
+- 라우팅: `react-router-dom` 등 — `allowedDeps`에 없으므로 단일 페이지 또는 조건부 렌더링으로 처리.
+- 폼 라이브러리: `react-hook-form`, `formik` — `useState`로 직접 controlled form.
+- 아이콘: `react-icons`, `@mui/icons-material` — SVG 인라인 또는 텍스트로.
+- 위반 시 응답 시점에 라운드 ERROR 종료.
 
 ## 8. 보호 파일 (FE)
 
