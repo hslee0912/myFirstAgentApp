@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node agents/orchestrator.js",
     "init-db": "node lib/init_db.js",
-    "test": "node --test tests/prompt_util.test.js tests/orchestrator_util.test.js tests/test_codegen.test.js tests/deploy_agent.test.js tests/api_test.test.js",
+    "test": "node --test tests/prompt_util.test.js tests/orchestrator_util.test.js tests/test_codegen.test.js tests/deploy_agent.test.js tests/api_test.test.js tests/llm_continuation.test.js",
     "lint:fe": "cd FE && npx eslint . --ext .js,.jsx",
     "lint:be": "cd BE && npx eslint . --ext .js",
     "build:fe": "cd FE && npm run build",
