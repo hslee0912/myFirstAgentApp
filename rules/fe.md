@@ -6,7 +6,7 @@
 
 - React 컴포넌트: `PascalCase` (예: `SignupForm.jsx`, `LoginForm.jsx`, `UserProfile.jsx`)
 - 유틸·훅: `camelCase` (예: `useAuth.js`, `validateEmail.js`, `apiClient.js`)
-- 테스트 파일: 대상과 동일한 base + `.test.jsx` (컴포넌트) 또는 `.test.js` (유틸)
+- **테스트 파일은 Agent가 작성하지 않는다** — `lib/test_codegen.js`가 비즈니스 코드를 분석해 결정론적으로 smoke test (`<Component>.test.jsx` / `<util>.test.js`)를 자동 생성한다. Agent가 응답에 `*.test.{js,jsx}` 파일을 포함하면 `dropAgentGeneratedTests`가 silent drop한다.
 
 ## 2. 모듈/임포트 (FE)
 
@@ -48,22 +48,30 @@ module.exports = SignupForm;
   if (!json.success) throw new Error(json.error);
   ```
 
-## 6. 테스트 (FE)
+## 6. 테스트 (FE) — 시스템이 자동 생성
 
-- 도구: **Vitest + React Testing Library + jsdom** (`lib/stack.config.json` FE 블록 참조).
-- 파일 패턴: `<Component>.test.jsx` 또는 `<util>.test.js`.
-- 컴포넌트 테스트는 RTL의 `render`, `screen.getBy...`, `userEvent` 사용:
+- **단위 테스트는 시스템(`lib/test_codegen.js`)이 결정론적으로 자동 생성**한다. Agent는 비즈니스 코드만 emit.
+- 응답에 `*.test.{js,jsx}` 파일을 포함하면 `dropAgentGeneratedTests`가 silent drop. disk에 작성되지 않으며 출력 토큰만 낭비됨.
+- 시스템이 emit하는 FE smoke test 형태 (참고용, 실제 결정은 `lib/test_codegen.js`):
   ```jsx
-  import { render, screen } from '@testing-library/react';
-  import userEvent from '@testing-library/user-event';
+  import { describe, it, expect } from 'vitest';
+  import { render } from '@testing-library/react';
   import SignupForm from './SignupForm';
 
-  test('submits valid form', async () => {
-    render(<SignupForm />);
-    await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
-    // ...
+  describe('SignupForm (auto-generated smoke test)', () => {
+    it('renders without crashing and produces non-empty output', () => {
+      const { container } = render(<SignupForm />);
+      expect(container).toBeTruthy();
+      expect(container.firstChild).not.toBeNull();
+    });
   });
   ```
+- 도구·환경: 시스템 생성 test도 **Vitest + React Testing Library + jsdom** 가정의 환경에서 실행 (`lib/stack.config.json` FE 블록의 `lint.stage3` = `vitest run`). `FE/package.json`에 `vitest`/`@testing-library/*` dep는 그대로 유지.
+- bootstrap이 깐 placeholder test (예: `App.test.jsx`)는 disk에 그대로 보존된다 — 시스템 자동 생성도 placeholder는 덮어쓰지 않음 (`isTestFile()` skip).
+- **Agent의 책임**:
+  1. placeholder test가 통과되도록 비즈니스 코드를 작성.
+  2. 새 컴포넌트는 *smoke test 친화적*으로 — render만 시켜도 throw하지 않게 (필수 prop은 default value 또는 optional 처리).
+  3. 깊은 동작 test는 향후 phase에서 추가 예정. 현재는 smoke 수준만 시스템이 보장.
 
 ## 7. 스타일링
 
@@ -72,11 +80,14 @@ module.exports = SignupForm;
 
 ## 8. 보호 파일 (FE)
 
-`lib/stack.config.json` `FE.protectedConfigFiles`에 정의됨. 일반적으로:
-- `FE/package.json`, `FE/package-lock.json`
-- `FE/vite.config.js`
-- `FE/index.html`
-- `FE/.eslintrc.json`
-- `FE/src/setupTests.js` (Vitest 환경)
+정확한 list는 `lib/stack.config.json`의 `FE.protectedConfigFiles`에서 매 호출마다 자동 주입됨. 현재 값:
 
-이 파일들은 응답에 절대 포함하지 말 것. 응답에 들어가면 라운드가 ERROR로 처리됩니다.
+- 의존성 매니페스트: `FE/package.json`, `FE/package-lock.json`
+- Build 설정: `FE/vite.config.js`
+- 진입 HTML: `FE/index.html`
+- Lint 설정: `FE/.eslintrc.json`
+- Docker 설정: `FE/Dockerfile`, `FE/.dockerignore`
+
+(`setupTests.js` 같은 별도 Vitest 환경 파일은 현재 스택에 없음. Vitest 설정은 `FE/vite.config.js` 또는 `FE/package.json` 내 인라인.)
+
+**응답에 절대 포함하지 말 것**. 응답에 들어가면 1차로 `dropProtectedFiles`가 silent drop, 그래도 새 나간 케이스는 `Orchestrator.validatePaths`가 throw해 라운드 전체가 ERROR. 자세한 행동 규칙은 `rules/common.md` §9 참조.

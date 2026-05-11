@@ -306,7 +306,12 @@ async function main() {
       const needBE = stateMap.BE && (stateMap.BE.status === 'PENDING' || stateMap.BE.status === 'FAILED');
       const needFE = stateMap.FE && (stateMap.FE.status === 'PENDING' || stateMap.FE.status === 'FAILED');
 
-      // Phase 2: BE first
+      // Workflow per round (user-confirmed sequential):
+      //   BE Agent → Lint(BE) → [cooldown] → FE Agent → Lint(FE)
+      // Rationale: Lint each area immediately after its Agent so subsequent
+      // Agents see a clean baseline; also makes debug attribution per-area trivial.
+
+      // Phase 2 + Phase 4(BE): BE Agent → Lint(BE)
       if (needBE) {
         const beState = stateMap.BE;
         const isRetry = beState.status === 'FAILED';
@@ -316,21 +321,34 @@ async function main() {
           params.fix_instructions = beState.fix_instructions || '';
           params.allowed_paths = extractAllowedPathsFromFix('BE', beState.fix_instructions);
           if (params.allowed_paths.length === 0) {
-            // fallback: allow any file under BE/src/
             params.allowed_paths = fsu.listFiles('BE', ['.js']).filter((f) => f.startsWith('BE/src/'));
           }
           params.existing_files = snapshotArea('BE');
         }
         await beAgent.run(params);
+
+        if (validationMode === 'off') {
+          console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for BE, auto-SUCCESS (state_id=${beState.id})`);
+          await logger.updateTaskState(beState.id, {
+            status: 'SUCCESS', failed_stage: null, fix_instructions: null,
+            stage_logs: { skipped: 'VALIDATION_MODE=off' }, result_text: null,
+          });
+        } else {
+          console.log(`[phase 4] Lint Agent target=BE (state_id=${beState.id})`);
+          await lintAgent.run({
+            task_id, target: 'BE', state_id: beState.id,
+            current_retry_count: beState.retry_count || 0,
+          });
+        }
       }
 
-      // rate-limit defense: short pause between BE and FE LLM calls within the same round
+      // Inter-LLM cooldown between BE Lint and FE LLM call.
       if (needBE && needFE) {
         console.log(`[round ${round}] inter-LLM cooldown ${SLEEP_BETWEEN_LLM_MS}ms...`);
         await sleep(SLEEP_BETWEEN_LLM_MS);
       }
 
-      // Phase 3: FE next (after BE)
+      // Phase 3 + Phase 4(FE): FE Agent → Lint(FE)
       if (needFE) {
         const feState = stateMap.FE;
         const isRetry = feState.status === 'FAILED';
@@ -345,35 +363,24 @@ async function main() {
           params.existing_files = snapshotArea('FE');
         }
         await feAgent.run(params);
-      }
 
-      // Phase 4: Lint per area (or skip when VALIDATION_MODE=off)
-      stateMap = await fetchStateMap(decision_id);
-      const areasToLint = [];
-      if (stateMap.BE && (needBE || stateMap.BE.status === 'PENDING')) areasToLint.push('BE');
-      if (stateMap.FE && (needFE || stateMap.FE.status === 'PENDING')) areasToLint.push('FE');
-
-      for (const target of areasToLint) {
-        const st = stateMap[target];
         if (validationMode === 'off') {
-          console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for ${target}, auto-SUCCESS (state_id=${st.id})`);
-          await logger.updateTaskState(st.id, {
-            status: 'SUCCESS',
-            failed_stage: null,
-            fix_instructions: null,
-            stage_logs: { skipped: 'VALIDATION_MODE=off' },
-            result_text: null,
+          console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for FE, auto-SUCCESS (state_id=${feState.id})`);
+          await logger.updateTaskState(feState.id, {
+            status: 'SUCCESS', failed_stage: null, fix_instructions: null,
+            stage_logs: { skipped: 'VALIDATION_MODE=off' }, result_text: null,
           });
         } else {
-          console.log(`[phase 4] Lint Agent target=${target} (state_id=${st.id})`);
+          console.log(`[phase 4] Lint Agent target=FE (state_id=${feState.id})`);
           await lintAgent.run({
-            task_id,
-            target,
-            state_id: st.id,
-            current_retry_count: st.retry_count || 0,
+            task_id, target: 'FE', state_id: feState.id,
+            current_retry_count: feState.retry_count || 0,
           });
         }
       }
+
+      // Re-fetch state map for the verdict step (Lint updated it just now).
+      stateMap = await fetchStateMap(decision_id);
 
       // Phase 5: evaluate
       const evalResult = await evaluateVerdict(task_id, decision_id);

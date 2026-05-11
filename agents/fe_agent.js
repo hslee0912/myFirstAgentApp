@@ -22,6 +22,7 @@ const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles } = require('../lib/prompt_util');
+const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -42,7 +43,7 @@ function buildSystemPrompt(cfg) {
     '규칙:',
     '- 응답은 반드시 JSON: { "files": { "<repo-relative-path>": "<full file content>" }, "notes": "..." }',
     `- 모든 경로는 "${BASE}/"로 시작해야 한다. ${BASE === 'FE' ? 'BE/ 등 다른 폴더는 절대 손대지 말 것.' : '다른 폴더는 절대 손대지 말 것.'}`,
-    `- 새로 작성하는 모든 컴포넌트/함수에는 최소 1개의 단위 테스트를 동반해야 한다 (${a.testFilePattern}, ${a.testFramework}).`,
+    `- **단위 테스트는 시스템(lib/test_codegen.js)이 자동 생성한다**. *.test.* file을 응답에 포함하지 말 것. 응답에 포함되면 silent drop됨.`,
     `- 의존성은 ${BASE}/package.json에 이미 포함된 것만 사용 (${a.allowedDeps}).`,
     `- ${a.moduleSystem}.`,
     '',
@@ -115,7 +116,7 @@ function buildInitialUserPrompt({ fe_spec, api_contract, existing_files }) {
     '',
     '## 작업',
     `${BASE}/src/ 아래에 위 명세를 만족하는 코드와 단위 테스트를 작성하라.`,
-    `권장 구조: ${BASE}/src/components/<Feature>.jsx, ${BASE}/src/api/<feature>.js, 동반 ${stackCfg.agent.testFilePattern}`,
+    `권장 구조: ${BASE}/src/components/<Feature>.jsx, ${BASE}/src/api/<feature>.js. **테스트는 시스템이 자동 생성하므로 응답에 포함하지 말 것**.`,
     '',
     '응답 JSON 스키마:',
     `{ "files": { "${BASE}/path/to/file": "<full content>" }, "notes": "<짧은 설명>" }`,
@@ -222,10 +223,15 @@ async function run(params) {
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'fe', max_tokens });
     const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
-    // Y: silent-drop protected files BEFORE validatePaths to survive the LLM
-    // occasionally including them in the response despite the system prompt.
-    const { files, dropped: droppedProtected } =
+    // Y: silent-drop protected files BEFORE validatePaths.
+    const { files: filesA, dropped: droppedProtected } =
       dropProtectedFiles(llmOut.files || {}, PROTECTED_FILES, 'FE Agent');
+    // Drop any agent-generated tests — system auto-generates them deterministically.
+    const { files: filesB, dropped: droppedTests } =
+      dropAgentGeneratedTests(filesA, 'FE Agent');
+    // Auto-generate smoke tests for new code files (deterministic, no LLM).
+    const autoTests = generateSmokeTests(filesB);
+    const files = { ...filesB, ...autoTests };
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });
     applyFiles(files);
@@ -234,6 +240,8 @@ async function run(params) {
       mode,
       written_files: Object.keys(files),
       dropped_protected: droppedProtected,
+      dropped_tests: droppedTests,
+      auto_generated_tests: Object.keys(autoTests),
       eslintrc_created: eslintrcCreated,
       notes: llmOut.notes || '',
     };

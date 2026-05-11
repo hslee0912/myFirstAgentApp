@@ -9,7 +9,9 @@
 
 영역별 파일명 규칙은 `be.md` / `fe.md` 참조.
 
-## 2. 보안 (필수 — 위반 시 Lint Stage 3에서 fail)
+## 2. 보안 (필수 — Agent의 자체 책임)
+
+> ⚠️ 현재 스택엔 보안 lint plugin(eslint-plugin-security 등)이 없다. Stage 1(eslint), Stage 2(build), Stage 3(자동 생성 smoke test) 어느 단계도 보안 위반을 자동 검증하지 못한다. Agent가 코드 작성 시 자체 책임으로 다음 룰을 강력히 따를 것.
 
 - **비밀번호는 반드시 bcrypt 해시로 저장**. 평문 저장 금지.
   - 권장: `bcrypt.hash(password, 10)`
@@ -45,16 +47,19 @@ HTTP 상태 코드도 함께 사용:
 async function isEmailTaken(email) { ... }
 ```
 
-## 5. 테스트 (필수)
+## 5. 테스트 (시스템이 자동 생성)
 
-- **새로 작성하는 모든 함수/컴포넌트/클래스는 최소 1개 이상의 단위 테스트 케이스를 동반해야 함**.
-- 테스트 도구·파일 패턴은 **시스템 프롬프트에 자동 주입되는 스택 정보**를 따른다 (현재 스택은 `lib/stack.config.json`의 `<AREA>.agent.testFilePattern` / `testFramework` 참조). 스택을 임의 변경하지 말 것.
-- 테스트 파일은 대상 파일과 동일한 폴더에 둔다.
+- **단위 테스트는 시스템(`lib/test_codegen.js`)이 결정론적으로 자동 생성한다**. Agent는 비즈니스 코드만 emit.
+- *.test.{js,jsx}* 파일을 응답에 포함하면 `dropAgentGeneratedTests` 가 silent drop한다. 응답에 넣지 말 것.
+- 시스템이 만드는 테스트는 *smoke 수준* — React 컴포넌트는 `render(<X />)` non-empty 검증, 라이브러리 모듈은 `typeof === 'function'` 검증. 깊은 비즈니스 검증은 다음 phase 작업.
+- placeholder test (`server.test.js`, `App.test.jsx` 등 bootstrap이 깐 것)는 disk에 그대로 유지되며 자동 생성 대상에서 skip된다.
+- 워크플로우: **Agent (LLM, 코드만) → test_codegen (deterministic, smoke test) → Lint Agent (deterministic, eslint+build+test 실행)**.
 
 ## 6. 환경 변수
 
-- 모든 BE 모듈은 `dotenv.config()`로 환경 변수 로드 (`{ override: true }` 옵션 필수).
-- DB 비밀번호 등 민감정보는 절대 코드에 하드코딩 금지.
+- **BE 한정**: BE 모듈은 `dotenv.config()`로 환경 변수 로드 (`{ override: true }` 옵션 필수 — 시스템 env에 빈 값이 잡혀있을 때 .env가 묻히는 현상 방지).
+- **FE**: Vite의 `import.meta.env.VITE_*` 패턴 사용. dotenv 사용 X (브라우저 번들 환경).
+- 두 영역 모두 **DB 비밀번호·API 키 등 민감정보는 절대 코드에 하드코딩 금지**.
 
 ## 7. 폴더 격리 (절대 위반 금지)
 
@@ -64,10 +69,11 @@ async function isEmailTaken(email) { ... }
 
 ## 8. Placeholder 보존 규칙
 
-- `lib/bootstrap.js`가 `lib/stack_templates/<AREA>/`에서 깔아둔 `*.test.js` / `*.test.jsx` 등 placeholder 파일은 **명세에 명백히 어긋나지 않는 한 보존**한다.
-- 신규 비즈니스 코드(특히 진입점 `server.js`, `App.jsx`)는 **placeholder 테스트가 기대하는 응답 형식·동작을 그대로 만족**시켜야 한다.
-  예: placeholder가 `GET /health → { success: true, data: { status: 'ok' } }`를 검증하면, 새 server.js의 `/health` 도 동일 형식 유지.
-- placeholder 자체가 명백히 명세와 충돌(예: 명세는 응답 형식 X인데 placeholder는 다른 형식 검증)할 때만 placeholder를 합리적으로 수정 가능. 그 외에는 절대 수정 금지.
+- `lib/bootstrap.js`가 `lib/stack_templates/<AREA>/`에서 깔아둔 placeholder 파일(특히 `*.test.js` / `*.test.jsx`)은 **disk에 그대로 보존된다**. Agent는 수정·삭제할 수 없다.
+- **placeholder test는 응답에 포함하지 말 것**. 시스템의 `dropAgentGeneratedTests`가 어떤 `*.test.{js,jsx}` 응답이든 silent drop하므로(§5 참조), 응답에 넣어도 disk엔 반영되지 않고 출력 토큰만 낭비됨. placeholder는 disk의 원본이 그대로 사용된다.
+- **신규 비즈니스 코드는 placeholder test가 기대하는 응답 형식·동작을 그대로 만족시켜야 한다.**
+  예: placeholder가 `GET /health → { success: true, data: { status: 'ok' } }` 를 검증하면, 새 `server.js`의 `/health`도 동일 형식 유지.
+- placeholder 자체가 명세와 충돌하는 케이스(드물지만 가능)는 *별도 phase 작업* — 시스템 동작상 Agent가 직접 수정할 수 없다. 사람이 `lib/stack_templates/<AREA>/`의 placeholder를 직접 수정해야 한다.
 
 ## 9. 스택 일관성
 
