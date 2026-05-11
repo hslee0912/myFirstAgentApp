@@ -14,7 +14,6 @@ describe('SignupForm', () => {
     render(<SignupForm />);
     expect(screen.getByLabelText(/이메일/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^비밀번호$/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/비밀번호 확인/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /회원가입/i })).toBeInTheDocument();
   });
 
@@ -42,20 +41,6 @@ describe('SignupForm', () => {
     });
   });
 
-  it('validates password match on blur', async () => {
-    render(<SignupForm />);
-    const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
-    
-    fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password456' } });
-    fireEvent.blur(confirmInput);
-
-    await waitFor(() => {
-      expect(screen.getByText(/비밀번호가 일치하지 않습니다/i)).toBeInTheDocument();
-    });
-  });
-
   it('disables submit button when form is invalid', () => {
     render(<SignupForm />);
     const submitButton = screen.getByRole('button', { name: /회원가입/i });
@@ -66,11 +51,9 @@ describe('SignupForm', () => {
     render(<SignupForm />);
     const emailInput = screen.getByLabelText(/이메일/i);
     const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
     
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password123' } });
 
     await waitFor(() => {
       const submitButton = screen.getByRole('button', { name: /회원가입/i });
@@ -82,21 +65,18 @@ describe('SignupForm', () => {
     authApi.signup.mockResolvedValue({
       success: true,
       data: {
-        user_id: 12345,
-        email: 'test@example.com',
-        created_at: '2025-01-20T10:30:00Z'
+        userId: 'uuid-1234',
+        email: 'test@example.com'
       }
     });
 
     render(<SignupForm />);
     const emailInput = screen.getByLabelText(/이메일/i);
     const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
     const submitButton = screen.getByRole('button', { name: /회원가입/i });
     
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password123' } });
     
     fireEvent.click(submitButton);
 
@@ -112,21 +92,18 @@ describe('SignupForm', () => {
     authApi.signup.mockResolvedValue({
       success: true,
       data: {
-        user_id: 12345,
-        email: 'test@example.com',
-        created_at: '2025-01-20T10:30:00Z'
+        userId: 'uuid-1234',
+        email: 'test@example.com'
       }
     });
 
     render(<SignupForm />);
     const emailInput = screen.getByLabelText(/이메일/i);
     const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
     const submitButton = screen.getByRole('button', { name: /회원가입/i });
     
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password123' } });
     
     fireEvent.click(submitButton);
 
@@ -138,23 +115,21 @@ describe('SignupForm', () => {
   it('displays error message on duplicate email', async () => {
     authApi.signup.mockResolvedValue({
       success: false,
-      error: 'Email already exists'
+      error: '이미 가입된 이메일입니다'
     });
 
     render(<SignupForm />);
     const emailInput = screen.getByLabelText(/이메일/i);
     const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
     const submitButton = screen.getByRole('button', { name: /회원가입/i });
     
     fireEvent.change(emailInput, { target: { value: 'existing@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password123' } });
     
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(screen.getByText(/이미 사용 중인 이메일입니다/i)).toBeInTheDocument();
+      expect(screen.getByText(/이미 가입된 이메일입니다/i)).toBeInTheDocument();
     });
   });
 
@@ -164,17 +139,35 @@ describe('SignupForm', () => {
     render(<SignupForm />);
     const emailInput = screen.getByLabelText(/이메일/i);
     const passwordInput = screen.getByLabelText(/^비밀번호$/i);
-    const confirmInput = screen.getByLabelText(/비밀번호 확인/i);
     const submitButton = screen.getByRole('button', { name: /회원가입/i });
     
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.change(confirmInput, { target: { value: 'password123' } });
     
     fireEvent.click(submitButton);
 
     await waitFor(() => {
       expect(screen.getByText(/일시적인 오류가 발생했습니다/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows loading state during submission', async () => {
+    authApi.signup.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve({ success: true, data: { userId: 'uuid-1234', email: 'test@example.com' } }), 100)));
+
+    render(<SignupForm />);
+    const emailInput = screen.getByLabelText(/이메일/i);
+    const passwordInput = screen.getByLabelText(/^비밀번호$/i);
+    const submitButton = screen.getByRole('button', { name: /회원가입/i });
+
+    fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+    fireEvent.change(passwordInput, { target: { value: 'password123' } });
+    fireEvent.click(submitButton);
+
+    expect(screen.getByRole('button', { name: /처리 중.../i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /처리 중.../i })).toBeDisabled();
+
+    await waitFor(() => {
+      expect(screen.getByText(/회원가입이 완료되었습니다/i)).toBeInTheDocument();
     });
   });
 });

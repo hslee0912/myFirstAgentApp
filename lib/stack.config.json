@@ -48,7 +48,8 @@
       "FE/package-lock.json",
       "FE/vite.config.js",
       "FE/index.html",
-      "FE/.eslintrc.json"
+      "FE/.eslintrc.json",
+      "FE/Dockerfile"
     ],
     "eslintConfig": {
       "env": { "browser": true, "es2022": true, "node": true },
@@ -111,7 +112,8 @@
     "protectedConfigFiles": [
       "BE/package.json",
       "BE/package-lock.json",
-      "BE/.eslintrc.json"
+      "BE/.eslintrc.json",
+      "BE/Dockerfile"
     ],
     "eslintConfig": {
       "env": { "node": true, "es2022": true, "jest": true },

@@ -1,0 +1,72 @@
+# Phase 8 deploy template — used by agents/deploy_agent.js.
+# Edit only this file. Do NOT copy/edit elsewhere.
+#
+# Invocation contract (see D17=A in docs/DECISIONS.md, 2026-05-08):
+#   docker-compose --project-directory <project_root> \
+#                  -f lib/stack_templates/docker-compose.yml \
+#                  up --build
+# Therefore all relative paths below resolve against <project_root>.
+#
+# Decision provenance (docs/DECISIONS.md, 2026-05-08):
+#   D7  = C  → ports via .env: DEPLOY_PORT_FE/BE/DB (defaults 5173/3001/3306)
+#   D9  = C  → ephemeral MySQL volume + schema.sql init mount (fresh DB per task)
+#   D11 = A  → Dockerfile build for BE and FE
+#   D13 = A  → Vite dev server for FE (CMD set in FE/Dockerfile)
+#   D14 = B  → mysql healthcheck + service_healthy gate
+#   D15 = A  → restart: "no" (fail surface immediately)
+#   D16 = A  → container env hardcoded here (host .env not propagated)
+#   D17 = A  → paths relative to project root (via --project-directory)
+#   D18 = A  → image: mysql:8
+
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: myfirstagentapp_db
+    ports:
+      - "${DEPLOY_PORT_DB:-3306}:3306"
+    volumes:
+      # D9=C: schema.sql auto-runs on first container start (mysql official image
+      # convention). No /var/lib/mysql mount → ephemeral data per task.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+  be:
+    build:
+      context: ./BE
+      dockerfile: Dockerfile
+    environment:
+      # D16=A: hardcoded here — these override anything BE's own dotenv would
+      # load inside the container. Host .env is intentionally NOT mounted.
+      DB_HOST: mysql              # service name (compose default DNS)
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root           # matches MYSQL_ROOT_PASSWORD above
+      DB_NAME: myfirstagentapp_db
+      BE_PORT: 3001
+    ports:
+      - "${DEPLOY_PORT_BE:-3001}:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  fe:
+    build:
+      context: ./FE
+      dockerfile: Dockerfile
+    ports:
+      - "${DEPLOY_PORT_FE:-5173}:5173"
+    # FE Vite dev server runs in this container; the browser (on host) calls
+    # BE at host:DEPLOY_PORT_BE, not via internal compose network. So a
+    # service_healthy gate on BE is unnecessary — simple ordering is enough.
+    depends_on:
+      - be
+    restart: "no"

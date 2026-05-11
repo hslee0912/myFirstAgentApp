@@ -16,15 +16,22 @@
       ├─ Phase 5  verdict (LLM X)      → PASS / FAIL / ERROR / CONTINUE
       │                                    CONTINUE면 fix_instructions 들고
       │                                    Phase 2/3로 다시 진입
-      ├─ Phase 6  finalize (LLM X)     → log_agent_decisions UPDATE,
-      │                                    log_agent_runs UPDATE
-      └─ Phase 7  auto-commit (LLM X)  → PASS + COMMIT_MODE=auto면
-                                           git add BE/ FE/ + git commit
-                                           (push는 절대 안 함, 사람이 수행)
+      ├─ Phase 8  Deploy Agent (LLM X)   → docker compose up (FE+BE+MySQL).
+      │                                      Phase 5=PASS일 때만 1회.
+      │                                      DEPLOY_MODE=off면 skip.
+      ├─ Phase 9  PostTest Agent (LLM X) → api_contract 기반 fetch + schema 검증.
+      │                                      Phase 8=SUCCESS일 때만.
+      ├─ Phase 6  finalize (LLM X)       → log_agent_decisions UPDATE,
+      │                                      log_agent_runs UPDATE
+      ├─ Phase 7  auto-commit (LLM X)    → PASS + COMMIT_MODE=auto면
+      │                                      git add BE/ FE/ + git commit
+      │                                      (push는 절대 안 함, 사람이 수행)
+      └─ Phase 7.5 deploy teardown        → PASS + DEPLOY_MODE=on면
+                                              docker compose down (D6=B)
 ```
 
 LLM은 **CodeChecker, BE Agent, FE Agent 안에서만** 호출됨.
-Orchestrator와 Lint Agent는 결정론적.
+Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 절대 규칙 (위반 금지)
 
@@ -44,6 +51,11 @@ Orchestrator와 Lint Agent는 결정론적.
    - `VALIDATION_MODE=off` (또는 `on`이 아닌 모든 값) → Phase 4 통째로 skip, `log_task_state`를 자동 SUCCESS 처리.
    - **안전장치(`validatePaths`, `protectedConfigFiles`)는 모드 무관 항상 켜짐**.
    - 의미: "결정론적 *검증*"만 끄고 "결정론적 *제어흐름*"은 유지 → LLM 출력 ablation/디버깅 모드.
+9. **배포 토글 (`DEPLOY_MODE`)** — `.env`의 `DEPLOY_MODE`로 Phase 8 (Deploy) + Phase 9 (PostTest) 실행 여부 토글:
+   - `DEPLOY_MODE=on` (기본) → Phase 8/9 정상 실행. Phase 5가 PASS일 때만 1회. Docker 미설치 시 verdict=ERROR.
+   - `DEPLOY_MODE=off` (또는 `on`이 아닌 모든 값) → Phase 8/9 통째 skip, `log_agent_runs`에 자동 SUCCESS(`output_json.skipped` 표시).
+   - PASS + DEPLOY_MODE=on → orchestrator가 Phase 7.5에서 자동 `docker compose down` (D6=B PASS branch). FAIL/ERROR 또는 DEPLOY_MODE=off면 컨테이너 보존(디버깅용).
+   - `VALIDATION_MODE` 패턴과 동일 — 두 토글이 같은 형태로 동작.
 
 ## 사람·Claude 직접 편집 vs Agent 자동 생성
 
@@ -74,9 +86,9 @@ Orchestrator와 Lint Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
+- 2026-05-08  (TBD)    [A] **Phase 8/9 (Deploy + Post-deploy Test) 완료** — docker compose 결정론 템플릿 + api_contract 기반 schema 검증. DEPLOY_MODE 토글, 신규 env 7개, agent_name ENUM에 Deploy/PostTest 추가.
 - 2026-05-08  (TBD)    Prompt caching API 단순화 + CodeChecker 추가 — `cache: true` → `cache: 'system' | 'user'`. BE/FE는 'system' (rules 캐시), CodeChecker는 'user' (큰 spec 캐시). 같은 user_request 재실행 시 ~90% 절감.
 - 2026-05-08  ffa5d59  Prompt caching 도입 (BE/FE system prompt). 재시도 호출에서 ~90% 절감.
-- 2026-05-08  5365d2d  문서 구조 분리 — CLAUDE.md 슬림화, docs/+rules/ 분산.
 
 ## Skill routing
 

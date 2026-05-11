@@ -1,24 +1,21 @@
 import React, { useState } from 'react';
 import { signup } from '../api/auth.js';
-import { validateEmail, validatePassword, validatePasswordMatch } from '../utils/validation.js';
+import { validateEmail, validatePassword } from '../utils/validation.js';
 
 export default function SignupForm() {
   const [formData, setFormData] = useState({
     email: '',
-    password: '',
-    password_confirm: ''
+    password: ''
   });
 
   const [errors, setErrors] = useState({
     email: '',
-    password: '',
-    password_confirm: ''
+    password: ''
   });
 
   const [touched, setTouched] = useState({
     email: false,
-    password: false,
-    password_confirm: false
+    password: false
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,9 +47,6 @@ export default function SignupForm() {
       case 'password':
         error = validatePassword(value);
         break;
-      case 'password_confirm':
-        error = validatePasswordMatch(value, formData.password);
-        break;
       default:
         break;
     }
@@ -64,13 +58,10 @@ export default function SignupForm() {
     return (
       formData.email &&
       formData.password &&
-      formData.password_confirm &&
       !errors.email &&
       !errors.password &&
-      !errors.password_confirm &&
       validateEmail(formData.email) === '' &&
-      validatePassword(formData.password) === '' &&
-      validatePasswordMatch(formData.password_confirm, formData.password) === ''
+      validatePassword(formData.password) === ''
     );
   };
 
@@ -79,13 +70,11 @@ export default function SignupForm() {
 
     setTouched({
       email: true,
-      password: true,
-      password_confirm: true
+      password: true
     });
 
     validateField('email', formData.email);
     validateField('password', formData.password);
-    validateField('password_confirm', formData.password_confirm);
 
     if (!isFormValid()) {
       return;
@@ -93,6 +82,7 @@ export default function SignupForm() {
 
     setIsSubmitting(true);
     setSubmitError('');
+    setSubmitSuccess(false);
 
     try {
       const result = await signup({
@@ -102,20 +92,12 @@ export default function SignupForm() {
 
       if (result.success) {
         setSubmitSuccess(true);
-        setFormData({ email: '', password: '', password_confirm: '' });
-        setTouched({ email: false, password: false, password_confirm: false });
-        setErrors({ email: '', password: '', password_confirm: '' });
+        setFormData({ email: '', password: '' });
+        setTouched({ email: false, password: false });
+        setErrors({ email: '', password: '' });
       } else {
-        if (result.error === 'Email already exists') {
-          setErrors(prev => ({ ...prev, email: '이미 사용 중인 이메일입니다' }));
-        } else if (result.details && Array.isArray(result.details)) {
-          const newErrors = { ...errors };
-          result.details.forEach(detail => {
-            if (detail.field && detail.message) {
-              newErrors[detail.field] = detail.message;
-            }
-          });
-          setErrors(newErrors);
+        if (result.error === '이미 가입된 이메일입니다') {
+          setErrors(prev => ({ ...prev, email: '이미 가입된 이메일입니다' }));
         } else {
           setSubmitError(result.error || '회원가입 중 오류가 발생했습니다');
         }
@@ -180,26 +162,6 @@ export default function SignupForm() {
         />
         {touched.password && errors.password && (
           <div style={{ color: 'red', fontSize: '12px', marginTop: '5px' }}>{errors.password}</div>
-        )}
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label htmlFor="password_confirm" style={{ display: 'block', marginBottom: '5px' }}>비밀번호 확인</label>
-        <input
-          type="password"
-          id="password_confirm"
-          name="password_confirm"
-          value={formData.password_confirm}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          placeholder="비밀번호 재입력"
-          required
-          autoComplete="new-password"
-          aria-invalid={touched.password_confirm && errors.password_confirm ? 'true' : 'false'}
-          style={{ width: '100%', padding: '8px', fontSize: '14px', borderColor: touched.password_confirm && errors.password_confirm ? 'red' : '#ccc' }}
-        />
-        {touched.password_confirm && errors.password_confirm && (
-          <div style={{ color: 'red', fontSize: '12px', marginTop: '5px' }}>{errors.password_confirm}</div>
         )}
       </div>
 

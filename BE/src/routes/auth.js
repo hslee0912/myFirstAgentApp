@@ -19,7 +19,8 @@ router.post('/signup', validateSignupRequest, async (req, res) => {
     if (emailExists) {
       return res.status(409).json({
         success: false,
-        error: 'Email already exists'
+        data: null,
+        error: '이미 가입된 이메일입니다'
       });
     }
 
@@ -28,12 +29,17 @@ router.post('/signup', validateSignupRequest, async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      data: user
+      data: {
+        userId: user.user_id.toString(),
+        email: user.email
+      },
+      error: null
     });
   } catch (error) {
     console.error('Signup error:', error);
     return res.status(500).json({
       success: false,
+      data: null,
       error: 'Internal server error'
     });
   }

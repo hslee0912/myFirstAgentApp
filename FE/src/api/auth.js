@@ -7,7 +7,7 @@
  */
 export async function signup(data) {
   try {
-    const response = await fetch('/api/v1/auth/signup', {
+    const response = await fetch('/auth/signup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

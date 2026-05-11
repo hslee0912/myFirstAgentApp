@@ -2,137 +2,94 @@
   "version": "1.0.0",
   "endpoints": [
     {
-      "path": "/api/v1/auth/login",
+      "path": "/auth/signup",
       "method": "POST",
-      "description": "이메일/비밀번호 로그인",
+      "description": "새로운 사용자 회원가입",
       "request": {
-        "content_type": "application/json",
-        "schema": {
-          "type": "object",
-          "required": [
-            "email",
-            "password"
-          ],
-          "properties": {
-            "email": {
-              "type": "string",
-              "format": "email",
-              "maxLength": 255,
-              "example": "user@example.com"
-            },
-            "password": {
-              "type": "string",
-              "minLength": 1,
-              "example": "SecurePass123!"
-            }
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "사용자 이메일"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "description": "비밀번호 (8자 이상)"
           }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "example": {
+          "email": "user@example.com",
+          "password": "SecurePass123"
         }
       },
-      "responses": {
-        "200": {
-          "description": "로그인 성공",
-          "content_type": "application/json",
-          "schema": {
-            "type": "object",
-            "required": [
-              "success",
-              "data"
-            ],
-            "properties": {
-              "success": {
-                "type": "boolean",
-                "const": true
-              },
-              "data": {
-                "type": "object",
-                "required": [
-                  "user_id"
-                ],
-                "properties": {
-                  "user_id": {
-                    "type": "integer",
-                    "example": 12345
-                  }
+      "response": {
+        "success": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean",
+              "example": true
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "userId": {
+                  "type": "string",
+                  "example": "uuid-1234"
+                },
+                "email": {
+                  "type": "string",
+                  "example": "user@example.com"
                 }
               }
+            },
+            "error": {
+              "type": "null"
             }
           },
-          "example": {
-            "success": true,
+          "statusCode": 201
+        },
+        "duplicate_email": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean",
+              "example": false
+            },
             "data": {
-              "user_id": 12345
+              "type": "null"
+            },
+            "error": {
+              "type": "string",
+              "example": "이미 가입된 이메일입니다"
             }
-          }
+          },
+          "statusCode": 409
         },
-        "400": {
-          "description": "요청 validation 실패",
-          "content_type": "application/json",
-          "schema": {
-            "type": "object",
-            "required": [
-              "success",
-              "error"
-            ],
-            "properties": {
-              "success": {
-                "type": "boolean",
-                "const": false
-              },
-              "error": {
-                "type": "string",
-                "example": "Invalid email format"
-              }
+        "validation_error": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean",
+              "example": false
+            },
+            "data": {
+              "type": "null"
+            },
+            "error": {
+              "type": "string",
+              "example": "비밀번호는 8자 이상이어야 합니다"
             }
-          }
-        },
-        "401": {
-          "description": "인증 실패 (이메일 미존재 또는 비밀번호 불일치)",
-          "content_type": "application/json",
-          "schema": {
-            "type": "object",
-            "required": [
-              "success",
-              "error"
-            ],
-            "properties": {
-              "success": {
-                "type": "boolean",
-                "const": false
-              },
-              "error": {
-                "type": "string",
-                "example": "Invalid email or password"
-              }
-            }
-          }
-        },
-        "500": {
-          "description": "서버 내부 오류",
-          "content_type": "application/json",
-          "schema": {
-            "type": "object",
-            "required": [
-              "success",
-              "error"
-            ],
-            "properties": {
-              "success": {
-                "type": "boolean",
-                "const": false
-              },
-              "error": {
-                "type": "string",
-                "example": "Internal server error"
-              }
-            }
-          }
+          },
+          "statusCode": 400
         }
-      },
-      "security_notes": [
-        "bcrypt.compare()로 비밀번호 검증",
-        "SQL injection 방지를 위해 prepared statement 사용",
-        "401 응답 시 이메일/비밀번호 중 무엇이 틀렸는지 명시하지 않음 (계정 열거 공격 방지)"
-      ]
+      }
     }
   ]
 }
