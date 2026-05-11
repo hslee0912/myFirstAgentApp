@@ -20,7 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
-const { callJSON } = require('../lib/llm');
+const { callJSON, assertContextBudget } = require('../lib/llm');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -210,6 +210,8 @@ async function run(params) {
       });
     }
 
+    // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
+    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'fe' });
     const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system' });
     const files = llmOut.files || {};
 

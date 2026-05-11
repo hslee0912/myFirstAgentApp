@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
-const { callJSON } = require('../lib/llm');
+const { callJSON, assertContextBudget } = require('../lib/llm');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -78,10 +78,13 @@ async function run({ task_id, user_request }) {
   });
 
   try {
+    const userPrompt = buildUserPrompt(user_request);
+    // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
+    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'codechecker' });
     const llmOut = await callJSON({
       agent: 'codechecker',
       system: SYSTEM_PROMPT,
-      user: buildUserPrompt(user_request),
+      user: userPrompt,
       // CodeChecker는 user_request가 큰 spec일 때 캐시 효과. 같은 spec 재실행
       // (디버깅·시연 반복) 시 5분 TTL 안에서 ~90% 절감. user_request가 작으면
       // 캐시 임계값 미달로 자동 no-op.
