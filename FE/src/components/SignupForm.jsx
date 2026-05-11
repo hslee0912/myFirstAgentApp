@@ -1,152 +1,125 @@
 import React, { useState } from 'react';
 import { signup } from '../api/auth.js';
+import { validateEmail } from '../utils/validateEmail.js';
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export default function SignupForm() {
+export default function SignupForm({ onSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [submitError, setSubmitError] = useState('');
+  const [apiError, setApiError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-
-  const validateEmail = (value) => {
-    if (!value) {
-      return '이메일을 입력하세요.';
-    }
-    if (value.length > 255) {
-      return '이메일은 255자 이하여야 합니다.';
-    }
-    if (!EMAIL_REGEX.test(value)) {
-      return '유효한 이메일을 입력하세요.';
-    }
-    return '';
-  };
-
-  const validatePassword = (value) => {
-    if (!value) {
-      return '비밀번호를 입력하세요.';
-    }
-    if (value.length < 8) {
-      return '비밀번호는 8자 이상이어야 합니다.';
-    }
-    return '';
-  };
 
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
-    setEmailError(validateEmail(value));
-    setSubmitError('');
+    setEmailError('');
+    setApiError('');
   };
 
   const handlePasswordChange = (e) => {
     const value = e.target.value;
     setPassword(value);
-    setPasswordError(validatePassword(value));
-    setSubmitError('');
+    setPasswordError('');
+    setApiError('');
+  };
+
+  const validateForm = () => {
+    let isValid = true;
+
+    if (!validateEmail(email)) {
+      setEmailError('올바른 이메일 형식을 입력해주세요');
+      isValid = false;
+    }
+
+    if (password.length < 8) {
+      setPasswordError('비밀번호는 8자 이상이어야 합니다');
+      isValid = false;
+    }
+
+    return isValid;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setApiError('');
 
-    const emailErr = validateEmail(email);
-    const passwordErr = validatePassword(password);
-
-    setEmailError(emailErr);
-    setPasswordError(passwordErr);
-
-    if (emailErr || passwordErr) {
+    if (!validateForm()) {
       return;
     }
 
     setIsSubmitting(true);
-    setSubmitError('');
 
     try {
-      const result = await signup({ email, password });
-      
-      if (result.success) {
-        setSuccess(true);
-        setEmail('');
-        setPassword('');
+      const response = await signup({ email, password });
+
+      if (response.success) {
+        if (onSuccess) {
+          onSuccess();
+        }
       } else {
-        const errorMessages = {
-          'INVALID_EMAIL': '유효하지 않은 이메일 형식입니다.',
-          'PASSWORD_TOO_SHORT': '비밀번호는 8자 이상이어야 합니다.',
-          'EMAIL_ALREADY_EXISTS': '이미 가입된 이메일입니다.'
-        };
-        setSubmitError(errorMessages[result.error] || result.error || '회원가입에 실패했습니다.');
+        setApiError(response.error || '회원가입에 실패했습니다');
       }
     } catch (error) {
-      setSubmitError('서버와의 통신에 실패했습니다.');
+      setApiError('네트워크 오류가 발생했습니다');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (success) {
-    return (
-      <div style={{ padding: '20px', backgroundColor: '#d4edda', color: '#155724', borderRadius: '4px' }}>
-        <p>회원가입이 완료되었습니다!</p>
-        <p style={{ fontSize: '14px', marginTop: '10px' }}>로그인 페이지로 이동해주세요.</p>
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
       <div>
+        <label htmlFor="email" style={{ display: 'block', marginBottom: '5px' }}>
+          이메일
+        </label>
         <input
+          id="email"
           type="email"
           value={email}
           onChange={handleEmailChange}
-          placeholder="이메일 주소"
-          disabled={isSubmitting}
+          placeholder="example@example.com"
           style={{
             width: '100%',
-            padding: '10px',
-            fontSize: '14px',
-            border: emailError ? '1px solid #dc3545' : '1px solid #ccc',
-            borderRadius: '4px',
-            boxSizing: 'border-box'
+            padding: '8px',
+            border: emailError ? '1px solid red' : '1px solid #ccc',
+            borderRadius: '4px'
           }}
         />
         {emailError && (
-          <div style={{ color: '#dc3545', fontSize: '12px', marginTop: '5px' }}>
+          <div style={{ color: 'red', fontSize: '14px', marginTop: '5px' }}>
             {emailError}
           </div>
         )}
       </div>
 
       <div>
+        <label htmlFor="password" style={{ display: 'block', marginBottom: '5px' }}>
+          비밀번호
+        </label>
         <input
+          id="password"
           type="password"
           value={password}
           onChange={handlePasswordChange}
-          placeholder="비밀번호 (8자 이상)"
-          disabled={isSubmitting}
+          placeholder="8자 이상 입력"
           style={{
             width: '100%',
-            padding: '10px',
-            fontSize: '14px',
-            border: passwordError ? '1px solid #dc3545' : '1px solid #ccc',
-            borderRadius: '4px',
-            boxSizing: 'border-box'
+            padding: '8px',
+            border: passwordError ? '1px solid red' : '1px solid #ccc',
+            borderRadius: '4px'
           }}
         />
         {passwordError && (
-          <div style={{ color: '#dc3545', fontSize: '12px', marginTop: '5px' }}>
+          <div style={{ color: 'red', fontSize: '14px', marginTop: '5px' }}>
             {passwordError}
           </div>
         )}
       </div>
 
-      {submitError && (
-        <div style={{ padding: '10px', backgroundColor: '#f8d7da', color: '#721c24', borderRadius: '4px', fontSize: '14px' }}>
-          {submitError}
+      {apiError && (
+        <div style={{ color: 'red', fontSize: '14px', padding: '10px', backgroundColor: '#fee', borderRadius: '4px' }}>
+          {apiError}
         </div>
       )}
 
@@ -154,16 +127,16 @@ export default function SignupForm() {
         type="submit"
         disabled={isSubmitting}
         style={{
-          padding: '10px 20px',
-          fontSize: '16px',
-          backgroundColor: isSubmitting ? '#6c757d' : '#007bff',
+          padding: '10px',
+          backgroundColor: isSubmitting ? '#ccc' : '#007bff',
           color: 'white',
           border: 'none',
           borderRadius: '4px',
-          cursor: isSubmitting ? 'not-allowed' : 'pointer'
+          cursor: isSubmitting ? 'not-allowed' : 'pointer',
+          fontSize: '16px'
         }}
       >
-        {isSubmitting ? '처리 중...' : '가입하기'}
+        {isSubmitting ? '처리 중...' : '회원가입'}
       </button>
     </form>
   );

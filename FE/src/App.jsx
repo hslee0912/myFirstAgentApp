@@ -1,12 +1,17 @@
-import React from 'react';
-import SignupForm from './components/SignupForm.jsx';
+import React, { useState } from 'react';
+import SignupPage from './pages/SignupPage.jsx';
 
 export default function App() {
+  const [currentPage, setCurrentPage] = useState('placeholder');
+
+  if (currentPage === 'signup') {
+    return <SignupPage onBack={() => setCurrentPage('placeholder')} />;
+  }
+
   return (
-    <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px' }}>
-      <h1>회원가입</h1>
-      <SignupForm />
-      <div style={{ marginTop: '20px', color: '#666', fontSize: '14px' }}>App placeholder</div>
+    <div>
+      <div>App placeholder</div>
+      <button onClick={() => setCurrentPage('signup')}>Go to Signup</button>
     </div>
   );
 }

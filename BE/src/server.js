@@ -16,8 +16,11 @@ app.get('/health', (_req, res) => {
 app.use('/api/v1/auth', authRouter);
 
 app.use((err, _req, res, _next) => {
-  console.error(err.stack);
-  res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR' });
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    success: false,
+    error: 'Internal server error'
+  });
 });
 
 if (require.main === module) {

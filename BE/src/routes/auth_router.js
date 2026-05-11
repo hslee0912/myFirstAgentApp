@@ -5,54 +5,56 @@ const authService = require('../services/auth_service');
 
 const router = express.Router();
 
-/**
- * POST /api/v1/auth/signup
- * 회원가입 엔드포인트
- */
-router.post('/signup', async (req, res, next) => {
+router.post('/signup', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || typeof email !== 'string') {
-      return res.status(400).json({ success: false, error: 'INVALID_EMAIL' });
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: '이메일과 비밀번호는 필수입니다'
+      });
     }
 
-    if (!password || typeof password !== 'string') {
-      return res.status(400).json({ success: false, error: 'PASSWORD_TOO_SHORT' });
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ success: false, error: 'INVALID_EMAIL' });
-    }
-
-    if (email.length > 255) {
-      return res.status(400).json({ success: false, error: 'INVALID_EMAIL' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: '이메일 형식이 유효하지 않습니다'
+      });
     }
 
     if (password.length < 8) {
-      return res.status(400).json({ success: false, error: 'PASSWORD_TOO_SHORT' });
+      return res.status(400).json({
+        success: false,
+        error: '비밀번호는 8자 이상이어야 합니다'
+      });
     }
 
     const result = await authService.signup(email, password);
 
     if (!result.success) {
-      if (result.error === 'EMAIL_ALREADY_EXISTS') {
-        return res.status(409).json({ success: false, error: result.error });
+      if (result.error === 'EMAIL_EXISTS') {
+        return res.status(409).json({
+          success: false,
+          error: '이미 가입된 이메일입니다'
+        });
       }
-      return res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR' });
+      return res.status(500).json({
+        success: false,
+        error: '회원가입 처리 중 오류가 발생했습니다'
+      });
     }
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
-      data: {
-        id: result.data.id,
-        email: result.data.email,
-        created_at: result.data.created_at
-      }
+      data: result.data
     });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    console.error('Signup route error:', error);
+    res.status(500).json({
+      success: false,
+      error: '서버 오류가 발생했습니다'
+    });
   }
 });
 
