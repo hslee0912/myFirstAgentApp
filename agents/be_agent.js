@@ -68,10 +68,29 @@ function readConvention() {
   return common + '\n\n---\n\n' + beSpecific;
 }
 
+function readSchemaSection() {
+  try {
+    const sql = fs.readFileSync(path.join(ROOT, 'db', 'schema.sql'), 'utf8');
+    return (
+      '\n\n## DB schema (실제 적용된 db/schema.sql — 반드시 이대로 사용)\n\n' +
+      '```sql\n' + sql + '\n```\n\n' +
+      '규칙:\n' +
+      '- 비즈니스 SQL은 **`app_users`** 테이블만 사용. `users` 같은 다른 이름 사용 절대 금지.\n' +
+      '- `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 agent system 전용 — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 하지 말 것.\n' +
+      '- INSERT/UPDATE 컬럼은 schema에 정의된 것만. `id`는 AUTO_INCREMENT라 INSERT에 포함하지 말 것 (LAST_INSERT_ID로 받기).\n' +
+      '- `created_at`, `updated_at`은 DEFAULT 값이 있으므로 INSERT에 포함하지 말 것.\n' +
+      '- `password_hash` 컬럼이라 bcrypt 해시 결과를 그 이름 그대로 저장 (`password` 같은 다른 컬럼 이름 사용 금지).'
+    );
+  } catch (_) {
+    return '';
+  }
+}
+
 // Built once at module load. Includes rules so the entire system prompt is
 // stable across calls within an orchestrator run → prompt caching can hit.
 const SYSTEM_PROMPT =
   buildSystemPrompt(stackCfg) +
+  readSchemaSection() +
   '\n\n## rules (common + BE-specific, 반드시 준수)\n\n' +
   readConvention();
 

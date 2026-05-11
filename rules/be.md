@@ -37,6 +37,9 @@ export default signupHandler;
   const pool = mysql.createPool({...});
   await pool.execute('SELECT ... WHERE email = ?', [email]);
   ```
+- **테이블 이름은 `db/schema.sql`에 정의된 것만 사용** — 시스템 프롬프트의 "DB schema" 섹션이 매 호출마다 실제 schema를 주입한다. 회원 비즈니스는 `app_users`(NOT `users`)만 사용. `log_*` 테이블은 절대 건드리지 말 것.
+- 컬럼은 schema에 있는 것만. `id`는 AUTO_INCREMENT이므로 INSERT에 포함 금지, `LAST_INSERT_ID()` 또는 mysql2 `result.insertId`로 받음. `created_at`/`updated_at`은 DEFAULT가 있어 INSERT 제외.
+- 비밀번호 컬럼명은 `password_hash` (schema 그대로). 다른 이름(`password`, `pwd` 등) 사용 금지.
 
 ## 5. 비밀번호 처리
 

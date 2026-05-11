@@ -21,6 +21,32 @@ const { callJSON, assertContextBudget } = require('../lib/llm');
 
 const ROOT = path.resolve(__dirname, '..');
 
+function readSchemaIfAny() {
+  try {
+    return fs.readFileSync(path.join(ROOT, 'db', 'schema.sql'), 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+const SCHEMA_SQL = readSchemaIfAny();
+const SCHEMA_SECTION = SCHEMA_SQL
+  ? `
+
+## DB schema (실제 적용된 \`db/schema.sql\` — 반드시 이 테이블/컬럼/타입을 정확히 따를 것)
+
+\`\`\`sql
+${SCHEMA_SQL}
+\`\`\`
+
+규칙 (schema):
+- BE 비즈니스 코드는 **\`app_users\`** 테이블만 사용. \`users\` 같은 다른 이름으로 SELECT/INSERT/UPDATE 절대 금지.
+- \`log_agent_runs\`, \`log_agent_decisions\`, \`log_task_state\`는 agent system 전용 — 비즈니스 코드에서 절대 접근하지 말 것.
+- \`api_contract\`의 \`example\` 값은 schema의 컬럼 타입과 정확히 일치. \`id INT AUTO_INCREMENT\`이면 example도 정수형 (e.g. 1, 42). UUID/string으로 emit 금지.
+- 컬럼은 schema에 정의된 것만 사용. 새 컬럼 추가 가이드 금지.
+- schema 변경 가이드(ALTER TABLE 등) 금지 — schema는 사용자 영역.`
+  : '';
+
 const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 사용자 자연어 요구사항을 받아 다음을 결정한다:
 1) targets: "FE", "BE", "BOTH" 중 하나
@@ -60,7 +86,7 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 }
 \`\`\`
 
-**금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식. responses 객체의 key가 status code여야 한다. base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.`;
+**금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식. responses 객체의 key가 status code여야 한다. base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
   return [
