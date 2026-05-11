@@ -20,12 +20,14 @@
  */
 'use strict';
 
+const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const express = require('express');
 require('dotenv').config({ override: true });
 
 const { killHostHolders } = require('../lib/port_killer');
+const { readEnv } = require('../lib/env_writer');
 
 const envRoutes = require('./routes/env');
 const tasksRoutes = require('./routes/tasks');
@@ -34,6 +36,24 @@ const deployRoutes = require('./routes/deploy');
 const gitRoutes = require('./routes/git');
 
 const REQUESTED_PORT = Number(process.env.UI_PORT || 4000);
+
+const ROOT = path.resolve(__dirname, '..');
+const ENV_PATH = path.join(ROOT, '.env');
+const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+
+/**
+ * Read .env PUBLIC_HOST fresh from disk every call — when the user toggles
+ * PUBLIC_HOST in the UI, a subsequent page reload should pick it up without
+ * restarting the server. Falls back to 'localhost' (the only sensible
+ * placeholder for an HTML link).
+ */
+function readPublicHost() {
+  try {
+    const v = readEnv(ENV_PATH).PUBLIC_HOST;
+    if (v && v.trim()) return v.trim();
+  } catch (_) { /* fall through */ }
+  return 'localhost';
+}
 
 // ---------------- port preflight (mirror deploy_agent) ----------------
 
@@ -80,6 +100,27 @@ async function findFreePort(start, max = 20) {
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
+
+// Serve index.html with __PUBLIC_HOST__ substituted from .env, so the
+// initial paint already has the correct host in FE/BE links (no flash of
+// "localhost" before /api/env returns). The static handler below catches
+// every other asset normally.
+function serveIndex(_req, res) {
+  fs.readFile(INDEX_PATH, 'utf8', (err, html) => {
+    if (err) return res.status(500).send('index.html read error');
+    const host = readPublicHost();
+    // Replace only the meta-tag placeholder. Keep it conservative — don't
+    // do a blanket /__PUBLIC_HOST__/g in case future content uses it.
+    const out = html.replace(
+      /<meta\s+name="public-host"\s+content="[^"]*"\s*\/?>/,
+      `<meta name="public-host" content="${host.replace(/"/g, '&quot;')}" />`,
+    );
+    res.set('Content-Type', 'text/html; charset=utf-8').send(out);
+  });
+}
+app.get('/', serveIndex);
+app.get('/index.html', serveIndex);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Routes are mounted by domain. /api/env, /api/tasks, /api/run are each their
@@ -115,7 +156,8 @@ async function main() {
   // app.listen to EADDRINUSE on `:::PORT`. localhost browser access still
   // works — the OS resolves localhost to 127.0.0.1 first.
   const server = app.listen(port, '0.0.0.0', () => {
-    console.log(`[ui] listening on http://localhost:${port}`);
+    const host = readPublicHost();
+    console.log(`[ui] listening on http://${host}:${port}`);
     console.log(`[ui] open the URL in a browser to drive the orchestrator`);
   });
   server.on('error', (err) => {

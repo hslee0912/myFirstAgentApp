@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Server injects .env PUBLIC_HOST here at request time. The literal
+       __PUBLIC_HOST__ is the placeholder served from disk (only visible if
+       someone reads the file directly); the actual response substitutes it. -->
+  <meta name="public-host" content="__PUBLIC_HOST__" />
   <title>myFirstAgentApp — control panel</title>
   <style>
     :root {
@@ -320,10 +324,15 @@ const pill = (val) => val ? `<span class="pill ${val}">${val}</span>` : '';
 
 let selectedTaskId = null;
 
-// Browser host for FE/BE service links. Default 'localhost' until /api/env
-// returns the .env value (could be an EC2 public DNS/IP in remote setups).
-// Kept in sync by loadEnv() so a UI toggle propagates without a page reload.
-let PUBLIC_HOST = 'localhost';
+// Browser host for FE/BE service links. Initial value comes from the
+// <meta name="public-host"> that ui/server.js injects per request (from
+// .env PUBLIC_HOST). loadEnv() refreshes it on every poll so a UI toggle
+// propagates without a page reload. The meta fallback "__PUBLIC_HOST__"
+// is what you'd see only if the file is opened from disk (i.e. not via
+// the UI server) — treat that as "host unknown, do not link out".
+let PUBLIC_HOST =
+  document.querySelector('meta[name="public-host"]')?.content || '';
+if (PUBLIC_HOST === '__PUBLIC_HOST__') PUBLIC_HOST = '';
 
 async function fetchJSON(url, opts) {
   const r = await fetch(url, opts);

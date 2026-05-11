@@ -36,7 +36,15 @@ function getTimeoutMs() {
 
 function getBeBaseUrl() {
   const port = Number(process.env.DEPLOY_PORT_BE || 3001);
-  return `http://localhost:${port}`;
+  // PostTest runs on the same host as the BE container (orchestrator +
+  // docker compose are co-located). PUBLIC_HOST exists for the *browser's*
+  // benefit (EC2 public DNS, etc.); for a server-side fetch on the same
+  // box, 'localhost' is always correct. We still respect PUBLIC_HOST when
+  // explicitly set to anything non-'localhost', for setups that route
+  // through a public DNS even from inside the box.
+  const envHost = (process.env.PUBLIC_HOST || '').trim();
+  const host = envHost && envHost !== 'localhost' ? envHost : 'localhost';
+  return `http://${host}:${port}`;
 }
 
 // ---------------- timeout helper ----------------
