@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
-const { abridgeExistingFiles, abridgeForRetry } = require('../lib/prompt_util');
+const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles } = require('../lib/prompt_util');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -54,10 +54,10 @@ function buildSystemPrompt(cfg) {
     '**위 파일은 fix_instructions나 existing_files에 언급·포함되어 있더라도 응답에서 완전히 제외하라.** 응답에 포함하면 Orchestrator의 validatePaths에서 즉시 차단되어 task가 ERROR로 종료된다.',
     '필요한 의존성·플러그인이 부족하면 코드를 만들지 말고 응답의 `notes`에 사유를 기록하라.',
     '',
-    '- 응답에 포함된 모든 file은 disk에 덮어씌워진다 (동일 내용이어도).',
-    '- 새로 만들거나 *실제로 변경한* file만 응답에 포함하라.',
-    '- placeholder 또는 변경 없는 file을 응답에 포함하면 출력 토큰 낭비 + truncation 위험.',
-    '- "변경 없음" file은 응답에서 완전히 제외. notes에 "kept N files unchanged" 정도만 명시.',
+    '- 응답에 포함된 file은 disk에 덮어씌워진다 (응답하지 않은 file은 그대로 유지).',
+    '- **새로 만드는 모든 file은 반드시 응답에 포함하라** — 이것이 핵심 산출물이다.',
+    '- 기존 placeholder는 *내용을 실제로 변경한 경우에만* 응답에 포함하라.',
+    '- 내용 변경 없는 placeholder는 응답에서 완전히 제외 (토큰 낭비). notes에 "kept N files unchanged" 정도만 명시.',
   ].join('\n');
 }
 
@@ -222,7 +222,10 @@ async function run(params) {
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'fe', max_tokens });
     const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
-    const files = llmOut.files || {};
+    // Y: silent-drop protected files BEFORE validatePaths to survive the LLM
+    // occasionally including them in the response despite the system prompt.
+    const { files, dropped: droppedProtected } =
+      dropProtectedFiles(llmOut.files || {}, PROTECTED_FILES, 'FE Agent');
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });
     applyFiles(files);
@@ -230,6 +233,7 @@ async function run(params) {
     const output = {
       mode,
       written_files: Object.keys(files),
+      dropped_protected: droppedProtected,
       eslintrc_created: eslintrcCreated,
       notes: llmOut.notes || '',
     };

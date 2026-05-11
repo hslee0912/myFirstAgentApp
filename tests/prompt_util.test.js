@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { abridgeExistingFiles, abridgeForRetry } = require('../lib/prompt_util');
+const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles } = require('../lib/prompt_util');
 
 // ─────────── abridgeExistingFiles ───────────
 
@@ -95,4 +95,59 @@ test('abridgeForRetry: empty allowed_paths stubs everything', () => {
   );
   assert.match(result['a.js'], /unchanged file/);
   assert.match(result['b.js'], /unchanged file/);
+});
+
+// ─────────── dropProtectedFiles (Y) ───────────
+
+test('dropProtectedFiles: removes protected files from response', () => {
+  const result = dropProtectedFiles(
+    { 'BE/src/server.js': 'A', 'BE/.eslintrc.json': 'B' },
+    ['BE/.eslintrc.json', 'BE/Dockerfile']
+  );
+  assert.deepEqual(Object.keys(result.files), ['BE/src/server.js']);
+  assert.deepEqual(result.dropped, ['BE/.eslintrc.json']);
+});
+
+test('dropProtectedFiles: keeps non-protected files', () => {
+  const result = dropProtectedFiles(
+    { 'BE/src/a.js': '1', 'BE/src/b.js': '2' },
+    ['BE/.eslintrc.json']
+  );
+  assert.deepEqual(Object.keys(result.files), ['BE/src/a.js', 'BE/src/b.js']);
+  assert.deepEqual(result.dropped, []);
+});
+
+test('dropProtectedFiles: drops multiple protected, preserves order', () => {
+  const result = dropProtectedFiles(
+    {
+      'BE/src/server.js': 'A',
+      'BE/.eslintrc.json': 'B',
+      'BE/Dockerfile': 'C',
+      'BE/src/routes/auth.js': 'D',
+    },
+    ['BE/.eslintrc.json', 'BE/Dockerfile']
+  );
+  assert.deepEqual(Object.keys(result.files), ['BE/src/server.js', 'BE/src/routes/auth.js']);
+  assert.deepEqual(result.dropped, ['BE/.eslintrc.json', 'BE/Dockerfile']);
+});
+
+test('dropProtectedFiles: empty protectedList keeps everything', () => {
+  const result = dropProtectedFiles(
+    { 'a.js': '1', 'b.js': '2' },
+    []
+  );
+  assert.deepEqual(Object.keys(result.files), ['a.js', 'b.js']);
+  assert.deepEqual(result.dropped, []);
+});
+
+test('dropProtectedFiles: handles empty/null files input', () => {
+  assert.deepEqual(dropProtectedFiles({}, ['BE/x']), { files: {}, dropped: [] });
+  assert.deepEqual(dropProtectedFiles(null, ['BE/x']), { files: {}, dropped: [] });
+  assert.deepEqual(dropProtectedFiles(undefined, ['BE/x']), { files: {}, dropped: [] });
+});
+
+test('dropProtectedFiles: handles null protectedList', () => {
+  const result = dropProtectedFiles({ 'a.js': '1' }, null);
+  assert.deepEqual(Object.keys(result.files), ['a.js']);
+  assert.deepEqual(result.dropped, []);
 });
