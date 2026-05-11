@@ -320,6 +320,11 @@ const pill = (val) => val ? `<span class="pill ${val}">${val}</span>` : '';
 
 let selectedTaskId = null;
 
+// Browser host for FE/BE service links. Default 'localhost' until /api/env
+// returns the .env value (could be an EC2 public DNS/IP in remote setups).
+// Kept in sync by loadEnv() so a UI toggle propagates without a page reload.
+let PUBLIC_HOST = 'localhost';
+
 async function fetchJSON(url, opts) {
   const r = await fetch(url, opts);
   const ct = r.headers.get('content-type') || '';
@@ -348,6 +353,11 @@ async function putEnv(key, value) {
 
 async function loadEnv() {
   const data = await fetchJSON('/api/env');
+  // Refresh PUBLIC_HOST so subsequent FE/BE links pick up any UI edit
+  // (or .env reset) without requiring a page reload.
+  if (data.editable && data.editable.PUBLIC_HOST) {
+    PUBLIC_HOST = data.editable.PUBLIC_HOST;
+  }
   const root = $('#envEditor');
   root.innerHTML = '';
 
@@ -824,8 +834,8 @@ async function loadDetail() {
         <div class="err-card sev-ok" style="margin-top: 10px;">
           <div class="err-head"><span class="err-title">배포된 서비스 (DEPLOY_TEARDOWN_ON_PASS=off일 때 PASS 후에도 유지)</span></div>
           <div class="err-body">
-            <a href="http://localhost:${fe}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🌐 FE 열기 (:${fe})</a>
-            <a href="http://localhost:${be}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🔌 BE 열기 (:${be})</a>
+            <a href="http://${PUBLIC_HOST}:${fe}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🌐 FE 열기 (:${fe})</a>
+            <a href="http://${PUBLIC_HOST}:${be}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🔌 BE 열기 (:${be})</a>
             <button class="secondary" id="stopContainersBtn" style="margin-left: 6px;">🛑 Stop containers</button>
           </div>
         </div>`;
@@ -908,9 +918,9 @@ $('#redeployBtn').addEventListener('click', async () => {
       const p = r.ports || {};
       alert(
         `Redeploy 완료 (task_id=${r.task_id})\n\n` +
-        `🌐 FE: http://localhost:${p.fe}\n` +
-        `🔌 BE: http://localhost:${p.be}\n` +
-        `🗄  DB: localhost:${p.mysql}`
+        `🌐 FE: http://${PUBLIC_HOST}:${p.fe}\n` +
+        `🔌 BE: http://${PUBLIC_HOST}:${p.be}\n` +
+        `🗄  DB: ${PUBLIC_HOST}:${p.mysql}`
       );
     } else if (r._status === 400) {
       // DEPLOY_MODE=off rejection — surface server message verbatim.

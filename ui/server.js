@@ -5,90 +5,35 @@
  * orchestrator/agents already write to. Doesn't introduce a new abstraction —
  * everything here is a thin REST layer over existing artifacts.
  *
- * Endpoints:
- *   GET    /api/env                — UI-editable .env keys + current values
- *   PUT    /api/env                — atomic .env update for allowlisted keys
- *   GET    /api/tasks              — recent log_agent_decisions (most recent N)
- *   GET    /api/tasks/:task_id     — decision + task_states + per-agent runs
- *   GET    /api/tasks/:task_id/contract — current shared/api_contract.json (expanded)
- *   POST   /api/run                — spawn `node agents/orchestrator.js`, return task_id
- *   POST   /api/reset-db           — invoke `node lib/reset_db.js`
- *   GET    /                       — static index.html
+ * This file is the bootstrap: port preflight + route mounting. Each route
+ * group lives in ui/routes/<domain>.js — see those files for the actual
+ * endpoint definitions. The split is by domain so each file stays focused:
  *
- * Concurrency: one orchestrator run at a time (single in-memory slot).
- * Subsequent /api/run while busy returns 409.
+ *   ui/routes/env.js    — GET/PUT /api/env
+ *   ui/routes/tasks.js  — GET /api/tasks[, /:task_id[, /:task_id/contract]]
+ *   ui/routes/run.js    — GET/POST /api/run (orchestrator child process)
+ *   ui/routes/deploy.js — POST /api/{stop-containers,redeploy,reset-db}
+ *   ui/routes/git.js    — GET /api/rollback-preview + POST /api/rollback
+ *
+ * Concurrency: one orchestrator run at a time (single in-memory slot lives in
+ * ui/routes/_context.js#currentRunRef). Subsequent /api/run while busy → 409.
  */
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const net = require('net');
-const { spawn, spawnSync } = require('child_process');
+const path = require('path');
 const express = require('express');
 require('dotenv').config({ override: true });
 
-const { readEnv, updateEnv, UI_EDITABLE_KEYS } = require('../lib/env_writer');
-const { normalizeContract } = require('../lib/api_test');
 const { killHostHolders } = require('../lib/port_killer');
-const deployAgent = require('../agents/deploy_agent');
-const db = require('../lib/db');
 
-const ROOT = path.resolve(__dirname, '..');
-const ENV_PATH = path.join(ROOT, '.env');
+const envRoutes = require('./routes/env');
+const tasksRoutes = require('./routes/tasks');
+const runRoutes = require('./routes/run');
+const deployRoutes = require('./routes/deploy');
+const gitRoutes = require('./routes/git');
+
 const REQUESTED_PORT = Number(process.env.UI_PORT || 4000);
-
-// ---------------- single-run slot ----------------
-
-let currentRun = null; // { task_id, pid, startedAt }
-
-function startOrchestrator(userPrompt) {
-  if (currentRun) return { ok: false, error: 'busy', current: currentRun };
-  const args = [path.join(ROOT, 'agents', 'orchestrator.js')];
-  if (userPrompt && userPrompt.trim()) args.push(userPrompt);
-
-  const child = spawn('node', args, {
-    cwd: ROOT,
-    env: { ...process.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-
-  const logChunks = [];
-  let detectedTaskId = null;
-  const onData = (buf) => {
-    const s = buf.toString();
-    logChunks.push(s);
-    if (!detectedTaskId) {
-      const m = s.match(/task_id=([a-z0-9_]+)/i);
-      if (m) {
-        detectedTaskId = m[1];
-        currentRun.task_id = detectedTaskId;
-      }
-    }
-  };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-
-  currentRun = {
-    task_id: null,
-    pid: child.pid,
-    startedAt: Date.now(),
-    log: () => logChunks.join('').slice(-30000),
-  };
-
-  child.on('exit', (code) => {
-    if (currentRun && currentRun.pid === child.pid) {
-      currentRun.finishedAt = Date.now();
-      currentRun.exitCode = code;
-      // Keep last run visible for ~10s so polling picks it up, then clear.
-      setTimeout(() => {
-        if (currentRun && currentRun.pid === child.pid) currentRun = null;
-      }, 10_000);
-    }
-  });
-
-  return { ok: true, pid: child.pid };
-}
 
 // ---------------- port preflight (mirror deploy_agent) ----------------
 
@@ -137,262 +82,14 @@ const app = express();
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/api/env', (_req, res) => {
-  const all = readEnv(ENV_PATH);
-  const editable = {};
-  for (const k of UI_EDITABLE_KEYS) editable[k] = all[k] ?? '';
-  res.json({ editable, editableKeys: UI_EDITABLE_KEYS });
-});
-
-app.put('/api/env', (req, res) => {
-  const body = req.body || {};
-  const updates = {};
-  for (const k of Object.keys(body)) {
-    if (!UI_EDITABLE_KEYS.includes(k)) {
-      return res.status(400).json({ error: `key '${k}' not in allowlist` });
-    }
-    updates[k] = body[k];
-  }
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'no keys to update' });
-  }
-  const result = updateEnv(ENV_PATH, updates);
-  res.json({ ok: true, ...result });
-});
-
-app.get('/api/tasks', async (_req, res) => {
-  try {
-    const rows = await db.query(
-      'SELECT id, task_id, final_verdict, final_result_text, created_at, updated_at ' +
-      'FROM log_agent_decisions ORDER BY id DESC LIMIT 20'
-    );
-    res.json({ tasks: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/tasks/:task_id', async (req, res) => {
-  try {
-    const { task_id } = req.params;
-    const [decisions, runs] = await Promise.all([
-      db.query(
-        'SELECT id, task_id, final_verdict, final_result_text, created_at, updated_at ' +
-        'FROM log_agent_decisions WHERE task_id = ? LIMIT 1',
-        [task_id],
-      ),
-      db.query(
-        'SELECT id, agent_name, target, status, input_json, output_json, started_at, ended_at ' +
-        'FROM log_agent_runs WHERE task_id = ? ORDER BY id ASC',
-        [task_id],
-      ),
-    ]);
-    const decision = decisions[0] || null;
-    let states = [];
-    if (decision) {
-      states = await db.query(
-        'SELECT id, target, status, retry_count, failed_stage, fix_instructions, stage_logs, ' +
-        'created_at, updated_at FROM log_task_state WHERE decision_id = ? ORDER BY target ASC',
-        [decision.id],
-      );
-    }
-    res.json({ decision, states, runs });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/tasks/:task_id/contract', (_req, res) => {
-  const p = path.join(ROOT, 'shared', 'api_contract.json');
-  if (!fs.existsSync(p)) return res.status(404).json({ error: 'no api_contract.json' });
-  try {
-    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const expanded = normalizeContract(raw, {
-      routerDir: path.join(ROOT, 'shared', 'router'),
-    });
-    res.json({ contract: expanded });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/run', (_req, res) => {
-  res.json({ running: currentRun !== null, current: currentRun
-    ? {
-        task_id: currentRun.task_id,
-        pid: currentRun.pid,
-        startedAt: currentRun.startedAt,
-        finishedAt: currentRun.finishedAt || null,
-        exitCode: currentRun.exitCode ?? null,
-        logTail: currentRun.log ? currentRun.log() : '',
-      }
-    : null });
-});
-
-app.post('/api/run', (req, res) => {
-  const prompt = (req.body && req.body.prompt) || '';
-  const result = startOrchestrator(prompt);
-  if (!result.ok) return res.status(409).json(result);
-  res.json({ ok: true, pid: result.pid });
-});
-
-app.post('/api/stop-containers', (_req, res) => {
-  try {
-    deployAgent.teardown();
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ---------------- Reset to origin/main ----------------
-
-function gitOut(args) {
-  const r = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', windowsHide: true });
-  return { code: r.status ?? -1, stdout: r.stdout || '', stderr: r.stderr || '' };
-}
-
-app.get('/api/rollback-preview', (_req, res) => {
-  // Best-effort fetch so origin/main is current. Failures are non-fatal —
-  // we'll just preview against whatever local origin/main we have.
-  gitOut(['fetch', 'origin', 'main']);
-  const aheadOut = gitOut(['log', '--oneline', 'origin/main..HEAD']);
-  const ahead = aheadOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
-  const statusOut = gitOut(['status', '--porcelain']);
-  const dirty = statusOut.stdout
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .filter((line) => {
-      // Only count paths we actually clean — BE/, FE/, shared/. Ignore
-      // node_modules / .claude / *.log / .env (these are preserved or untouched).
-      const m = line.match(/^..\s+(.+)$/);
-      const p = m ? m[1] : line;
-      if (/^node_modules\//.test(p) || /^\.claude\//.test(p) || /\.log$/.test(p)) return false;
-      if (p === '.env' || /\.env\.backup/.test(p)) return false;
-      return /^(BE|FE|shared)\//.test(p) || /^\.env\.tmp$/.test(p) || /^[^/]+$/.test(p);
-    });
-  const envExists = fs.existsSync(ENV_PATH);
-  const envExampleExists = fs.existsSync(path.join(ROOT, '.env.example'));
-  res.json({
-    ahead_commits: ahead,                // local commits that will disappear
-    dirty_files: dirty,                  // working-dir paths that will be cleaned
-    env_will_reset: envExists && envExampleExists,
-    backup_path: '.env.backup',          // existing backup will be overwritten
-    can_rollback: ahead.length > 0 || dirty.length > 0,
-  });
-});
-
-app.post('/api/rollback', (_req, res) => {
-  try {
-    // 1. .env backup (fixed name — overwrites any previous backup)
-    let envBackedUp = false;
-    if (fs.existsSync(ENV_PATH)) {
-      fs.copyFileSync(ENV_PATH, path.join(ROOT, '.env.backup'));
-      envBackedUp = true;
-    }
-
-    // 2. git reset --hard origin/main
-    const reset = gitOut(['reset', '--hard', 'origin/main']);
-    if (reset.code !== 0) {
-      return res.status(500).json({ ok: false, error: `git reset failed: ${reset.stderr}` });
-    }
-
-    // 3. git clean -fd for BE/, FE/, shared/ — untracked LLM artifacts.
-    //    .env / node_modules / .claude / *.log are excluded by -e patterns.
-    const clean = gitOut([
-      'clean', '-fd',
-      '-e', '.env', '-e', '.env.backup', '-e', 'node_modules', '-e', '.claude/', '-e', '*.log',
-      'BE/', 'FE/', 'shared/',
-    ]);
-    if (clean.code !== 0) {
-      // Non-fatal — partial cleanup still useful. Report stderr but mark ok.
-      console.warn(`[ui] rollback: git clean warning: ${clean.stderr}`);
-    }
-
-    // 4. .env reset from .env.example (placeholder values — user must re-enter secrets).
-    let envReset = false;
-    const examplePath = path.join(ROOT, '.env.example');
-    if (fs.existsSync(examplePath)) {
-      fs.copyFileSync(examplePath, ENV_PATH);
-      envReset = true;
-    }
-
-    res.json({
-      ok: true,
-      reset_to: 'origin/main',
-      env_backed_up: envBackedUp,
-      env_reset: envReset,
-      backup_path: '.env.backup',
-      notice: envReset
-        ? 'ANTHROPIC_API_KEY와 DB_PASSWORD를 다시 입력해야 합니다 (.env.example의 placeholder로 reset됨). 이전 .env는 .env.backup에 백업.'
-        : '.env.example을 찾지 못해 .env는 그대로 유지.',
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ---------------- Redeploy (compose up only, no PostTest) ----------------
-
-app.post('/api/redeploy', async (_req, res) => {
-  // DEPLOY_MODE=off면 의도적 거부 — 사용자가 토글을 끈 상태에서 우연히 누른 경우 방지.
-  // *.env 디스크 상태*를 보고 판단 (UI 토글이 즉시 반영되어야 하므로 process.env 캐시 사용 X).
-  const diskEnv = readEnv(ENV_PATH);
-  const mode = (diskEnv.DEPLOY_MODE || process.env.DEPLOY_MODE || 'on').toLowerCase();
-  if (mode !== 'on') {
-    return res.status(400).json({
-      ok: false,
-      error: '.env의 DEPLOY_MODE가 off라 Redeploy 실행 안 됩니다. 좌측 토글을 on으로 바꾸고 다시 시도하세요.',
-    });
-  }
-  if (currentRun) {
-    return res.status(409).json({
-      ok: false,
-      error: '다른 작업 진행 중. 끝난 후 다시 시도하세요.',
-      current: { task_id: currentRun.task_id, pid: currentRun.pid },
-    });
-  }
-  try {
-    // Sync disk → process.env for the deploy-relevant keys so deployAgent.run()
-    // (which reads process.env directly) sees the UI's latest toggle state, not
-    // the stale snapshot from server startup.
-    for (const k of ['DEPLOY_MODE', 'DEPLOY_PORT_FE', 'DEPLOY_PORT_BE', 'DEPLOY_PORT_DB',
-                     'DEPLOY_TIMEOUT_SEC', 'LOG_TAIL_LINES', 'DEPLOY_TEARDOWN_ON_PASS']) {
-      if (diskEnv[k] != null && diskEnv[k] !== '') process.env[k] = diskEnv[k];
-    }
-    const taskId =
-      'manual_redeploy_' +
-      new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-    const result = await deployAgent.run({ task_id: taskId });
-    // deploy_agent.run() mutates process.env.DEPLOY_PORT_* with the resolved
-    // (post-fallback) host ports. Surface them so the UI can show "FE 열기"
-    // links pointing at the right places without round-tripping through DB.
-    const ports = {
-      mysql: Number(process.env.DEPLOY_PORT_DB || 3306),
-      be:    Number(process.env.DEPLOY_PORT_BE || 3001),
-      fe:    Number(process.env.DEPLOY_PORT_FE || 5173),
-    };
-    res.json({ ok: result.status === 'SUCCESS', task_id: taskId, status: result.status, ports });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.post('/api/reset-db', async (_req, res) => {
-  const child = spawn('node', [path.join(ROOT, 'lib', 'reset_db.js')], {
-    cwd: ROOT,
-    env: { ...process.env },
-    windowsHide: true,
-  });
-  let out = '';
-  child.stdout.on('data', (b) => { out += b.toString(); });
-  child.stderr.on('data', (b) => { out += b.toString(); });
-  child.on('exit', (code) => {
-    if (code === 0) res.json({ ok: true, output: out.slice(-2000) });
-    else res.status(500).json({ ok: false, code, output: out.slice(-2000) });
-  });
-});
+// Routes are mounted by domain. /api/env, /api/tasks, /api/run are each their
+// own router; /api/* (stop-containers, redeploy, reset-db, rollback*) get
+// pinned to `/api` so the in-router paths can be the endpoint suffix only.
+app.use('/api/env', envRoutes);
+app.use('/api/tasks', tasksRoutes);
+app.use('/api/run', runRoutes);
+app.use('/api', deployRoutes);
+app.use('/api', gitRoutes);
 
 // ---------------- bootstrap ----------------
 
@@ -443,4 +140,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, startOrchestrator, isPortFree, findFreePort };
+// Preserve the historical export surface so existing tests (and any
+// future ones) keep working. `startOrchestrator` now lives in run.js.
+module.exports = {
+  app,
+  startOrchestrator: runRoutes.startOrchestrator,
+  isPortFree,
+  findFreePort,
+};
