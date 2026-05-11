@@ -87,9 +87,47 @@ const PORT_ENV_KEY = { mysql: 'DEPLOY_PORT_DB', be: 'DEPLOY_PORT_BE', fe: 'DEPLO
 // ---------------- port availability + fallback ----------------
 
 /**
+ * Parse `docker ps --format '{{.Ports}}'` output into a Set of host ports
+ * currently published by any running container. Robust to Windows/Linux
+ * differences (matches `:<port>->` regardless of host address).
+ *
+ * Why this matters: Docker on Windows lets Node bind to a port that
+ * `docker ps` reports as published (different Layer), so the OS-level
+ * net.createServer probe alone gives false positives. Compose `up` then
+ * fails with "port is already allocated". This pre-skips those ports.
+ *
+ * If the docker CLI is missing or the call fails, returns an empty Set so
+ * the OS-level probe remains the only signal — graceful degradation.
+ *
+ * @returns {Set<number>}
+ */
+function dockerPublishedPorts() {
+  try {
+    const r = spawnSync('docker', ['ps', '--format', '{{.Ports}}'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    if (r.status !== 0 || !r.stdout) return new Set();
+    const ports = new Set();
+    const re = /:(\d+)->/g;
+    let m;
+    while ((m = re.exec(r.stdout)) !== null) {
+      ports.add(Number(m[1]));
+    }
+    return ports;
+  } catch (_) {
+    return new Set();
+  }
+}
+
+/**
  * Try to bind a server to `port` on 0.0.0.0. Returns true if the bind
  * succeeds (port is free) and false if EADDRINUSE / EACCES occurs.
  * The probe is short-lived; the listener is closed before resolving.
+ *
+ * Note: on Windows, Docker-published ports may still pass this probe.
+ * Callers should consult `dockerPublishedPorts()` as the first filter.
  *
  * @param {number} port
  * @returns {Promise<boolean>}
@@ -120,14 +158,19 @@ function isPortFree(port) {
  * Probe `start, start+1, ..., start+maxOffset` and return the first free one.
  * Throws when none are free within the window.
  *
+ * Skips Docker-published ports up front (cheap O(1) Set lookup), then falls
+ * through to the OS-level net.createServer probe.
+ *
  * @param {number} start
  * @param {string} label - 'mysql' | 'be' | 'fe' (drives the .env hint)
  * @param {number} [maxOffset]
+ * @param {Set<number>} [dockerPorts] - host ports already taken by docker
  * @returns {Promise<number>}
  */
-async function findFreePort(start, label, maxOffset = PORT_FALLBACK_MAX_OFFSET) {
+async function findFreePort(start, label, maxOffset = PORT_FALLBACK_MAX_OFFSET, dockerPorts = new Set()) {
   for (let offset = 0; offset <= maxOffset; offset++) {
     const port = start + offset;
+    if (dockerPorts.has(port)) continue;
     // eslint-disable-next-line no-await-in-loop
     if (await isPortFree(port)) {
       if (offset > 0) {
@@ -147,17 +190,24 @@ async function findFreePort(start, label, maxOffset = PORT_FALLBACK_MAX_OFFSET) 
 
 /**
  * Resolve every Deploy host port, falling back to the next free port on
- * conflict (e.g. host MySQL already on 3306). Mutates process.env so docker
- * compose's `${DEPLOY_PORT_*}` substitution and Phase 9 PostTest see the
- * resolved values consistently. Container-internal ports are unaffected.
+ * conflict (host MySQL on 3306, stale docker container on 3307, etc.).
+ * Mutates process.env so docker compose substitution and Phase 9 PostTest
+ * see the resolved values consistently. Container-internal ports unaffected.
+ *
+ * Two layers of conflict detection:
+ *   1. `docker ps` published ports — covers stale containers from previous
+ *      Deploy runs that were left alive (D6=B FAIL branch).
+ *   2. OS-level net.listen probe — covers non-docker conflicts (host MySQL,
+ *      another local process).
  *
  * @param {{mysql:number, be:number, fe:number}} requested
  * @returns {Promise<{mysql:number, be:number, fe:number, changed:boolean}>}
  */
 async function resolvePortsWithFallback(requested) {
-  const mysql = await findFreePort(requested.mysql, 'mysql');
-  const be = await findFreePort(requested.be, 'be');
-  const fe = await findFreePort(requested.fe, 'fe');
+  const dockerPorts = dockerPublishedPorts();
+  const mysql = await findFreePort(requested.mysql, 'mysql', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
+  const be = await findFreePort(requested.be, 'be', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
+  const fe = await findFreePort(requested.fe, 'fe', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
   process.env.DEPLOY_PORT_DB = String(mysql);
   process.env.DEPLOY_PORT_BE = String(be);
   process.env.DEPLOY_PORT_FE = String(fe);
@@ -382,4 +432,11 @@ function teardown() {
   composeDown();
 }
 
-module.exports = { run, teardown, isPortFree, findFreePort, resolvePortsWithFallback };
+module.exports = {
+  run,
+  teardown,
+  isPortFree,
+  findFreePort,
+  resolvePortsWithFallback,
+  dockerPublishedPorts,
+};

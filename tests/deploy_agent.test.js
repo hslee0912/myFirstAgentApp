@@ -17,6 +17,7 @@ const {
   isPortFree,
   findFreePort,
   resolvePortsWithFallback,
+  dockerPublishedPorts,
 } = require('../agents/deploy_agent');
 
 /** Bind a listener on `port` so subsequent probes see EADDRINUSE. */
@@ -77,6 +78,20 @@ test('findFreePort: falls back to start+1 when start is occupied', async () => {
   } finally {
     occupied.close();
   }
+});
+
+test('findFreePort: skips ports listed in dockerPorts even when OS reports free', async () => {
+  const a = await pickEphemeral();
+  const dockerPorts = new Set([a]);
+  const result = await findFreePort(a, 'mysql', 50, dockerPorts);
+  assert.notEqual(result, a);
+  assert.ok(result > a);
+});
+
+test('findFreePort: dockerPorts default empty Set keeps backwards-compat behavior', async () => {
+  const port = await pickEphemeral();
+  const result = await findFreePort(port, 'be', 5);
+  assert.equal(result, port);
 });
 
 test('findFreePort: throws when no port is free within the window', async () => {
@@ -164,6 +179,19 @@ test('resolvePortsWithFallback: sets changed=true when any port shifts', async (
     process.env.DEPLOY_PORT_DB = snap.DEPLOY_PORT_DB ?? '';
     process.env.DEPLOY_PORT_BE = snap.DEPLOY_PORT_BE ?? '';
     process.env.DEPLOY_PORT_FE = snap.DEPLOY_PORT_FE ?? '';
+  }
+});
+
+// ─────────── dockerPublishedPorts ───────────
+
+test('dockerPublishedPorts: returns a Set of numeric ports', () => {
+  const ports = dockerPublishedPorts();
+  assert.ok(ports instanceof Set);
+  // Can't assert specific contents (depends on what's running); just verify
+  // shape + that every entry is a valid port number.
+  for (const p of ports) {
+    assert.equal(typeof p, 'number');
+    assert.ok(p > 0 && p < 65536);
   }
 });
 
