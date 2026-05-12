@@ -22,7 +22,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const express = require('express');
 const mysql = require('mysql2/promise');
-const { ROOT, currentRunRef } = require('./_context');
+const { ROOT, currentRunRef, gitOut } = require('./_context');
 const db = require('../../lib/db');
 
 const router = express.Router();
@@ -73,12 +73,21 @@ router.get('/init-preview', async (_req, res) => {
     .filter(([k]) => !k.startsWith('_'))
     .reduce((a, [, v]) => a + v, 0);
 
+  // origin/main 대비 ahead commit — Init project가 git reset --hard origin/main으로
+  // 폐기할 commit 목록 미리보기. fetch는 best-effort (네트워크 없으면 skip).
+  gitOut(['fetch', 'origin', 'main']);
+  const aheadOut = gitOut(['log', '--oneline', 'origin/main..HEAD']);
+  const aheadCommits = aheadOut.code === 0
+    ? aheadOut.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+    : [];
+
   res.json({
     be_src: beSrc,
     fe_src: feSrc,
     db: dbCounts,
     db_total: dbTotal,
-    can_init: beSrc.count > 0 || feSrc.count > 0 || dbTotal > 0,
+    ahead_commits: aheadCommits,
+    can_init: beSrc.count > 0 || feSrc.count > 0 || dbTotal > 0 || aheadCommits.length > 0,
   });
 });
 
@@ -96,20 +105,36 @@ router.post('/init', async (_req, res) => {
     be_src_deleted: 0,
     fe_src_deleted: 0,
     db_truncated: [],
+    git_reset: false,
   };
 
   try {
-    // 1. src 파일 개수 사전 측정 (return value용)
+    // 1. git reset --hard origin/main — cycle이 만든 *commit history*까지 폐기.
+    //    "Init project = 다음 cycle 시작 직전 상태로" 의미상 ahead commit도 효력
+    //    없어야 함. tracked 파일은 origin/main 상태로 복원되고, untracked는 그대로.
+    //    src placeholder가 다시 깔리지만 step 3에서 통째 삭제되므로 결과는 깨끗.
+    //    실패는 fatal — git이 어긋난 상태에서 src 삭제·DB reset 진행하면 더 꼬임.
+    const reset = gitOut(['reset', '--hard', 'origin/main']);
+    if (reset.code !== 0) {
+      result.ok = false;
+      result.error = `git reset --hard origin/main 실패: ${(reset.stderr || reset.stdout || '').trim()}`;
+      return res.status(500).json(result);
+    }
+    result.git_reset = true;
+
+    // 2. src 파일 개수 사전 측정 (return value용)
     const bePre = listFilesRecursive(BE_SRC, 0);
     const fePre = listFilesRecursive(FE_SRC, 0);
     result.be_src_deleted = bePre.count;
     result.fe_src_deleted = fePre.count;
 
-    // 2. src 통째 삭제 (recursive + force)
+    // 3. src 통째 삭제 (recursive + force)
+    //    step 1에서 origin/main placeholder가 복원됐을 수 있지만 여기서 비움 →
+    //    bootstrap이 다음 cycle 시작 시 stack_templates에서 다시 깐다.
     if (fs.existsSync(BE_SRC)) fs.rmSync(BE_SRC, { recursive: true, force: true });
     if (fs.existsSync(FE_SRC)) fs.rmSync(FE_SRC, { recursive: true, force: true });
 
-    // 3. DB 전체 reset (D31=a, 2026-05-13) — db/reset.sql 실행 후 agent_schema.sql 재실행.
+    // 4. DB 전체 reset (D31=a, 2026-05-13) — db/reset.sql 실행 후 agent_schema.sql 재실행.
     //    lib/db.js의 pool은 multipleStatements:false라 여기선 별도 connection
     //    (multipleStatements:true) 만들어 sql 한 번에 실행. lib/reset_db.js와
     //    동일 패턴. spawn 안 하는 이유: HTTP 응답 안에서 결과 정리하기 쉬움.
@@ -131,6 +156,7 @@ router.post('/init', async (_req, res) => {
     }
 
     result.notice =
+      `git reset --hard origin/main (ahead commit 폐기) + ` +
       `BE/src ${result.be_src_deleted}개, FE/src ${result.fe_src_deleted}개 파일 삭제 + ` +
       `DB ${result.db_truncated.length}개 테이블 reset (DROP+CREATE). ` +
       '다음 Run pipeline 시작 시 bootstrap이 placeholder를 자동 복원합니다. ' +

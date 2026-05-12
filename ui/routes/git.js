@@ -12,18 +12,55 @@
  *   3. 그 위에 .env.backup의 *non-empty 값*을 overlay (있는 키만, 빈
  *      문자열 값은 placeholder를 덮지 않도록 거른다).
  *
- * 효과: 코드는 origin/main으로 reset되지만 secret/토글은 손실 없이 복구.
+ * DB 처리 (2026-05-13 추가):
+ *   rollback은 *cycle을 origin/main 직전 상태로 되돌리는* 동작이므로 그 cycle
+ *   이 생성한 DB row(log_*) 도 함께 정리되어야 일관성 유지. reset.sql(DROP)
+ *   + agent_schema.sql(CREATE 재실행) 흐름은 init/reset-db와 동일.
+ *
+ * 효과: 코드 + DB + .env 모두 origin/main 직전 상태로 복원. ahead commit은 모두 폐기.
  */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const mysql = require('mysql2/promise');
 const { readEnv, updateEnv } = require('../../lib/env_writer');
 const { ROOT, ENV_PATH, gitOut } = require('./_context');
 
 const BACKUP_PATH = path.join(ROOT, '.env.backup');
 const EXAMPLE_PATH = path.join(ROOT, '.env.example');
+const RESET_SQL = path.join(ROOT, 'db', 'reset.sql');
+const SCHEMA_SQL = path.join(ROOT, 'db', 'agent_schema.sql');
+
+/**
+ * DB 전체 reset (DROP log_* → agent_schema.sql 재실행). init/reset-db와 동일
+ * 흐름이지만 rollback 컨텍스트에선 단일 connection으로 inline 처리.
+ *
+ * @returns {Promise<{ok:boolean, error?:string}>}
+ */
+async function resetDatabase() {
+  try {
+    const resetSql = fs.readFileSync(RESET_SQL, 'utf8');
+    const schemaSql = fs.readFileSync(SCHEMA_SQL, 'utf8');
+    const conn = await mysql.createConnection({
+      host: process.env.DB_HOST || 'localhost',
+      port: Number(process.env.DB_PORT || 3306),
+      user: process.env.DB_USER || 'root',
+      password: process.env.DB_PASSWORD || '',
+      multipleStatements: true,
+    });
+    try {
+      await conn.query(resetSql);
+      await conn.query(schemaSql);
+    } finally {
+      await conn.end();
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
 
 const router = express.Router();
 
@@ -72,9 +109,9 @@ router.get('/rollback-preview', (_req, res) => {
   });
 });
 
-router.post('/rollback', (_req, res) => {
+router.post('/rollback', async (_req, res) => {
   try {
-    // 1. git reset --hard origin/main — 코드 reset
+    // 1. git reset --hard origin/main — 코드 + commit history reset
     const reset = gitOut(['reset', '--hard', 'origin/main']);
     if (reset.code !== 0) {
       return res.status(500).json({ ok: false, error: `git reset failed: ${reset.stderr}` });
@@ -92,17 +129,27 @@ router.post('/rollback', (_req, res) => {
       console.warn(`[ui] rollback: git clean warning: ${clean.stderr}`);
     }
 
-    // 3. .env 재구성: .env.example을 기반으로 .env.backup 값을 overlay.
+    // 3. DB reset — cycle이 만든 log_* row를 모두 폐기. rollback이 *cycle 자체*
+    //    를 폐기하는 동작이라 그 cycle의 DB 부산물도 함께 정리되어야 일관성 유지.
+    //    실패는 non-fatal로 처리 (코드/.env reset은 이미 완료) — 사용자에게 보고.
+    const dbReset = await resetDatabase();
+    if (!dbReset.ok) {
+      console.warn(`[ui] rollback: DB reset 실패 (코드 reset은 완료): ${dbReset.error}`);
+    }
+
+    // 4. .env 재구성: .env.example을 기반으로 .env.backup 값을 overlay.
     const result = restoreEnvFromExampleAndBackup();
 
     res.json({
       ok: true,
       reset_to: 'origin/main',
+      db_reset: dbReset.ok,
+      db_reset_error: dbReset.error,
       env_reset: result.envReset,
       backup_path: '.env.backup',
       restored_keys: result.restoredKeys,
       backup_missing: result.backupMissing,
-      notice: buildRollbackNotice(result),
+      notice: buildRollbackNotice(result, dbReset),
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -289,17 +336,30 @@ router.post('/merge', (_req, res) => {
   }
 });
 
-function buildRollbackNotice({ envReset, restoredKeys, backupMissing }) {
-  if (!envReset) return '.env.example을 찾지 못해 .env는 그대로 유지.';
-  if (backupMissing) {
-    return '.env가 .env.example로 reset됨. .env.backup이 없어 secret을 다시 입력해야 합니다.';
+function buildRollbackNotice({ envReset, restoredKeys, backupMissing }, dbReset) {
+  const parts = [];
+
+  // DB 부분
+  if (dbReset && dbReset.ok) {
+    parts.push('DB log_* 테이블 DROP+CREATE 완료.');
+  } else if (dbReset && !dbReset.ok) {
+    parts.push(`DB reset 실패 (${dbReset.error || 'unknown'}) — 수동으로 npm run reset-db 실행 권장.`);
   }
-  if (restoredKeys.length === 0) {
-    return '.env가 .env.example로 reset됨. .env.backup에 복구 가능한 값이 없어 placeholder 그대로.';
+
+  // .env 부분
+  if (!envReset) {
+    parts.push('.env.example을 찾지 못해 .env는 그대로 유지.');
+  } else if (backupMissing) {
+    parts.push('.env가 .env.example로 reset됨. .env.backup이 없어 secret을 다시 입력해야 합니다.');
+  } else if (restoredKeys.length === 0) {
+    parts.push('.env가 .env.example로 reset됨. .env.backup에 복구 가능한 값이 없어 placeholder 그대로.');
+  } else {
+    const sample = restoredKeys.slice(0, 5).join(', ');
+    const more = restoredKeys.length > 5 ? ` 외 ${restoredKeys.length - 5}개` : '';
+    parts.push(`.env가 .env.example 구조로 reset되고 .env.backup의 ${restoredKeys.length}개 값(${sample}${more})으로 복원됨.`);
   }
-  const sample = restoredKeys.slice(0, 5).join(', ');
-  const more = restoredKeys.length > 5 ? ` 외 ${restoredKeys.length - 5}개` : '';
-  return `.env가 .env.example 구조로 reset되고 .env.backup의 ${restoredKeys.length}개 값(${sample}${more})으로 복원됨.`;
+
+  return parts.join(' ');
 }
 
 module.exports = router;

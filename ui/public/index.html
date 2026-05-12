@@ -343,10 +343,10 @@
         <button id="runBtn">▶ Run pipeline</button>
         <button id="redeployBtn" class="secondary" title="현재 worktree 코드 그대로 docker compose up (PostTest 안 함)">🚀 Redeploy</button>
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
-        <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="BE/src + FE/src 삭제 + DB 전체 truncate — 새 cycle 직전 상태로 초기화">🧹 Init project</button>
+        <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="git reset --hard origin/main + BE/src + FE/src 삭제 + DB 전체 reset — ahead commit·코드·DB 모두 폐기, .env는 보존">🧹 Init project</button>
         <button id="restartUiBtn" class="secondary" title="UI 서버 process 재가동 — 도구 코드(ui/routes, agents, lib) 변경 시 사용">🔄 Restart UI</button>
         <button id="cleanupMergedBtn" class="secondary" title="머지된 PR의 잔재 워크트리·로컬 branch 일괄 정리 (main·claude/test·uncommitted 변경은 보호)">🧹 Cleanup merged</button>
-        <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
+        <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + DB reset + .env 재구성 — 코드·DB·.env 모두 origin/main 직전 상태로">⏮ Reset to origin/main</button>
         <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
              ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
         <button id="mergeBtn" class="secondary" disabled style="border-color: var(--accent); color: var(--accent);" title="merge 가능 여부 확인 중...">🔀 Merge to main</button>
@@ -1308,9 +1308,17 @@ $('#initBtn').addEventListener('click', async () => {
       .filter(([k]) => !k.startsWith('_'))
       .map(([t, n]) => `  • ${t}: ${n}건`)
       .join('\n');
+    const ahead = p.ahead_commits || [];
+    const aheadLines = ahead
+      .slice(0, 8)
+      .map((c) => `  • ${c}`)
+      .join('\n');
+    const aheadMore = ahead.length > 8 ? `  • ... 외 ${ahead.length - 8}개` : '';
     const msg =
       '⚠ 프로젝트 초기화 — 회복 불가\n\n' +
-      `▶ 삭제 대상 (코드):\n` +
+      `▶ 폐기 대상 (git ahead commit ${ahead.length}개 — git reset --hard origin/main):\n` +
+      (ahead.length > 0 ? aheadLines + (aheadMore ? '\n' + aheadMore : '') : '  (없음)') +
+      `\n\n▶ 삭제 대상 (코드):\n` +
       `  • BE/src/  (${p.be_src.count}개 파일)\n` +
       `  • FE/src/  (${p.fe_src.count}개 파일)\n` +
       `\n▶ 삭제 대상 (DB — 영구 손실):\n` +
@@ -1320,7 +1328,7 @@ $('#initBtn').addEventListener('click', async () => {
       '  • .env, 떠있는 docker 컨테이너 (다음 Redeploy까지 그대로)\n' +
       '\n▶ 다음 cycle 시작 시:\n' +
       '  • bootstrap이 src/ 폴더 + placeholder 자동 복원\n' +
-      '\n정말 진행할까요? (회원가입 데이터 등 영구 손실)';
+      '\n정말 진행할까요? (commit 이력·회원가입 데이터 등 영구 손실)';
     if (!confirm(msg)) return;
     $('#initBtn').textContent = '🧹 initializing…';
     const r = await fetchJSON('/api/init', { method: 'POST' });
@@ -1512,6 +1520,7 @@ $('#rollbackBtn').addEventListener('click', async () => {
       `\n\n작업 트리에서 정리될 파일 ${dirty.length}개:\n` +
       (dirty.slice(0, 8).map((f) => '  • ' + f).join('\n') || '  (없음)') +
       (dirty.length > 8 ? `\n  ... 외 ${dirty.length - 8}개` : '') +
+      '\n\n▶ DB도 함께 reset (DROP log_* → agent_schema.sql 재실행) — cycle이 만든 task 이력 모두 사라짐.' +
       envMsg +
       '\n\nReset 완료 후 자동으로 Redeploy까지 진행해 컨테이너도 origin/main 코드로 재빌드합니다.' +
       '\n\n정말 진행할까요?';
