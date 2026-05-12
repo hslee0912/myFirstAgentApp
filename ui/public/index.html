@@ -345,6 +345,7 @@
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
         <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="BE/src + FE/src 삭제 + DB 전체 truncate — 새 cycle 직전 상태로 초기화">🧹 Init project</button>
         <button id="restartUiBtn" class="secondary" title="UI 서버 process 재가동 — 도구 코드(ui/routes, agents, lib) 변경 시 사용">🔄 Restart UI</button>
+        <button id="cleanupMergedBtn" class="secondary" title="머지된 PR의 잔재 워크트리·로컬 branch 일괄 정리 (main·claude/test·uncommitted 변경은 보호)">🧹 Cleanup merged</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
         <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
              ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
@@ -1345,6 +1346,79 @@ $('#initBtn').addEventListener('click', async () => {
   } finally {
     $('#initBtn').disabled = false;
     $('#initBtn').textContent = '🧹 Init project';
+  }
+});
+
+/**
+ * Cleanup merged worktrees: GitHub PR이 머지된 후 로컬에 남은 워크트리·branch
+ * 일괄 정리. preview로 정리 대상 미리 보고 사용자 확인 후 실행.
+ *
+ * 안전장치 (백엔드 cleanup.js):
+ *   - main / claude/test / detached / locked / uncommitted 변경 있는 워크트리는 skip
+ *   - --force 안 씀 (IDE가 폴더 lock이면 git이 거부 → failed[]에 보고)
+ *   - branch -d 로 safe 삭제 (git이 머지 안 된 branch 추가 검증)
+ */
+$('#cleanupMergedBtn').addEventListener('click', async () => {
+  const btn = $('#cleanupMergedBtn');
+  btn.disabled = true;
+  btn.textContent = '🧹 checking…';
+  try {
+    // 1) preview — 정리 대상 미리보기
+    const prev = await fetchJSON('/api/cleanup-preview');
+    if (!prev || !Array.isArray(prev.eligible)) {
+      alert('cleanup-preview 응답 형식이 올바르지 않습니다.');
+      return;
+    }
+    if (prev.eligible.length === 0) {
+      const skippedSummary = (prev.skipped || [])
+        .map((s) => `  • ${s.branch}: ${s.reason}`)
+        .join('\n');
+      alert(
+        '정리할 워크트리가 없습니다.\n\n' +
+        '(모든 워크트리가 보호 대상 또는 아직 미머지 상태)\n\n' +
+        (skippedSummary ? `현재 워크트리:\n${skippedSummary}` : '')
+      );
+      return;
+    }
+
+    // 2) 사용자 확인 — 정리 대상 목록 표시
+    const eligibleList = prev.eligible
+      .map((e) => `  • ${e.branch}  (${e.reason})`)
+      .join('\n');
+    const skippedList = (prev.skipped || [])
+      .filter((s) => s.reason !== '메인 워크트리 (보호)' && s.reason !== '보호 대상 branch')
+      .map((s) => `  • ${s.branch}: ${s.reason}`)
+      .join('\n');
+    const confirmMsg =
+      `다음 워크트리·branch를 정리합니다 (총 ${prev.eligible.length}개):\n\n` +
+      eligibleList + '\n\n' +
+      (skippedList ? `skip되는 항목:\n${skippedList}\n\n` : '') +
+      'IDE/VS Code가 해당 폴더를 열고 있으면 git이 거부할 수 있습니다.\n계속할까요?';
+    if (!confirm(confirmMsg)) return;
+
+    // 3) 실행
+    btn.textContent = '🧹 cleaning…';
+    const r = await fetchJSON('/api/cleanup-merged', { method: 'POST' });
+    if (!r || !r.ok) {
+      alert('cleanup 실패: ' + (r && (r.error || r._text) || 'unknown'));
+      return;
+    }
+    const removedList = (r.removed || [])
+      .map((x) => `  • ${x.branch}${x.partial ? ' (워크트리만 — branch는 보존)' : ''}`)
+      .join('\n');
+    const failedList = (r.failed || [])
+      .map((f) => `  • ${f.branch} [${f.step}]: ${f.error.split('\n')[0]}`)
+      .join('\n');
+    alert(
+      `정리 완료 — ${r.summary}\n\n` +
+      (removedList ? `삭제됨:\n${removedList}\n\n` : '') +
+      (failedList ? `실패:\n${failedList}\n\n해당 폴더를 IDE에서 닫고 다시 시도하면 풀릴 수 있습니다.` : '')
+    );
+  } catch (e) {
+    alert('Cleanup 호출 실패: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🧹 Cleanup merged';
   }
 });
 
