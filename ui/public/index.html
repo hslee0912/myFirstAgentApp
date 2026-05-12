@@ -693,21 +693,43 @@ function classifyRunError(run) {
         recommendation: `BE 컨테이너가 정상 응답하는지 확인 (baseUrl: ${oj.baseUrl || '?'}). curl로 직접 시도 가능. 컨테이너 healthcheck 또는 BE 시작 실패 의심.`,
       };
     }
-    // 케이스 2: endpoint assertion 실패
+    // 케이스 2: per-endpoint assertion 실패
+    // PostTest output 실제 필드: ep.endpoint (path), ep.method, ep.errors[],
+    //   ep.trace.{url,method,status,endpoint,request_body,response_body}.
+    // 사용자가 drill-down 없이도 "어느 endpoint가 / 어떤 status 받아서 / 왜 실패"를
+    // 한 줄로 볼 수 있게 path + BE 응답 핵심 메시지를 detail에 합쳐 노출.
     const failedEps = results.filter((r) => !r.pass);
     if (failedEps.length > 0) {
       const first = failedEps[0] || {};
-      const firstErr = (Array.isArray(first.errors) && first.errors[0])
-        || first.reason
-        || first.error
-        || 'schema mismatch';
-      const epName = first.name || first.path || `${first.method || ''} ${first.path || ''}`.trim() || 'endpoint';
+      const trace = first.trace || {};
+      const errors = Array.isArray(first.errors) ? first.errors : [];
+      const firstErr = errors[0] || first.reason || first.error || 'schema mismatch';
+
+      // endpoint 식별자: method + path 조합. PostTest는 ep.endpoint를 path로 emit.
+      const path = first.endpoint || trace.endpoint || trace.url || first.path || '';
+      const method = first.method || trace.method || '';
+      const epLabel = `${method} ${path}`.trim() || 'endpoint';
+
+      // BE 실제 응답의 error/message 필드를 핵심 요약으로 추출
+      const respBody = trace.response_body;
+      const respErr = (respBody && typeof respBody === 'object')
+        ? String(respBody.error || respBody.message || '').trim().slice(0, 120)
+        : '';
+
+      let detail = `[${epLabel}] ${firstErr}`;
+      if (respErr && !firstErr.includes(respErr)) {
+        detail += ` (BE 응답: "${respErr}")`;
+      }
+      if (failedEps.length > 1) {
+        detail += ` 외 ${failedEps.length - 1}개 endpoint 실패`;
+      }
+
       return {
         severity: 'error',
         category: 'POSTTEST_ASSERTION_FAIL',
         label: `🧪 PostTest 실패 (${oj.passed ?? 0}/${oj.total ?? failedEps.length} endpoints)`,
-        detail: `[${epName}] ${firstErr}`.slice(0, 300),
-        recommendation: 'output_json.results를 펼쳐 각 endpoint별 trace/errors 확인. 흔한 원인: BE 응답 형식이 api_contract와 불일치 / status 코드 mismatch / 필드명·타입 차이.',
+        detail: detail.slice(0, 400),
+        recommendation: '상세 보기를 펼쳐 각 endpoint의 trace(status, response_body)와 errors 확인. 흔한 원인: BE 응답 status가 api_contract에 선언 안 됨 / 응답 schema 불일치 / 필드명·타입 차이 / 인증 누락(401).',
       };
     }
     return {
