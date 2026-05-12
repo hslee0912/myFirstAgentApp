@@ -1,8 +1,13 @@
 -- =============================================================
--- myfirstagentapp_db : single DB for business + agent logs
+-- myfirstagentapp_db : Agent 도구 전용 schema (log_* tables only)
 -- =============================================================
--- Run: mysql -u root -p < db/schema.sql
+-- Run: mysql -u root -p < db/agent_schema.sql
 -- (or use lib/init_db.js)
+--
+-- ⚠️ 이 파일은 *Agent 도구 테이블 전용*이다.
+--    비즈니스 schema (`app_users`, 도메인 테이블 등)는 여기 추가 금지.
+--    LLM이 비즈니스 SQL을 emit해도 *현재 시스템은 자동 적용하지 않는다*.
+--    비즈니스 schema 적용 메커니즘은 향후 별도 작업 — rules/be.md §4 참조.
 -- =============================================================
 
 CREATE DATABASE IF NOT EXISTS myfirstagentapp_db
@@ -10,17 +15,6 @@ CREATE DATABASE IF NOT EXISTS myfirstagentapp_db
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE myfirstagentapp_db;
-
--- ----------------------------
--- Business table
--- ----------------------------
-CREATE TABLE IF NOT EXISTS app_users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
 
 -- ----------------------------
 -- Agent execution log (per-agent run rows)

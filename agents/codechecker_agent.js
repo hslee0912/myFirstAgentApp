@@ -24,7 +24,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 function readSchemaIfAny() {
   try {
-    return fs.readFileSync(path.join(ROOT, 'db', 'schema.sql'), 'utf8');
+    return fs.readFileSync(path.join(ROOT, 'db', 'agent_schema.sql'), 'utf8');
   } catch (_) {
     return null;
   }
@@ -34,18 +34,17 @@ const SCHEMA_SQL = readSchemaIfAny();
 const SCHEMA_SECTION = SCHEMA_SQL
   ? `
 
-## DB schema (실제 적용된 \`db/schema.sql\` — 반드시 이 테이블/컬럼/타입을 정확히 따를 것)
+## DB schema (\`db/agent_schema.sql\` — Agent 도구 전용)
 
 \`\`\`sql
 ${SCHEMA_SQL}
 \`\`\`
 
 규칙 (schema):
-- BE 비즈니스 코드는 **\`app_users\`** 테이블만 사용. \`users\` 같은 다른 이름으로 SELECT/INSERT/UPDATE 절대 금지.
-- \`log_agent_runs\`, \`log_agent_decisions\`, \`log_task_state\`는 agent system 전용 — 비즈니스 코드에서 절대 접근하지 말 것.
-- \`api_contract\`의 \`example\` 값은 schema의 컬럼 타입과 정확히 일치. \`id INT AUTO_INCREMENT\`이면 example도 정수형 (e.g. 1, 42). UUID/string으로 emit 금지.
-- 컬럼은 schema에 정의된 것만 사용. 새 컬럼 추가 가이드 금지.
-- schema 변경 가이드(ALTER TABLE 등) 금지 — schema는 사용자 영역.`
+- 위 \`log_agent_runs\`, \`log_agent_decisions\`, \`log_task_state\`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.
+- **비즈니스 DB 테이블은 현재 시스템에 없다.** DB 영속화가 필요한 요구사항이면 spec에 그 한계를 명시(\`notes\`) — 가짜 테이블 가정 금지, \`CREATE TABLE\` SQL emit 금지.
+- DB가 필요 없는 요구사항(in-memory 처리, 파일 기반 등)이면 그대로 진행.
+- schema 변경 가이드(ALTER/CREATE/DROP) 금지 — schema는 사용자 영역.`
   : '';
 
 const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.

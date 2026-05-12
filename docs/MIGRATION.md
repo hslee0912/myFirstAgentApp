@@ -96,7 +96,7 @@ sudo sed -i 's/^bind-address.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/
 sudo systemctl restart mysql
 
 # Schema 시드
-mysql -uroot -p<password> < db/schema.sql
+mysql -uroot -p<password> < db/agent_schema.sql
 ```
 
 ### Step 5 — Claude Code 메모리/세션 복원
@@ -145,13 +145,15 @@ cd ~/myFirstAgentApp/.claude/worktrees/test
 docker compose --project-directory . -f lib/stack_templates/docker-compose.yml up --build -d --wait
 docker compose --project-directory . -f lib/stack_templates/docker-compose.yml ps
 
-# 3. 회원가입 흐름 (BE → host MySQL via host.docker.internal)
-curl -X POST http://localhost:3001/api/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"ec2-smoke@test.com","password":"password123"}'
+# 3. BE health check (BE → host MySQL via host.docker.internal)
+#    회원가입 smoke test는 D31(2026-05-13) app_users 폐기로 제거. 다음 cycle
+#    에서 spec이 요구하면 BE Agent가 새 핸들러를 in-memory로 만든다.
+curl -s http://localhost:3001/health
+#    → {"success":true,"data":{"status":"ok"}}
 
-# 4. host MySQL에 데이터 들어갔는지
-mysql -uroot -p<password> myfirstagentapp_db -e "SELECT * FROM app_users;"
+# 4. host MySQL에 Agent 도구 테이블이 시드됐는지
+mysql -uroot -p<password> myfirstagentapp_db -e "SHOW TABLES;"
+#    → log_agent_runs, log_agent_decisions, log_task_state
 
 # 5. (Claude Code 세션 복원 검증)
 claude /resume   # 옛 세션 목록 보임 → 선택

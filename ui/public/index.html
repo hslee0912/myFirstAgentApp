@@ -1081,12 +1081,12 @@ $('#runBtn').addEventListener('click', async () => {
 });
 
 $('#resetDbBtn').addEventListener('click', async () => {
-  if (!confirm('app_users + log_* 모두 truncate합니다.\n확인 후 페이지가 자동 새로고침됩니다.\n계속할까요?')) return;
+  if (!confirm('log_* 테이블을 DROP + CREATE로 reset합니다.\n확인 후 페이지가 자동 새로고침됩니다.\n계속할까요?')) return;
   $('#resetDbBtn').disabled = true;
   $('#resetDbBtn').textContent = '⟲ resetting…';
   const r = await fetchJSON('/api/reset-db', { method: 'POST' });
   if (r.ok) {
-    alert('reset-db 완료 — app_users + log_* 모두 truncate.\n확인을 누르면 페이지 자동 새로고침.');
+    alert('reset-db 완료 — log_* 테이블 DROP + CREATE.\n확인을 누르면 페이지 자동 새로고침.');
     // 강제 reload — task table, detail panel, env, runStatus 모두 초기화
     location.reload();
   } else {
@@ -1154,7 +1154,7 @@ $('#initBtn').addEventListener('click', async () => {
         '초기화 완료\n\n' +
         `• BE/src 삭제: ${r.be_src_deleted}개 파일\n` +
         `• FE/src 삭제: ${r.fe_src_deleted}개 파일\n` +
-        `• DB truncate: ${(r.db_truncated||[]).join(', ')}\n\n` +
+        `• DB reset (DROP+CREATE): ${(r.db_truncated||[]).join(', ')}\n\n` +
         (r.notice || '') +
         '\n\n확인을 누르면 페이지가 자동 새로고침됩니다.'
       );
