@@ -344,6 +344,7 @@
         <button id="redeployBtn" class="secondary" title="현재 worktree 코드 그대로 docker compose up (PostTest 안 함)">🚀 Redeploy</button>
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
         <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="BE/src + FE/src 삭제 + DB 전체 truncate — 새 cycle 직전 상태로 초기화">🧹 Init project</button>
+        <button id="restartUiBtn" class="secondary" title="UI 서버 process 재가동 — 도구 코드(ui/routes, agents, lib) 변경 시 사용">🔄 Restart UI</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
         <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
              ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
@@ -1080,13 +1081,43 @@ $('#runBtn').addEventListener('click', async () => {
 });
 
 $('#resetDbBtn').addEventListener('click', async () => {
-  if (!confirm('app_users + log_* 모두 truncate합니다. 계속할까요?')) return;
+  if (!confirm('app_users + log_* 모두 truncate합니다.\n확인 후 페이지가 자동 새로고침됩니다.\n계속할까요?')) return;
   $('#resetDbBtn').disabled = true;
+  $('#resetDbBtn').textContent = '⟲ resetting…';
   const r = await fetchJSON('/api/reset-db', { method: 'POST' });
-  $('#resetDbBtn').disabled = false;
-  $('#resetDbBtn').textContent = r.ok ? '⟲ reset-db (done)' : '⟲ reset-db (fail)';
-  setTimeout(() => { $('#resetDbBtn').textContent = '⟲ reset-db'; }, 1500);
-  if (r.ok) loadTasks();
+  if (r.ok) {
+    alert('reset-db 완료 — app_users + log_* 모두 truncate.\n확인을 누르면 페이지 자동 새로고침.');
+    // 강제 reload — task table, detail panel, env, runStatus 모두 초기화
+    location.reload();
+  } else {
+    $('#resetDbBtn').disabled = false;
+    $('#resetDbBtn').textContent = '⟲ reset-db (fail)';
+    setTimeout(() => { $('#resetDbBtn').textContent = '⟲ reset-db'; }, 1500);
+    alert('reset-db 실패: ' + (r.error || r._text || 'unknown'));
+  }
+});
+
+$('#restartUiBtn').addEventListener('click', async () => {
+  if (!confirm('UI 서버를 재가동합니다 (도구 코드 변경 시 사용).\n\n• 현재 process 종료 → 새 process가 같은 port에 listen\n• 진행 중인 다른 작업(orchestrator 등) 영향 없음\n• 2초 후 페이지 자동 새로고침\n\n계속할까요?')) return;
+  $('#restartUiBtn').disabled = true;
+  $('#restartUiBtn').textContent = '🔄 restarting…';
+  try {
+    const r = await fetchJSON('/api/restart-ui', { method: 'POST' });
+    if (r.ok) {
+      // 새 process가 같은 port에 listen까지 잡힐 시간(800ms self-exit + 부팅) 대기.
+      // 2초면 보통 충분. 그 후 location.reload()로 새 page를 새 server에서 받음.
+      setTimeout(() => location.reload(), 2000);
+    } else {
+      alert('재가동 호출 실패: ' + (r.error || r._text || 'unknown'));
+      $('#restartUiBtn').disabled = false;
+      $('#restartUiBtn').textContent = '🔄 Restart UI';
+    }
+  } catch (e) {
+    // fetch 실패는 *서버가 정상적으로 자기 종료*했다는 신호일 수도 있음.
+    // 그래도 2초 후 reload로 새 서버 도달 시도.
+    console.warn('restart-ui fetch error (may be normal):', e.message);
+    setTimeout(() => location.reload(), 2000);
+  }
 });
 
 $('#initBtn').addEventListener('click', async () => {
@@ -1124,14 +1155,12 @@ $('#initBtn').addEventListener('click', async () => {
         `• BE/src 삭제: ${r.be_src_deleted}개 파일\n` +
         `• FE/src 삭제: ${r.fe_src_deleted}개 파일\n` +
         `• DB truncate: ${(r.db_truncated||[]).join(', ')}\n\n` +
-        (r.notice || '')
+        (r.notice || '') +
+        '\n\n확인을 누르면 페이지가 자동 새로고침됩니다.'
       );
-      // 모든 view 갱신 — tasks/env/detail 비워짐
-      lastDetailHash = ''; lastDetailTerminal = false;
-      selectedTaskId = null;
-      $('#detailTaskId').textContent = '(선택 안 됨)';
-      $('#detail').innerHTML = '';
-      await Promise.all([loadEnv(), loadTasks()]);
+      // 강제 페이지 reload — task table, detail panel, env, runStatus 모두
+      // 깨끗한 초기 상태로. JS state cache(lastDetailHash 등)도 함께 사라짐.
+      location.reload();
     } else if (r._status === 409) {
       alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
     } else {

@@ -19,6 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const express = require('express');
 const mysql = require('mysql2/promise');
 const { ROOT, currentRunRef } = require('./_context');
@@ -137,6 +138,47 @@ router.post('/init', async (_req, res) => {
     result.error = e.message;
     res.status(500).json(result);
   }
+});
+
+/**
+ * POST /api/restart-ui — 현재 UI 서버 process를 재가동.
+ *
+ * 동작 흐름:
+ *   1. 새 node ui/server.js process를 detached로 spawn (이 process가 부팅 시점에
+ *      PID file로 옛 PID 확인 → SIGTERM → 자기 listen).
+ *   2. res.json 응답 보냄.
+ *   3. 800ms 후 자기 자신 process.exit(0) — 새 process가 SIGTERM 보내기 전에
+ *      자발적으로 죽어 같은 port를 빠르게 비움.
+ *
+ * 사용 시점: 도구 코드(ui/routes/*.js, ui/server.js, agents/*) 변경 후 즉시
+ * 적용하고 싶을 때. Node require 캐시 때문에 떠있는 process는 옛 코드 실행.
+ *
+ * Frontend는 응답 받자마자 사용자에게 "잠시 후 새로고침" alert + 2초 후
+ * location.reload(). 그 사이에 새 process가 같은 port에 listen 완료.
+ */
+router.post('/restart-ui', (_req, res) => {
+  const child = spawn('node', [path.join(ROOT, 'ui', 'server.js')], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: ROOT,
+    env: { ...process.env },
+    windowsHide: true,
+  });
+  child.unref();
+
+  res.json({
+    ok: true,
+    new_pid: child.pid,
+    notice: '800ms 후 현재 process 종료. 새 process가 같은 port에 listen.',
+  });
+
+  // 응답 flush를 위해 약간 대기 후 종료. 새 process는 부팅 시 PID file에서
+  // 우리 PID를 발견하고 SIGTERM 보내는데, 우리가 그 전에 자발적으로 죽으면
+  // 더 깔끔하게 port가 비워진다.
+  setTimeout(() => {
+    try { /* PID file 정리는 process.on('exit') 핸들러가 처리 */ }
+    finally { process.exit(0); }
+  }, 800);
 });
 
 module.exports = router;
