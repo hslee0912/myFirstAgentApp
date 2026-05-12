@@ -22,7 +22,7 @@ USE myfirstagentapp_db;
 CREATE TABLE IF NOT EXISTS log_agent_runs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id VARCHAR(64) NOT NULL,
-    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint','Deploy','PostTest') NOT NULL,
+    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint','Migration','Deploy','PostTest') NOT NULL,
     target ENUM('FE','BE') NULL,
     input_json JSON,
     output_json JSON,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS log_task_state (
     target ENUM('FE','BE') NOT NULL,
     status ENUM('PENDING','SUCCESS','FAILED') NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
-    failed_stage ENUM('STAGE1','STAGE2','STAGE3') NULL,
+    failed_stage ENUM('STAGE1','STAGE2','STAGE3','MIGRATION') NULL,
     fix_instructions TEXT NULL,
     stage_logs JSON NULL,
     result_text TEXT NULL,
@@ -64,4 +64,19 @@ CREATE TABLE IF NOT EXISTS log_task_state (
     FOREIGN KEY (decision_id) REFERENCES log_agent_decisions(id),
     UNIQUE KEY uk_decision_target (decision_id, target),
     INDEX idx_decision (decision_id)
+);
+
+-- ----------------------------
+-- DB Migration 적용 이력 (D33, 2026-05-14) — Agent가 emit한 BE/db/migrations/*.sql 적용 추적
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS log_db_migrations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL UNIQUE,        -- 예: '20260514120000_add_users.sql'
+    task_id VARCHAR(64) NOT NULL,                 -- 어느 task가 만들었는지
+    checksum CHAR(64) NOT NULL,                   -- SHA-256(file content) — 변경 감지
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('SUCCESS','FAILED') NOT NULL,
+    error_message TEXT NULL,
+    INDEX idx_task (task_id),
+    INDEX idx_applied_at (applied_at)
 );

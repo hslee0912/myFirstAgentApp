@@ -41,10 +41,11 @@ ${SCHEMA_SQL}
 \`\`\`
 
 규칙 (schema):
-- 위 \`log_agent_runs\`, \`log_agent_decisions\`, \`log_task_state\`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.
-- **비즈니스 DB 테이블은 현재 시스템에 없다.** DB 영속화가 필요한 요구사항이면 spec에 그 한계를 명시(\`notes\`) — 가짜 테이블 가정 금지, \`CREATE TABLE\` SQL emit 금지.
-- DB가 필요 없는 요구사항(in-memory 처리, 파일 기반 등)이면 그대로 진행.
-- schema 변경 가이드(ALTER/CREATE/DROP) 금지 — schema는 사용자 영역.`
+- 위 \`log_agent_runs\`, \`log_agent_decisions\`, \`log_task_state\`, \`log_db_migrations\`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.
+- **비즈니스 DB 영속화는 BE Agent가 \`BE/db/migrations/<timestamp>_<name>.sql\` 파일을 emit해 처리** (D33, 2026-05-14). orchestrator Phase 2.5가 자동 적용.
+- be_spec에 비즈니스 schema가 필요하면 *어떤 테이블·컬럼이 필요한지*를 \`notes\`에 명시 (예: "users(id INT PK, email VARCHAR UNIQUE, password_hash VARCHAR)"). BE Agent가 그 spec을 바탕으로 migration 파일을 작성한다.
+- api_contract의 \`example\` 값은 schema 컬럼 타입과 정확히 일치 (\`id INT AUTO_INCREMENT\`면 example도 정수형).
+- CodeChecker 자신은 SQL emit 안 함 — be_spec.notes에 schema 의도만 적고, 실제 SQL은 BE Agent가 작성.`
   : '';
 
 const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.

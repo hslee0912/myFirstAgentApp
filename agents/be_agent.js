@@ -75,10 +75,16 @@ function readSchemaSection() {
       '\n\n## DB schema (db/agent_schema.sql — Agent 도구 전용)\n\n' +
       '```sql\n' + sql + '\n```\n\n' +
       '규칙:\n' +
-      '- 위 `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.\n' +
-      '- **비즈니스 DB 테이블은 현재 시스템에 없다.** spec이 DB 영속화를 요구해도 가짜 테이블 가정 금지, `CREATE TABLE` SQL emit 금지, `BE/db/*.sql` 파일 생성 금지.\n' +
-      '- DB가 필요한 요구사항이면 in-memory(Map/배열) 또는 stateless 응답으로 우회. spec이 영속화를 명시 요구하면 notes에 "현재 시스템은 비즈니스 DB 미지원" 사유로 부분 구현 명시.\n' +
-      '- schema 변경(ALTER/CREATE/DROP) 가이드 금지 — schema는 사용자 영역.'
+      '- 위 `log_agent_runs`, `log_agent_decisions`, `log_task_state`, `log_db_migrations`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.\n' +
+      '\n## 비즈니스 DB schema — Migration emit 흐름 (D33, 2026-05-14)\n\n' +
+      '비즈니스 영속화가 필요하면 **`BE/db/migrations/<YYYYMMDDHHmmss>_<name>.sql`** 파일을 emit하라. orchestrator(Phase 2.5)가 자동 적용한다.\n\n' +
+      '필수 규칙:\n' +
+      '- 파일명: `<UTC timestamp>_<snake_case_name>.sql` 예: `20260514120000_create_users.sql`. 알파벳 순서 = 시간순 적용 보장.\n' +
+      '- **idempotent하게 작성**: `CREATE TABLE IF NOT EXISTS ...`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` (MySQL 8 지원). 이미 적용된 migration은 다시 실행되지 않지만 idempotent로 작성하면 사람이 직접 reset 후 재실행할 때도 안전.\n' +
+      '- **이미 적용된 migration 파일은 수정 금지** — checksum 변경이 감지되면 시스템이 즉시 FAIL. 수정이 필요하면 *새 timestamp의 새 파일*로 ALTER/추가 migration 작성.\n' +
+      '- 한 cycle에 1~3개 migration만 emit. 한 migration에 여러 관련 변경(테이블 + 인덱스 + FK)을 묶을 수 있음.\n' +
+      '- migration이 만든 테이블만 BE 코드(server.js / routes / services)에서 SELECT/INSERT/UPDATE/DELETE 가능.\n' +
+      '- USE 문 불필요 — 시스템이 `database` 옵션으로 connection 함.\n'
     );
   } catch (_) {
     return '';

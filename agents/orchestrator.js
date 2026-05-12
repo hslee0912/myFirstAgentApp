@@ -38,6 +38,7 @@ const codeChecker = require('./codechecker_agent');
 const beAgent = require('./be_agent');
 const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
+const migrationAgent = require('./migration_agent');
 const deployAgent = require('./deploy_agent');
 const testAgent = require('./test_agent');
 const { resolveModel } = require('../lib/llm');
@@ -324,11 +325,30 @@ async function main() {
         }
         await beAgent.run(params);
 
-        if (validationMode === 'off') {
+        // Phase 2.5 (D33, 2026-05-14): Migration Agent — BE Agent가 emit한
+        //   BE/db/migrations/*.sql을 MySQL에 적용. Lint 직전에 실행해야 stage 3
+        //   (jest)가 정상 schema 위에서 runtime 검증 가능.
+        //   FAIL 시 Lint 건너뛰고 task_state를 FAILED로 표시 (retry 흐름 진입).
+        console.log(`[phase 2.5] Migration Agent`);
+        const migResult = await migrationAgent.run({ task_id });
+        if (migResult.status === 'FAILED') {
+          console.log(`[phase 2.5] Migration FAILED — ${migResult.error}`);
+          const newRetryCount = (beState.retry_count || 0) + 1;
+          await logger.updateTaskState(beState.id, {
+            status: 'FAILED',
+            failed_stage: 'MIGRATION',
+            retry_count: newRetryCount,
+            fix_instructions: migResult.fix_instructions || migResult.error,
+            stage_logs: { migration: migResult },
+            result_text: `Migration FAILED: ${migResult.failed || migResult.error}`,
+          });
+          // Lint 건너뛰고 verdict 단계로 — Phase 5가 retry 결정
+        } else if (validationMode === 'off') {
           console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for BE, auto-SUCCESS (state_id=${beState.id})`);
           await logger.updateTaskState(beState.id, {
             status: 'SUCCESS', failed_stage: null, fix_instructions: null,
-            stage_logs: { skipped: 'VALIDATION_MODE=off' }, result_text: null,
+            stage_logs: { skipped: 'VALIDATION_MODE=off', migration: migResult },
+            result_text: null,
           });
         } else {
           console.log(`[phase 4] Lint Agent target=BE (state_id=${beState.id})`);

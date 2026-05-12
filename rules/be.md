@@ -46,13 +46,14 @@ export default signupHandler;
 - **단일 DB 가정 (D29=A)**: BE 컨테이너는 호스트 MySQL(`host.docker.internal`)
   에 직접 연결한다. 환경 변수(`DB_HOST` 등)는 docker-compose.yml이 주입하므로
   *BE 코드는 host/port를 hardcode하면 안 된다*. 항상 `process.env.DB_*` 만.
-- **`db/agent_schema.sql`은 Agent 도구 전용 — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 금지** (D31=폐기, 2026-05-13).
-  시스템 프롬프트의 "DB schema" 섹션이 매 호출마다 `agent_schema.sql`을 주입하지만, 거기 정의된 `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 모두 agent system 전용이다. **비즈니스 DB 테이블은 현재 시스템에 없다.**
-- **비즈니스 DB 영속화 요구사항이 들어오면 in-memory 또는 stateless로 우회**.
-  spec이 `app_users` 같은 가짜 테이블을 가정해도 따르지 말고, in-memory Map/배열 또는 단순 응답으로 우회. 영속화가 *강하게* 요구되면 notes에 "현재 시스템은 비즈니스 DB schema 자동 적용을 미지원" 사유로 부분 구현 명시.
-- **`CREATE TABLE` SQL 또는 `BE/db/*.sql` 파일 emit 금지**. 시스템이 그 SQL을 실행하지 않으므로 런타임 `ER_NO_SUCH_TABLE`로 깨진다. schema 변경(ALTER/CREATE/DROP)도 금지 — schema는 사용자 영역.
-
-> **⚠️ D33 예고 (2026-05-14 결정, 미구현)**: 위 emit 금지 조항은 폐기 결정됨. B-2 메커니즘(BE Agent가 `BE/db/migrations/<ts>_<name>.sql` emit → orchestrator 자동 적용) 도입 commit과 함께 §4의 emit 금지·in-memory 우회 본문이 갈아엎어진다. **그 commit 전까지는 현재 정책 그대로** — 지금 emit하면 적용 안 되어 런타임 사고 발생. 자세한 방향은 [DECISIONS.md D33](../docs/DECISIONS.md#2026-05-14--d33-be-agent-migration-emit--자동-적용-b-2-도입-결정) 참조.
+- **`db/agent_schema.sql`은 Agent 도구 전용** (D31, 2026-05-13). 거기 정의된 `log_agent_runs`, `log_agent_decisions`, `log_task_state`, `log_db_migrations`는 모두 *agent system 전용* — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 금지.
+- **비즈니스 DB schema가 필요하면 `BE/db/migrations/<YYYYMMDDHHmmss>_<snake_case_name>.sql` 파일을 emit** (D33, 2026-05-14, B-2). orchestrator Phase 2.5가 그 파일을 *자동으로 MySQL에 적용*하고 `log_db_migrations`에 이력을 남긴다.
+  - 파일명: `<UTC timestamp>_<name>.sql`. 알파벳 순서 = 시간순 적용 보장.
+  - **idempotent하게 작성**: `CREATE TABLE IF NOT EXISTS ...`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` (MySQL 8 지원). 한 번 적용된 migration이 다시 실행되지는 않지만(checksum 체크), 사람이 reset 후 처음부터 재실행할 때도 안전.
+  - **이미 적용된 migration 파일은 *수정 금지*** — 시스템이 checksum 변경을 감지하면 즉시 FAIL + retry 흐름 진입. 변경이 필요하면 *새 timestamp의 추가 migration*을 만들 것.
+  - 한 cycle에 1~3개 migration만 emit. 관련된 변경(테이블 + 인덱스 + FK)은 한 파일에 묶을 수 있음.
+  - `USE myfirstagentapp_db;` 문 불필요 — orchestrator가 `database` 옵션으로 connection 함.
+- migration이 만든 비즈니스 테이블만 BE 코드(routes/services 등)에서 SELECT/INSERT/UPDATE/DELETE 가능. 회원가입 같은 영속 기능도 이 흐름으로 표현 (in-memory 우회 불필요).
 
 ## 5. 비밀번호 처리
 

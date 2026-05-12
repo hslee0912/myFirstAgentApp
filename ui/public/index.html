@@ -567,6 +567,7 @@ function areaClass(agent, target) {
   if (a === 'codechecker')  return 'codechecker';
   if (a === 'deploy')       return 'deploy';
   if (a === 'posttest')     return 'posttest';
+  if (a === 'migration')    return 'be';   // BE 영역 작업이라 같은 chip 색
   return 'orchestrator';
 }
 
@@ -599,6 +600,37 @@ function classifyRunError(run) {
   const err = String(oj.error || '');
   const stack = String(oj.stack || '');
   const agent = String(run.agent_name || '');
+
+  // ===== Migration (Phase 2.5, D33) 특수 처리 =====
+  // output_json 구조: { status, applied[], conflicts?, failed?, error?, fix_instructions? }
+  if (agent === 'Migration') {
+    if (Array.isArray(oj.conflicts) && oj.conflicts.length > 0) {
+      const first = oj.conflicts[0];
+      return {
+        severity: 'error',
+        category: 'MIGRATION_CHECKSUM_CONFLICT',
+        label: '🗄 Migration checksum 충돌 (이미 적용된 파일 수정됨)',
+        detail: `${first.filename} 외 ${oj.conflicts.length - 1}개. disk≠DB checksum.`,
+        recommendation: '적용된 migration은 *수정 금지*. 변경이 필요하면 *새 timestamp의 새 파일*로 ALTER/추가 migration 작성. 또는 Reset to origin/main 으로 DB·이력 모두 reset 후 재시도.',
+      };
+    }
+    if (oj.failed) {
+      return {
+        severity: 'error',
+        category: 'MIGRATION_APPLY_FAILED',
+        label: `🗄 Migration 적용 실패 (${oj.failed})`,
+        detail: (oj.error || 'SQL execution failed').slice(0, 300),
+        recommendation: '흔한 원인: SQL 문법 오류 / 기존 schema와 FK·UNIQUE 충돌 / IF NOT EXISTS 누락. fix_instructions에 따라 SQL 수정 또는 새 migration으로 보정 → BE Agent retry.',
+      };
+    }
+    return {
+      severity: 'error',
+      category: 'MIGRATION_FAILED',
+      label: '🗄 Migration 실패',
+      detail: (err || oj.error || '(no detail)').slice(0, 300),
+      recommendation: 'output_json 전체 확인. log_db_migrations 테이블에서 실패 row + error_message 조회 가능.',
+    };
+  }
 
   // ===== Deploy (Phase 8) 특수 처리 =====
   // output_json 구조: { failed_stage, error?, compose_output?, logs?: {be,fe}, exit_code, duration_ms }
@@ -817,13 +849,14 @@ function classifyDeployStage(failedStage) {
   }
 }
 
-/** Lint failed_stage → label. */
+/** Lint / Migration failed_stage → label. */
 function classifyLintStage(failedStage) {
   switch (failedStage) {
-    case 'STAGE1': return { label: '🔧 Lint Stage 1 (eslint) 실패', sev: 'info', retryable: true };
-    case 'STAGE2': return { label: '🔧 Lint Stage 2 (build/syntax) 실패', sev: 'info', retryable: true };
-    case 'STAGE3': return { label: '🧪 Lint Stage 3 (tests) 실패 — retry 없음', sev: 'error', retryable: false };
-    default:       return { label: failedStage || 'Lint 실패', sev: 'warn', retryable: false };
+    case 'STAGE1':    return { label: '🔧 Lint Stage 1 (eslint) 실패', sev: 'info', retryable: true };
+    case 'STAGE2':    return { label: '🔧 Lint Stage 2 (build/syntax) 실패', sev: 'info', retryable: true };
+    case 'STAGE3':    return { label: '🧪 Lint Stage 3 (tests) 실패', sev: 'error', retryable: true };
+    case 'MIGRATION': return { label: '🗄 Migration (BE/db/migrations/*.sql) 실패', sev: 'error', retryable: true };
+    default:          return { label: failedStage || 'Lint 실패', sev: 'warn', retryable: false };
   }
 }
 

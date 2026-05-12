@@ -28,10 +28,12 @@ const db = require('../../lib/db');
 const router = express.Router();
 
 const BE_SRC = path.join(ROOT, 'BE', 'src');
+const BE_MIGRATIONS = path.join(ROOT, 'BE', 'db', 'migrations');
 const FE_SRC = path.join(ROOT, 'FE', 'src');
 const RESET_SQL = path.join(ROOT, 'db', 'reset.sql');
 
-const DB_TABLES = ['log_agent_runs', 'log_agent_decisions', 'log_task_state'];
+// D33(2026-05-14)으로 log_db_migrations 추가. agent_schema.sql 재실행으로 모두 시드됨.
+const DB_TABLES = ['log_agent_runs', 'log_agent_decisions', 'log_task_state', 'log_db_migrations'];
 
 /** 디렉터리 안의 모든 파일을 재귀적으로 열거 (count + sample 최대 N개). */
 function listFilesRecursive(dir, sampleLimit = 10) {
@@ -127,10 +129,12 @@ router.post('/init', async (_req, res) => {
     result.be_src_deleted = bePre.count;
     result.fe_src_deleted = fePre.count;
 
-    // 3. src 통째 삭제 (recursive + force)
+    // 3. src 통째 삭제 (recursive + force) + BE/db/migrations 정리 (D33)
     //    step 1에서 origin/main placeholder가 복원됐을 수 있지만 여기서 비움 →
     //    bootstrap이 다음 cycle 시작 시 stack_templates에서 다시 깐다.
+    //    migrations는 *cycle별 산물*이라 Init 시 함께 정리 (다음 cycle의 Agent가 새로 emit).
     if (fs.existsSync(BE_SRC)) fs.rmSync(BE_SRC, { recursive: true, force: true });
+    if (fs.existsSync(BE_MIGRATIONS)) fs.rmSync(BE_MIGRATIONS, { recursive: true, force: true });
     if (fs.existsSync(FE_SRC)) fs.rmSync(FE_SRC, { recursive: true, force: true });
 
     // 4. DB 전체 reset (D32, 2026-05-14) — reset.sql(모든 테이블 동적 DROP) → db/*.sql 순회.
