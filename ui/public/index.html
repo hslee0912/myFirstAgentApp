@@ -877,7 +877,7 @@ function renderTimeline(runs) {
       if (chips) expand += chips;
       // Compact summary for Deploy / PostTest success
       if (r.agent_name === 'Deploy' && oj.ports) {
-        expand += `<div class="muted" style="font-size:11px; margin-top:4px;">ports: mysql=${oj.ports.mysql} be=${oj.ports.be} fe=${oj.ports.fe} · up in ${oj.duration_ms}ms</div>`;
+        expand += `<div class="muted" style="font-size:11px; margin-top:4px;">ports: be=${oj.ports.be} fe=${oj.ports.fe} · up in ${oj.duration_ms}ms</div>`;
       }
       if (r.agent_name === 'PostTest' && oj.total != null) {
         expand += `<div class="muted" style="font-size:11px; margin-top:4px;">${oj.passed}/${oj.total} endpoints · ${oj.duration_ms}ms · baseUrl=${esc(oj.baseUrl || '')}</div>`;
@@ -1102,8 +1102,7 @@ $('#redeployBtn').addEventListener('click', async () => {
       alert(
         `Redeploy 완료 (task_id=${r.task_id})\n\n` +
         `🌐 FE: http://${PUBLIC_HOST}:${p.fe}\n` +
-        `🔌 BE: http://${PUBLIC_HOST}:${p.be}\n` +
-        `🗄  DB: ${PUBLIC_HOST}:${p.mysql}`
+        `🔌 BE: http://${PUBLIC_HOST}:${p.be}`
       );
     } else if (r._status === 400) {
       // DEPLOY_MODE=off rejection — surface server message verbatim.

@@ -46,7 +46,7 @@ router.post('/redeploy', async (_req, res) => {
     // Sync disk → process.env for the deploy-relevant keys so deployAgent.run()
     // (which reads process.env directly) sees the UI's latest toggle state, not
     // the stale snapshot from server startup.
-    for (const k of ['DEPLOY_MODE', 'DEPLOY_PORT_FE', 'DEPLOY_PORT_BE', 'DEPLOY_PORT_DB',
+    for (const k of ['DEPLOY_MODE', 'DEPLOY_PORT_FE', 'DEPLOY_PORT_BE',
                      'DEPLOY_TIMEOUT_SEC', 'LOG_TAIL_LINES', 'DEPLOY_TEARDOWN_ON_PASS']) {
       if (diskEnv[k] != null && diskEnv[k] !== '') process.env[k] = diskEnv[k];
     }
@@ -57,10 +57,10 @@ router.post('/redeploy', async (_req, res) => {
     // deploy_agent.run() mutates process.env.DEPLOY_PORT_* with the resolved
     // (post-fallback) host ports. Surface them so the UI can show "FE 열기"
     // links pointing at the right places without round-tripping through DB.
+    // D29=A 이후 mysql 컨테이너 없음 — 호스트 MySQL은 .env의 DB_PORT 그대로.
     const ports = {
-      mysql: Number(process.env.DEPLOY_PORT_DB || 3306),
-      be:    Number(process.env.DEPLOY_PORT_BE || 3001),
-      fe:    Number(process.env.DEPLOY_PORT_FE || 5173),
+      be: Number(process.env.DEPLOY_PORT_BE || 3001),
+      fe: Number(process.env.DEPLOY_PORT_FE || 5173),
     };
     res.json({ ok: result.status === 'SUCCESS', task_id: taskId, status: result.status, ports });
   } catch (e) {

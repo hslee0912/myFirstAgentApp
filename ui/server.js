@@ -245,14 +245,13 @@ async function main() {
   snapshotEnvOnStart();
 
   // Kill stale node.exe processes holding any canonical project port
-  // (UI_PORT + the three DEPLOY_PORT_*). System services (mysqld, postgres,
-  // docker daemon) are explicitly protected. Settle 500ms so the OS
-  // actually releases the socket before findFreePort probes.
+  // (UI_PORT + DEPLOY_PORT_FE/BE). D29=A 이후 mysql 컨테이너 없음 —
+  // 호스트 MySQL port(3306)는 호스트 서비스라 sweep 대상 아님 (mysqld는
+  // 어차피 port_killer의 PROTECTED 셋에서 보호).
   const sweepPorts = [
     REQUESTED_PORT,
     Number(process.env.DEPLOY_PORT_FE || 5173),
     Number(process.env.DEPLOY_PORT_BE || 3001),
-    Number(process.env.DEPLOY_PORT_DB || 3306),
   ];
   const sweepResult = killHostHolders(sweepPorts, 'ui');
   if (sweepResult.killed.length > 0) {

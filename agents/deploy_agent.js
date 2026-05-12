@@ -32,7 +32,8 @@ const { cleanupOurContainers } = require('../lib/container_cleanup');
 const ROOT = path.resolve(__dirname, '..');
 const COMPOSE_FILE = path.join(ROOT, 'lib', 'stack_templates', 'docker-compose.yml');
 
-const SERVICES = ['mysql', 'be', 'fe'];
+// D29=A: mysql 컨테이너 폐지. 도구/비즈니스 모두 호스트 MySQL을 공유.
+const SERVICES = ['be', 'fe'];
 const PORT_FALLBACK_MAX_OFFSET = 20;
 
 // ---------------- compose CLI auto-detection ----------------
@@ -77,13 +78,43 @@ function getLogTailLines() {
 
 function getPorts() {
   return {
-    mysql: Number(process.env.DEPLOY_PORT_DB || 3306),
     be: Number(process.env.DEPLOY_PORT_BE || 3001),
     fe: Number(process.env.DEPLOY_PORT_FE || 5173),
   };
 }
 
-const PORT_ENV_KEY = { mysql: 'DEPLOY_PORT_DB', be: 'DEPLOY_PORT_BE', fe: 'DEPLOY_PORT_FE' };
+const PORT_ENV_KEY = { be: 'DEPLOY_PORT_BE', fe: 'DEPLOY_PORT_FE' };
+
+// ---------------- host MySQL ping (D29=A) ----------------
+
+/**
+ * BE 컨테이너가 host.docker.internal:DB_PORT로 호스트 MySQL에 접속한다.
+ * compose up이 실패하기 전에 *호스트 MySQL이 살아있는지*를 우리가 먼저 검증해
+ * 친절한 에러 메시지를 준다 (mysql2 driver의 ECONNREFUSED 보다 명확).
+ *
+ * 단순 TCP probe — 인증/스키마는 검증 안 함. listen 중인 process가 있으면 OK.
+ *
+ * @returns {Promise<{ok: boolean, host: string, port: number, error?: string}>}
+ */
+function pingHostMysql() {
+  const host = process.env.DB_HOST || 'localhost';
+  const port = Number(process.env.DB_PORT || 3306);
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    let settled = false;
+    const finish = (ok, error) => {
+      if (settled) return;
+      settled = true;
+      try { sock.destroy(); } catch (_) { /* ignore */ }
+      resolve({ ok, host, port, error });
+    };
+    sock.setTimeout(2000);
+    sock.once('connect', () => finish(true));
+    sock.once('error', (e) => finish(false, e.message));
+    sock.once('timeout', () => finish(false, 'connect timeout (2s)'));
+    sock.connect(port, host);
+  });
+}
 
 // ---------------- port availability + fallback ----------------
 
@@ -201,20 +232,17 @@ async function findFreePort(start, label, maxOffset = PORT_FALLBACK_MAX_OFFSET, 
  *   2. OS-level net.listen probe — covers non-docker conflicts (host MySQL,
  *      another local process).
  *
- * @param {{mysql:number, be:number, fe:number}} requested
- * @returns {Promise<{mysql:number, be:number, fe:number, changed:boolean}>}
+ * @param {{be:number, fe:number}} requested
+ * @returns {Promise<{be:number, fe:number, changed:boolean}>}
  */
 async function resolvePortsWithFallback(requested) {
   const dockerPorts = dockerPublishedPorts();
-  const mysql = await findFreePort(requested.mysql, 'mysql', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
   const be = await findFreePort(requested.be, 'be', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
   const fe = await findFreePort(requested.fe, 'fe', PORT_FALLBACK_MAX_OFFSET, dockerPorts);
-  process.env.DEPLOY_PORT_DB = String(mysql);
   process.env.DEPLOY_PORT_BE = String(be);
   process.env.DEPLOY_PORT_FE = String(fe);
-  const changed =
-    mysql !== requested.mysql || be !== requested.be || fe !== requested.fe;
-  return { mysql, be, fe, changed };
+  const changed = be !== requested.be || fe !== requested.fe;
+  return { be, fe, changed };
 }
 
 // ---------------- compose invocation helpers ----------------
@@ -326,6 +354,22 @@ async function run({ task_id }) {
     return { status: 'FAILED' };
   }
 
+  // D29=A: host MySQL ping. BE 컨테이너가 host.docker.internal:DB_PORT로
+  // 호스트 MySQL에 접속하므로 그 host MySQL이 살아있어야 한다. compose up
+  // 후 mysql2 driver의 모호한 ECONNREFUSED 보다 여기서 명시적 에러로 잡음.
+  const mysqlPing = await pingHostMysql();
+  if (!mysqlPing.ok) {
+    const msg =
+      `호스트 MySQL이 응답하지 않음 (${mysqlPing.host}:${mysqlPing.port}): ${mysqlPing.error}. ` +
+      '.env의 DB_HOST/DB_PORT 확인, MySQL 서비스 기동 여부 확인.';
+    console.error(`[deploy] ${msg}`);
+    await logger.endRun(run_id, {
+      status: 'FAILED',
+      output_json: { exit_code: -1, failed_stage: 'host_mysql_ping', error: msg },
+    });
+    return { status: 'FAILED' };
+  }
+
   // D6=B+: pre-cleanup. Sweep EVERY container this PoC has managed (by label
   // first, by name+image convention for legacy containers without the label).
   // This is broader than the old `compose down` (which only touched the
@@ -345,8 +389,8 @@ async function run({ task_id }) {
     ports = await resolvePortsWithFallback(requestedPorts);
     if (ports.changed) {
       console.log(
-        `[deploy] resolved ports: mysql=${ports.mysql} be=${ports.be} fe=${ports.fe} ` +
-        `(requested mysql=${requestedPorts.mysql} be=${requestedPorts.be} fe=${requestedPorts.fe})`
+        `[deploy] resolved ports: be=${ports.be} fe=${ports.fe} ` +
+        `(requested be=${requestedPorts.be} fe=${requestedPorts.fe})`
       );
     }
   } catch (e) {
@@ -420,7 +464,7 @@ async function run({ task_id }) {
     output_json: {
       exit_code: 0,
       duration_ms,
-      services: { mysql: 'healthy', be: 'running', fe: 'running' },
+      services: { be: 'running', fe: 'running' },
       ports,
       requested_ports: requestedPorts,
       ports_changed: ports.changed,
@@ -445,4 +489,5 @@ module.exports = {
   findFreePort,
   resolvePortsWithFallback,
   dockerPublishedPorts,
+  pingHostMysql,
 };

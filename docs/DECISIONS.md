@@ -2,6 +2,37 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-12 — D29 단일 host MySQL 통합 (mysql 컨테이너 폐지)
+
+**문제**: 현재 디자인은 도구/비즈니스 *이중 DB*. host MySQL은 agent 로그용(`log_*`), 컨테이너 MySQL은 비즈니스용(`app_users`, ephemeral). 사용자가 HeidiSQL 같은 GUI에서 `app_users`를 못 찾는 혼란이 반복 발생하고, 컨테이너 재배포마다 비즈니스 데이터가 사라져 dogfood가 불편.
+
+`lib/db.js`의 주석 "Used by all agents + orchestrator for log_* tables and by BE runtime for app_users"가 가리키듯 *원래 의도가 단일 DB*였고, 컨테이너 MySQL은 PoC 격리를 위한 우회였음. `schema.sql`도 이미 단일 DB로 정의돼있어 schema 변경 0.
+
+**D29 = A 결정 (single host MySQL, BE 컨테이너는 `host.docker.internal`로 연결)**
+
+근거 — DX, 단일 source of truth, EC2/RDS prod 패턴 일치, 컨테이너 단순화, schema 단일화. 격리는 `npm run reset-db`로 수동.
+
+**Obsoleted by D29**:
+- D9=C (ephemeral mysql volume + schema.sql init mount)
+- D14=B (mysql healthcheck + service_healthy gate)
+- D16=A (container env hardcoded; host .env not propagated) — BE env는 이제 host `.env`에서 `${var}` 보간
+- D18=A (image: mysql:8)
+
+**변경 파일**:
+- `lib/stack_templates/docker-compose.yml` — `mysql` 서비스 통째 제거. `be:`의 env가 `host.docker.internal` + host `.env` 보간 (`${DB_PASSWORD}` 등). `extra_hosts: ["host.docker.internal:host-gateway"]` (Linux 호환).
+- `agents/deploy_agent.js` — `SERVICES`/`PORT_ENV_KEY`에서 mysql 제거, `getPorts` 갱신, `resolvePortsWithFallback` 갱신. 신규: `pingHostMysql()` — 부팅 전 호스트 MySQL TCP probe로 fail-fast.
+- `.env` / `.env.example` — `DEPLOY_PORT_DB` 제거. DB 블록 주석에 "BE 컨테이너도 이 값 사용" 명시.
+- `rules/be.md` §4 — 단일 DB 가정 + `app_users` 영구 보존 명시.
+- (UI 정리 — 같은 commit) `ui/routes/deploy.js`, `ui/public/index.html`의 `ports.mysql` 표시 제거.
+
+**격리 정책**: (α) 수동 — 사용자가 `npm run reset-db` 또는 UI의 `⟲ reset-db` 버튼으로 명시적 정리. 자동 truncate는 의도치 않은 비즈니스 데이터 손실 위험으로 도입 안 함.
+
+**검증**: 호스트 MySQL에 회원가입 데이터가 영구 보존되는지 + HeidiSQL에서 `localhost:3306` 한 세션으로 *모든 데이터* 조회 가능한지.
+
+**EC2 마이그레이션 영향**: `.env`의 `DB_HOST=<RDS endpoint>` 한 줄만 변경하면 BE 컨테이너도 자동으로 그 RDS 사용 (single source of truth 확보).
+
+---
+
 ## 2026-05-11 — UI control panel (npm run ui)
 
 ROADMAP의 2순위 "UI (+Observability)" 항목 진입 후 완료. Express + 정적 HTML 추천(ROADMAP 명시) 그대로 채택 — Vite+React가 외관 좋지만 ~200 LOC 약속 지키려면 Express가 적절.

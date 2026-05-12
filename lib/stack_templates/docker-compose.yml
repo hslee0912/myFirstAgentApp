@@ -5,64 +5,48 @@
 #   docker-compose --project-directory <project_root> \
 #                  -f lib/stack_templates/docker-compose.yml \
 #                  up --build
-# Therefore all relative paths below resolve against <project_root>.
+# Therefore all relative paths below resolve against <project_root>, AND
+# host .env in <project_root> is auto-loaded by compose for ${var} interpolation.
 #
-# Decision provenance (docs/DECISIONS.md, 2026-05-08):
-#   D7  = C  → ports via .env: DEPLOY_PORT_FE/BE/DB (defaults 5173/3001/3306)
-#   D9  = C  → ephemeral MySQL volume + schema.sql init mount (fresh DB per task)
+# Decision provenance (docs/DECISIONS.md):
+#   D7  = C  → ports via .env: DEPLOY_PORT_FE/BE (defaults 5173/3001)
 #   D11 = A  → Dockerfile build for BE and FE
 #   D13 = A  → Vite dev server for FE (CMD set in FE/Dockerfile)
-#   D14 = B  → mysql healthcheck + service_healthy gate
 #   D15 = A  → restart: "no" (fail surface immediately)
-#   D16 = A  → container env hardcoded here (host .env not propagated)
 #   D17 = A  → paths relative to project root (via --project-directory)
-#   D18 = A  → image: mysql:8
+#   D29 = A  → 단일 host MySQL (BE 컨테이너 → host.docker.internal). 이전의
+#              컨테이너 MySQL(D9=C, D14=B, D16=A, D18=A) 결정은 obsolete.
+#              사유: 비즈니스 데이터 영구 보존 + DX(단일 GUI 연결) + EC2/RDS
+#              prod 패턴 일치.
 
 services:
-  mysql:
-    image: mysql:8
+  be:
+    build:
+      context: ./BE
+      dockerfile: Dockerfile
     labels:
       # Marks this container as "owned" by myFirstAgentApp so pre-cleanup
       # (lib/container_cleanup.js) can sweep it on the next Phase 8 cycle
       # regardless of compose project name (test / finalize / verify-* etc.).
       com.myfirstagentapp.managed: "true"
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: myfirstagentapp_db
-    ports:
-      - "${DEPLOY_PORT_DB:-3306}:3306"
-    volumes:
-      # D9=C: schema.sql auto-runs on first container start (mysql official image
-      # convention). No /var/lib/mysql mount → ephemeral data per task.
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-    restart: "no"
-
-  be:
-    build:
-      context: ./BE
-      dockerfile: Dockerfile
-    labels:
-      com.myfirstagentapp.managed: "true"
-    environment:
-      # D16=A: hardcoded here — these override anything BE's own dotenv would
-      # load inside the container. Host .env is intentionally NOT mounted.
-      DB_HOST: mysql              # service name (compose default DNS)
-      DB_PORT: 3306
-      DB_USER: root
-      DB_PASSWORD: root           # matches MYSQL_ROOT_PASSWORD above
-      DB_NAME: myfirstagentapp_db
+      # D29=A: BE 컨테이너 → 호스트의 MySQL. host .env에서 보간 (compose가
+      # --project-directory의 .env를 자동 로드). 빈 값이면 compose가 빈 문자열
+      # 그대로 전달 → BE가 인증 실패하며 fail-fast. 사전에 deploy_agent가 host
+      # MySQL ping check를 한다.
+      DB_HOST: host.docker.internal
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-myfirstagentapp_db}
       BE_PORT: 3001
+    extra_hosts:
+      # Linux native docker는 host.docker.internal을 자동 resolve 안 함.
+      # host-gateway는 Docker 20.10+에서 호스트 IP로 alias 해주는 magic value.
+      # Docker Desktop (Win/Mac)에서는 이미 자동 지원하므로 무해.
+      - "host.docker.internal:host-gateway"
     ports:
       - "${DEPLOY_PORT_BE:-3001}:3001"
-    depends_on:
-      mysql:
-        condition: service_healthy
     restart: "no"
 
   fe:

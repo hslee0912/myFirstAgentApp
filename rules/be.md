@@ -34,9 +34,20 @@ export default signupHandler;
 - DB 풀 연결은 `lib/db.js` 패턴 참고:
   ```js
   const mysql = require('mysql2/promise');
-  const pool = mysql.createPool({...});
+  const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+  });
   await pool.execute('SELECT ... WHERE email = ?', [email]);
   ```
+- **단일 DB 가정 (D29=A)**: BE 컨테이너는 호스트 MySQL(`host.docker.internal`)
+  에 직접 연결한다. `app_users` 데이터는 *영구 보존* — 컨테이너 재배포로
+  사라지지 않음. 이전의 컨테이너 MySQL ephemeral 디자인은 obsolete. 환경
+  변수(`DB_HOST` 등)는 docker-compose.yml이 주입하므로 *BE 코드는 host/port
+  를 hardcode하면 안 된다*. 항상 `process.env.DB_*` 만.
 - **테이블 이름은 `db/schema.sql`에 정의된 것만 사용** — 시스템 프롬프트의 "DB schema" 섹션이 매 호출마다 실제 schema를 주입한다. 회원 비즈니스는 `app_users`(NOT `users`)만 사용. `log_*` 테이블은 절대 건드리지 말 것.
 - 컬럼은 schema에 있는 것만. `id`는 AUTO_INCREMENT이므로 INSERT에 포함 금지, `LAST_INSERT_ID()` 또는 mysql2 `result.insertId`로 받음. `created_at`/`updated_at`은 DEFAULT가 있어 INSERT 제외.
 - 비밀번호 컬럼명은 `password_hash` (schema 그대로). 다른 이름(`password`, `pwd` 등) 사용 금지.
