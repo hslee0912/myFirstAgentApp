@@ -34,6 +34,7 @@ const tasksRoutes = require('./routes/tasks');
 const runRoutes = require('./routes/run');
 const deployRoutes = require('./routes/deploy');
 const gitRoutes = require('./routes/git');
+const initRoutes = require('./routes/init');
 
 const REQUESTED_PORT = Number(process.env.UI_PORT || 4000);
 
@@ -132,6 +133,7 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/run', runRoutes);
 app.use('/api', deployRoutes);
 app.use('/api', gitRoutes);
+app.use('/api', initRoutes);
 
 // ---------------- bootstrap ----------------
 

@@ -338,12 +338,12 @@
     <section>
       <h2>새 실행</h2>
       <label for="prompt">user_request (비우면 기본 시나리오)</label>
-      <textarea id="prompt" placeholder="이메일과 비밀번호로 회원가입할 수 있는 기능을 만들어줘..."></textarea>
+      <textarea id="prompt" placeholder="여기에 작업 요청을 입력하세요"></textarea>
       <div class="toolbar" style="margin-top: 8px;">
         <button id="runBtn">▶ Run pipeline</button>
         <button id="redeployBtn" class="secondary" title="현재 worktree 코드 그대로 docker compose up (PostTest 안 함)">🚀 Redeploy</button>
         <button id="resetDbBtn" class="secondary">⟲ reset-db</button>
-        <button id="refreshBtn" class="secondary">↻ Refresh</button>
+        <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="BE/src + FE/src 삭제 + DB 전체 truncate — 새 cycle 직전 상태로 초기화">🧹 Init project</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + .env reset">⏮ Reset to origin/main</button>
         <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
              ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
@@ -1089,7 +1089,61 @@ $('#resetDbBtn').addEventListener('click', async () => {
   if (r.ok) loadTasks();
 });
 
-$('#refreshBtn').addEventListener('click', () => { loadTasks(); loadDetail(); });
+$('#initBtn').addEventListener('click', async () => {
+  $('#initBtn').disabled = true;
+  $('#initBtn').textContent = '🧹 checking…';
+  try {
+    const p = await fetchJSON('/api/init-preview');
+    if (!p.can_init) {
+      alert('초기화할 내용 없음 — src 폴더 비어있고 DB도 비어있음.');
+      return;
+    }
+    const dbLines = Object.entries(p.db || {})
+      .filter(([k]) => !k.startsWith('_'))
+      .map(([t, n]) => `  • ${t}: ${n}건`)
+      .join('\n');
+    const msg =
+      '⚠ 프로젝트 초기화 — 회복 불가\n\n' +
+      `▶ 삭제 대상 (코드):\n` +
+      `  • BE/src/  (${p.be_src.count}개 파일)\n` +
+      `  • FE/src/  (${p.fe_src.count}개 파일)\n` +
+      `\n▶ 삭제 대상 (DB — 영구 손실):\n` +
+      (dbLines || '  (없음)') +
+      '\n\n▶ 보존:\n' +
+      '  • Dockerfile, package.json, node_modules, vite.config.js 등 인프라\n' +
+      '  • .env, 떠있는 docker 컨테이너 (다음 Redeploy까지 그대로)\n' +
+      '\n▶ 다음 cycle 시작 시:\n' +
+      '  • bootstrap이 src/ 폴더 + placeholder 자동 복원\n' +
+      '\n정말 진행할까요? (회원가입 데이터 등 영구 손실)';
+    if (!confirm(msg)) return;
+    $('#initBtn').textContent = '🧹 initializing…';
+    const r = await fetchJSON('/api/init', { method: 'POST' });
+    if (r.ok) {
+      alert(
+        '초기화 완료\n\n' +
+        `• BE/src 삭제: ${r.be_src_deleted}개 파일\n` +
+        `• FE/src 삭제: ${r.fe_src_deleted}개 파일\n` +
+        `• DB truncate: ${(r.db_truncated||[]).join(', ')}\n\n` +
+        (r.notice || '')
+      );
+      // 모든 view 갱신 — tasks/env/detail 비워짐
+      lastDetailHash = ''; lastDetailTerminal = false;
+      selectedTaskId = null;
+      $('#detailTaskId').textContent = '(선택 안 됨)';
+      $('#detail').innerHTML = '';
+      await Promise.all([loadEnv(), loadTasks()]);
+    } else if (r._status === 409) {
+      alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
+    } else {
+      alert('초기화 실패: ' + (r.error || r._text || 'unknown'));
+    }
+  } catch (e) {
+    alert('Init 호출 실패: ' + e.message);
+  } finally {
+    $('#initBtn').disabled = false;
+    $('#initBtn').textContent = '🧹 Init project';
+  }
+});
 
 /**
  * Redeploy 실행 + 결과 처리 + 성공 시 FE 페이지를 새 탭에 자동 오픈.
