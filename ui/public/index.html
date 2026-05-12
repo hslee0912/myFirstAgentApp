@@ -1091,27 +1091,53 @@ $('#resetDbBtn').addEventListener('click', async () => {
 
 $('#refreshBtn').addEventListener('click', () => { loadTasks(); loadDetail(); });
 
+/**
+ * Redeploy 실행 + 결과 처리 + 성공 시 FE 페이지를 새 탭에 자동 오픈.
+ *
+ * 두 발화점에서 공유:
+ *   - 🚀 Redeploy 버튼 클릭 (수동)
+ *   - ⏮ Reset to origin/main 성공 직후 (자동 chain) — git/컨테이너 상태
+ *     mismatch 방지. reset만 하고 redeploy 안 하면 컨테이너는 옛 코드로
+ *     떠 있어 git와 동작이 어긋남.
+ *
+ * @param {{ context: 'manual' | 'after-rollback' }} opts
+ * @returns {Promise<{ok: boolean}>}
+ */
+async function executeRedeploy(opts = { context: 'manual' }) {
+  const r = await fetchJSON('/api/redeploy', { method: 'POST' });
+  if (r.ok) {
+    const p = r.ports || {};
+    const feUrl = `http://${PUBLIC_HOST}:${p.fe}`;
+    const beUrl = `http://${PUBLIC_HOST}:${p.be}`;
+    const prefix = opts.context === 'after-rollback'
+      ? 'Rollback 후 Redeploy 완료'
+      : 'Redeploy 완료';
+    alert(
+      `${prefix} (task_id=${r.task_id})\n\n` +
+      `🌐 FE: ${feUrl}\n` +
+      `🔌 BE: ${beUrl}\n\n` +
+      `확인을 누르면 FE 페이지를 새 탭에 띄웁니다.`
+    );
+    // alert 동기 종료 직후 user-gesture 컨텍스트가 살아있어 popup blocker
+    // 통과. noopener는 새 창에서 opener를 못 만지게 하는 보안 best practice.
+    window.open(feUrl, '_blank', 'noopener');
+  } else if (r._status === 400) {
+    // DEPLOY_MODE=off rejection — surface server message verbatim.
+    alert(r.error || 'Redeploy 거부됨 (DEPLOY_MODE=off).');
+  } else if (r._status === 409) {
+    alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
+  } else {
+    alert('Redeploy 실패: ' + (r.error || r._text || 'unknown'));
+  }
+  return r;
+}
+
 $('#redeployBtn').addEventListener('click', async () => {
-  if (!confirm('현재 worktree 코드 그대로 docker compose up을 다시 실행합니다.\n\n• Phase 1~7 (생성·검증) skip\n• Phase 8 (Deploy)만 실행 — PostTest는 안 함\n• .env의 DEPLOY_MODE=off면 거부됨\n\n계속할까요?')) return;
+  if (!confirm('현재 worktree 코드 그대로 docker compose up을 다시 실행합니다.\n\n• Phase 1~7 (생성·검증) skip\n• Phase 8 (Deploy)만 실행 — PostTest는 안 함\n• .env의 DEPLOY_MODE=off면 거부됨\n• 성공 시 FE 페이지를 새 탭에 자동 오픈\n\n계속할까요?')) return;
   $('#redeployBtn').disabled = true;
   $('#redeployBtn').textContent = '🚀 deploying…';
   try {
-    const r = await fetchJSON('/api/redeploy', { method: 'POST' });
-    if (r.ok) {
-      const p = r.ports || {};
-      alert(
-        `Redeploy 완료 (task_id=${r.task_id})\n\n` +
-        `🌐 FE: http://${PUBLIC_HOST}:${p.fe}\n` +
-        `🔌 BE: http://${PUBLIC_HOST}:${p.be}`
-      );
-    } else if (r._status === 400) {
-      // DEPLOY_MODE=off rejection — surface server message verbatim.
-      alert(r.error || 'Redeploy 거부됨 (DEPLOY_MODE=off).');
-    } else if (r._status === 409) {
-      alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
-    } else {
-      alert('Redeploy 실패: ' + (r.error || r._text || 'unknown'));
-    }
+    await executeRedeploy({ context: 'manual' });
   } catch (e) {
     alert('Redeploy 호출 실패: ' + e.message);
   } finally {
@@ -1156,18 +1182,22 @@ $('#rollbackBtn').addEventListener('click', async () => {
       (dirty.slice(0, 8).map((f) => '  • ' + f).join('\n') || '  (없음)') +
       (dirty.length > 8 ? `\n  ... 외 ${dirty.length - 8}개` : '') +
       envMsg +
+      '\n\nReset 완료 후 자동으로 Redeploy까지 진행해 컨테이너도 origin/main 코드로 재빌드합니다.' +
       '\n\n정말 진행할까요?';
     if (!confirm(msg)) return;
     $('#rollbackBtn').textContent = '⏮ resetting…';
     const r = await fetchJSON('/api/rollback', { method: 'POST' });
-    if (r.ok) {
-      alert(`Rollback 완료 — ${r.reset_to}.\n\n${r.notice || ''}`);
-      // Reload everything since .env / BE / FE / tasks all may have changed.
-      await Promise.all([loadEnv(), loadTasks()]);
-      loadDetail();
-    } else {
+    if (!r.ok) {
       alert('Rollback 실패: ' + (r.error || r._text || 'unknown'));
+      return;
     }
+    // Reload — .env / BE / FE / tasks 모두 변경됨.
+    await Promise.all([loadEnv(), loadTasks()]);
+    loadDetail();
+    // 자동 chain: rollback 완료 후 즉시 redeploy. git와 컨테이너 상태 mismatch
+    // 방지 — reset만 하고 컨테이너는 옛 코드로 떠 있는 사고를 차단.
+    $('#rollbackBtn').textContent = '⏮ → 🚀 redeploying…';
+    await executeRedeploy({ context: 'after-rollback' });
   } catch (e) {
     alert('Rollback 호출 실패: ' + e.message);
   } finally {
