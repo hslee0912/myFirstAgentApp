@@ -34,6 +34,42 @@ module.exports = SignupForm;
 - 상태는 `useState` / `useReducer`. 외부 상태 관리 라이브러리(Redux, Zustand 등) 도입 금지 (`allowedDeps` 위반).
 - 폼은 controlled component (`value` + `onChange`).
 
+### 4-bis. 조건부 `return null` 절대 금지 (Stage 3 가장 흔한 실패 원인)
+
+시스템의 자동 생성 smoke test는 *props 없이* `render(<Component />)`를 호출하고
+`expect(container.firstChild).not.toBeNull()`을 검증한다. 따라서 컴포넌트가
+*어떤 prop 조합에서도* null을 반환하면 안 된다.
+
+**나쁨** — Modal/Toast/Drawer 같은 컴포넌트의 흔한 패턴:
+```jsx
+function Modal({ isOpen, children }) {
+  if (!isOpen) return null;       // ← smoke test가 render(<Modal />) 호출 → null → FAIL
+  return <div className="modal">{children}</div>;
+}
+```
+
+**좋음** — 닫힌 상태도 *non-null DOM 노드* 반환:
+```jsx
+function Modal({ isOpen = false, children }) {
+  return (
+    <div className="modal" style={{ display: isOpen ? 'block' : 'none' }}>
+      {children}
+    </div>
+  );
+}
+// 또는:
+function Modal({ isOpen, children }) {
+  if (!isOpen) return <div data-state="closed" hidden />;
+  return <div className="modal">{children}</div>;
+}
+```
+
+핵심 룰:
+- 어떤 prop 입력에서도 *non-null DOM*을 반환할 것. 빈 `<div hidden />` 도 OK.
+- 필수처럼 보이는 prop은 default 값을 두거나 optional로 처리.
+- Fragment(`<>...</>`)도 *내부 자식이 없으면* `firstChild === null`이 될 수 있으니 주의 — 차라리 빈 `<div />`.
+- 이 룰을 위반하면 Stage 3 단위 테스트가 즉시 실패하고, 시스템이 `fix_instructions`로 LLM에 재시도 요청한다 (최대 `MAX_RETRIES` = 3회). 첫 시도부터 룰을 따르는 게 정상 경로.
+
 ## 5. API 호출 패턴
 
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.

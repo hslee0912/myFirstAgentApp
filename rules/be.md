@@ -87,6 +87,36 @@ export default signupHandler;
   });
   ```
 - 도구·환경: 시스템 생성 test도 **Jest + Supertest** 가정의 환경에서 실행 (`lib/stack.config.json` BE 블록의 `lint.stage3` = `jest --runInBand`). `BE/package.json`에 `jest`/`supertest` dep는 그대로 유지 (미래 확장 대비).
+
+### 7-bis. Stage 3 smoke test 친화적 export (D30=A)
+
+시스템 자동 생성 test는 `typeof exportedFn === 'function'`을 검증한다. 모듈이 require될 때 *throw하지 않고* 비즈니스 함수를 export해야 한다.
+
+흔한 실패 패턴 — 모듈 top-level에서 환경변수 누락 시 throw:
+```js
+// 나쁨 — DB_PASSWORD 빈 값이면 module load 시점에 throw
+if (!process.env.DB_PASSWORD) throw new Error('DB_PASSWORD missing');
+const pool = mysql.createPool({...});
+module.exports = { signupHandler };
+```
+
+```js
+// 좋음 — pool은 lazy, env 검증은 핸들러 호출 시점에
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  password: process.env.DB_PASSWORD || '',
+  // ...
+});
+async function signupHandler(req, res) {
+  if (!process.env.DB_PASSWORD) {
+    return res.status(500).json({ success: false, error: '...' });
+  }
+  // ...
+}
+module.exports = { signupHandler };
+```
+
+Stage 3 실패 시 시스템이 `fix_instructions`로 jest 출력 전달 + LLM에게 최대 `MAX_RETRIES`(3)회 재시도 요청. 첫 시도부터 룰을 따르는 게 정상 경로.
 - bootstrap이 깐 placeholder test (예: `server.test.js`)는 disk에 그대로 보존된다 — 시스템 자동 생성도 placeholder는 덮어쓰지 않음 (`isTestFile()` skip).
 - **Agent의 책임**: placeholder test가 통과되도록 비즈니스 코드를 작성. test 코드 작성은 Agent의 책임이 아님.
 

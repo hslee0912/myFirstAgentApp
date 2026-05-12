@@ -133,26 +133,22 @@ test('findFreePort: throws when no port is free within the window', async () => 
 
 // ─────────── resolvePortsWithFallback ───────────
 
+// D29=A 이후 mysql 컨테이너 폐지 — resolvePortsWithFallback은 be/fe만 처리.
 test('resolvePortsWithFallback: returns requested ports when all free + sets env', async () => {
   const snap = {
-    DEPLOY_PORT_DB: process.env.DEPLOY_PORT_DB,
     DEPLOY_PORT_BE: process.env.DEPLOY_PORT_BE,
     DEPLOY_PORT_FE: process.env.DEPLOY_PORT_FE,
   };
   try {
-    const a = await pickEphemeral();
     const b = await pickEphemeral();
     const c = await pickEphemeral();
-    const out = await resolvePortsWithFallback({ mysql: a, be: b, fe: c });
-    assert.equal(out.mysql, a);
+    const out = await resolvePortsWithFallback({ be: b, fe: c });
     assert.equal(out.be, b);
     assert.equal(out.fe, c);
     assert.equal(out.changed, false);
-    assert.equal(process.env.DEPLOY_PORT_DB, String(a));
     assert.equal(process.env.DEPLOY_PORT_BE, String(b));
     assert.equal(process.env.DEPLOY_PORT_FE, String(c));
   } finally {
-    process.env.DEPLOY_PORT_DB = snap.DEPLOY_PORT_DB ?? '';
     process.env.DEPLOY_PORT_BE = snap.DEPLOY_PORT_BE ?? '';
     process.env.DEPLOY_PORT_FE = snap.DEPLOY_PORT_FE ?? '';
   }
@@ -160,7 +156,6 @@ test('resolvePortsWithFallback: returns requested ports when all free + sets env
 
 test('resolvePortsWithFallback: sets changed=true when any port shifts', async () => {
   const snap = {
-    DEPLOY_PORT_DB: process.env.DEPLOY_PORT_DB,
     DEPLOY_PORT_BE: process.env.DEPLOY_PORT_BE,
     DEPLOY_PORT_FE: process.env.DEPLOY_PORT_FE,
   };
@@ -168,15 +163,12 @@ test('resolvePortsWithFallback: sets changed=true when any port shifts', async (
   const occupied = await occupy(port);
   try {
     const free1 = await pickEphemeral();
-    const free2 = await pickEphemeral();
-    const out = await resolvePortsWithFallback({ mysql: port, be: free1, fe: free2 });
-    assert.notEqual(out.mysql, port);
-    assert.equal(out.be, free1);
-    assert.equal(out.fe, free2);
+    const out = await resolvePortsWithFallback({ be: port, fe: free1 });
+    assert.notEqual(out.be, port);
+    assert.equal(out.fe, free1);
     assert.equal(out.changed, true);
   } finally {
     occupied.close();
-    process.env.DEPLOY_PORT_DB = snap.DEPLOY_PORT_DB ?? '';
     process.env.DEPLOY_PORT_BE = snap.DEPLOY_PORT_BE ?? '';
     process.env.DEPLOY_PORT_FE = snap.DEPLOY_PORT_FE ?? '';
   }

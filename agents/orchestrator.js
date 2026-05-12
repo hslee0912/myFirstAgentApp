@@ -10,8 +10,7 @@
  *   5. Evaluate termination priority:
  *        ① any log_agent_runs FAILED  → ERROR
  *        ② all task_state SUCCESS     → PASS
- *        ③ any failed_stage='STAGE3'  → FAIL
- *        ④ any retry_count >= MAX     → FAIL
+ *        ③ any retry_count >= MAX     → FAIL  (D30=A: Stage 3도 retry 대상에 포함)
  *        else → next round (only FAILED areas)
  *   6. UPDATE log_agent_decisions, UPDATE Orchestrator's own log_agent_runs.
  *   7. Auto-commit BE/+FE/ if final_verdict='PASS' AND COMMIT_MODE='auto'.
@@ -205,16 +204,14 @@ async function evaluateVerdict(task_id, decision_id) {
   if (states.length > 0 && states.every((s) => s.status === 'SUCCESS')) {
     return { verdict: 'PASS', reason: 'all areas SUCCESS' };
   }
-  // ③ STAGE3 FAIL
-  for (const s of states) {
-    if (s.failed_stage === 'STAGE3') {
-      return { verdict: 'FAIL', reason: `Stage 3 (tests) failed for ${s.target}` };
-    }
-  }
-  // ④ retry exceeded
+  // ③ retry exceeded — D30=A 이후 Stage 3도 retry 대상이라 별도 분기 불필요.
+  //    Stage 1/2/3 모두 MAX_RETRIES(3) 도달 시 FAIL.
   for (const s of states) {
     if (s.retry_count >= MAX_RETRIES) {
-      return { verdict: 'FAIL', reason: `retry_count(${s.retry_count}) >= MAX(${MAX_RETRIES}) for ${s.target}` };
+      const reason = s.failed_stage === 'STAGE3'
+        ? `Stage 3 (tests) failed ${s.retry_count}회 for ${s.target} — LLM이 fix_instructions 받고 retry했으나 끝까지 통과 못 함`
+        : `retry_count(${s.retry_count}) >= MAX(${MAX_RETRIES}) for ${s.target} (failed_stage=${s.failed_stage || '-'})`;
+      return { verdict: 'FAIL', reason };
     }
   }
   return { verdict: 'CONTINUE', reason: 'retry FAILED areas' };

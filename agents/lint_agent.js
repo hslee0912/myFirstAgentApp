@@ -114,10 +114,31 @@ function runStage(stageCfg, cwd) {
 // ---------------- fix_instructions builder ----------------
 
 function buildFixInstructions(stage, log) {
-  const header =
-    stage === 'STAGE1'
-      ? '정적 분석(Stage 1)에서 에러 발생. 아래 출력에서 지적된 파일/라인의 규칙 위반을 수정하라.'
-      : '빌드/구문 검증(Stage 2)에서 에러 발생. 아래 출력의 구문/import/빌드 에러를 수정하라.';
+  let header;
+  if (stage === 'STAGE1') {
+    header = '정적 분석(Stage 1)에서 에러 발생. 아래 출력에서 지적된 파일/라인의 규칙 위반을 수정하라.';
+  } else if (stage === 'STAGE2') {
+    header = '빌드/구문 검증(Stage 2)에서 에러 발생. 아래 출력의 구문/import/빌드 에러를 수정하라.';
+  } else {
+    // STAGE3 — D30=A: Stage 3도 retry 대상. fix_instructions로 테스트 출력 전달.
+    header = [
+      '단위 테스트(Stage 3)에서 에러 발생. 아래 vitest/jest 출력의 실패 원인을 분석하라.',
+      '',
+      '주의 — 테스트 파일 자체는 시스템이 결정론적으로 자동 생성하므로 *수정 대상이 아니다*.',
+      '문제는 *비즈니스 코드 측*에 있다. 다음 흔한 패턴을 가장 먼저 의심하라:',
+      '',
+      '1. (FE) 컴포넌트가 조건부로 null을 반환 — 가장 흔함.',
+      '     예: `function Modal({isOpen}) { if (!isOpen) return null; ... }`',
+      '     시스템 smoke test는 props 없이 render(<Modal />) → null → 실패.',
+      '     해결: 닫힌 상태도 non-null DOM 노드 (`<div hidden />` 또는 display:none).',
+      '     rules/fe.md §4-bis 참조.',
+      '2. 필수처럼 보이는 prop의 default 값 누락 → undefined 접근 시 throw.',
+      '3. (BE) 모듈이 비즈니스 함수를 export 안 함 — `typeof exportedFn === \'function\'` 검증 실패.',
+      '4. import 경로 오타나 missing default export.',
+      '',
+      '비즈니스 의도(예: Modal이 isOpen=false일 때 안 보임)를 유지하면서 *DOM에는 항상 무언가가 있도록* 코드를 수정하라.',
+    ].join('\n');
+  }
   const body = [
     `[command] ${log.cmd}`,
     `[exit code] ${log.code}`,
@@ -187,11 +208,16 @@ async function run(p) {
 
     stage_logs.stage3 = runStage(cfg.lint.stage3, cwd);
     if (!stage_logs.stage3.pass) {
-      // Stage 3 fail: NO retry_count increment (per policy). Just mark FAILED+STAGE3.
+      // D30=A: Stage 3도 retry 대상. 이전엔 즉시 FAIL이었으나 LLM이 흔한 안티
+      // 패턴(조건부 null 반환 등)으로 자주 실패했고, vitest 출력 그대로 fix
+      // hint로 보내면 LLM이 코드 수정해 통과할 수 있음. retry_count 증가 +
+      // fix_instructions로 vitest stderr 전달. MAX_RETRIES(3) 도달 시 FAIL.
+      const fix = buildFixInstructions('STAGE3', stage_logs.stage3);
       await logger.updateTaskState(state_id, {
         status: 'FAILED',
+        retry_count: (current_retry_count || 0) + 1,
         failed_stage: 'STAGE3',
-        fix_instructions: null,
+        fix_instructions: fix,
         stage_logs,
         result_text: null,
       });

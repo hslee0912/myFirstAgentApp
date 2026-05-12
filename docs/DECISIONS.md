@@ -2,6 +2,57 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-12 — D30 Stage 3 retry 허용 + rules 강화
+
+**문제**: 이전 정책(Stage 3 fail → 즉시 FAIL, retry 없음)이 LLM의 흔한 안티패턴
+(예: Modal의 `if (!isOpen) return null`)에서 자동 회복을 막음. 실제 task_id
+`task_20260512055149_aa026f`에서 Modal smoke test가 `expected null not to be
+null`로 FAIL — 비즈니스 코드 한 줄만 고치면 통과할 수 있는데 cycle 전체가
+FAIL로 끝남.
+
+근본 원인 — rules/fe.md §6에 "smoke test 친화적으로" 가이드만 있고 *구체적
+안티패턴(null 반환) 명시*가 없었음. LLM이 React 관용 패턴(`if (!isOpen) return
+null`)을 자연스럽게 emit. + Stage 3가 retry 못 받아 회복 기회 없음.
+
+**D30 = A 결정 — Stage 3도 retry 대상 + rules에 명시적 안티패턴 추가**
+
+### 코드 변경
+
+- `agents/lint_agent.js`:
+  - `buildFixInstructions`에 STAGE3 case 추가. fix_instructions에 vitest/jest 출력 그대로 전달 + 흔한 안티패턴 4종 안내(조건부 null 반환 / default prop 누락 / export 누락 / import 오타).
+  - Stage 3 fail 시 `retry_count++` + `fix_instructions` 채움 (이전엔 둘 다 안 함).
+- `agents/orchestrator.js` Phase 5 evaluator:
+  - "③ STAGE3 즉시 FAIL" 분기 제거. Stage 1/2/3 모두 `retry_count >= MAX_RETRIES`(3) 도달 시에만 FAIL.
+  - MAX 초과 시 reason 메시지에 *retry 시도 후 끝까지 통과 못 함*을 명시.
+
+### Rules 강화
+
+- `rules/fe.md §4-bis (NEW)` — "조건부 `return null` 절대 금지". Modal/Toast 같은
+  컴포넌트의 닫힌 상태는 `<div hidden />` 또는 `display: none`로. 좋은/나쁜 예시
+  코드 + 시스템 smoke test가 props 없이 `render(<Component />)` 호출함을 명시.
+- `rules/be.md §7-bis (NEW)` — 모듈 top-level throw 금지. 환경변수 검증은
+  *핸들러 호출 시점*에. require 시 어떤 prop 없이도 module이 load되어야 함.
+
+### Trade-off
+
+| 항목 | 이전 (Stage 3 즉시 FAIL) | D30 (retry 허용) |
+|---|---|---|
+| LLM 회복 기회 | 0 | 최대 3회 |
+| LLM 토큰 비용 | 적음 | retry당 LLM 한 번 더 호출 |
+| 잘못된 코드 위험 | 0 (cycle 자체 FAIL) | LLM이 test 통과만 위해 의미 잘못된 코드 emit 위험 (rules 강화로 완화) |
+| 결정론성 | 강함 | retry 횟수에 따라 결과 다를 수 있음 |
+
+추가 위험 완화: smoke test 자체가 단순(render만 / typeof check)이라 LLM이
+*비즈니스 의도를 보존하면서* 룰 따라 수정하는 게 가장 자연스러운 path.
+복잡한 비즈니스 test는 시스템이 자동 생성 안 함.
+
+### 검증
+
+- 단위 테스트 (`tests/orchestrator_util.test.js`, `tests/lint_agent.test.js` 있다면) 통과 확인
+- 실제 cycle에서 Modal-style 안티패턴이 retry로 회복되는지 — 다음 실제 cycle에서 관찰
+
+---
+
 ## 2026-05-12 — D29 단일 host MySQL 통합 (mysql 컨테이너 폐지)
 
 **문제**: 현재 디자인은 도구/비즈니스 *이중 DB*. host MySQL은 agent 로그용(`log_*`), 컨테이너 MySQL은 비즈니스용(`app_users`, ephemeral). 사용자가 HeidiSQL 같은 GUI에서 `app_users`를 못 찾는 혼란이 반복 발생하고, 컨테이너 재배포마다 비즈니스 데이터가 사라져 dogfood가 불편.
