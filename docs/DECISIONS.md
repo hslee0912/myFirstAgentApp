@@ -2,6 +2,37 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-14 — D32 reset.sql 동적 DROP + db/*.sql 자동 순회
+
+**배경**: D31(`agent_schema.sql` 분리)이 "비즈니스 schema 자동 적용 메커니즘은 향후 별도 작업"으로 남겨둠. D32가 그 후속 — 비즈니스 schema 파일을 `db/business_schema.sql` 등으로 추가하기만 하면 reset 흐름에 자동 포함되도록 *기반 메커니즘* 도입.
+
+**변경**:
+- `db/reset.sql` 내용 전체 교체. *log_* 명시 DROP*에서 *information_schema 기반 동적 DROP*으로:
+  ```sql
+  SET @tables = (SELECT GROUP_CONCAT('`', table_name, '`')
+                 FROM information_schema.tables
+                 WHERE table_schema = 'myfirstagentapp_db');
+  SET @sql = IFNULL(CONCAT('DROP TABLE IF EXISTS ', @tables), 'SELECT 1');
+  PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+  ```
+  빈 DB일 때 `@tables`가 NULL이 되어 PREPARE가 실패하는 케이스를 `IFNULL`로 우회.
+- `lib/reset_db.js`, `ui/routes/init.js`, `ui/routes/git.js#resetDatabase` 세 곳:
+  *agent_schema.sql 단일 실행* → *db/\*.sql 알파벳 순서로 순회 실행* (reset.sql 자기 자신은 제외). 코드 변경 없이 새 schema 파일 추가만으로 적용.
+
+**Why**: 사용자 명시 요구 — "reset.sql: myfirstagentapp_db 안의 모든 테이블 삭제로 수정 / reset.sql 실행 후 main 안의 myFirstAgentApp\db의 모든 sql 실행". D31 단계에서 명시한 "향후 작업"을 이번에 흡수.
+
+**비-영향**:
+- `db/agent_schema.sql` 자체는 변경 없음 (여전히 자동 적용)
+- 동작 결과: 현재 `db/` 안에 `agent_schema.sql` + `reset.sql` 둘만 있어 *기존 D31 흐름과 출력 동일* — 단 *확장성*이 가치 (새 schema 파일 추가만으로 적용)
+- 4번째 reset-db 호출자(`ui/routes/deploy.js POST /api/reset-db`)는 `lib/reset_db.js`를 child로 spawn해서 변경 자동 흡수
+
+**잠재 위험·완화**:
+- 사용자가 수동으로 만든 *시스템 외 테이블*도 함께 삭제됨 → 사용자 의도와 일치 ("모든 테이블")
+- `db/*.sql` 순서 의존성 (FK) → 알파벳 정렬. 사용자가 `01_*.sql` prefix로 순서 제어 가능
+- 4곳 중복(reset_db.js / init.js / git.js / reset.sql 자체) → 후속 refactor에서 공통 helper로 통합 권장 (이번 변경은 *동작 일치* 우선)
+
+**작업 흐름 변경**: 메모리 `feedback_check_git_status.md` rule 2026-05-13 정정에 따라 *PR 없이 claude/test에 직접 commit + `git push origin claude/test:main` ff push*. 이 D32가 새 흐름의 *첫 사례*.
+
 ## 2026-05-13 — D31 schema.sql 분리 + 비즈니스 schema 폐기
 
 **문제**: 단일 `db/schema.sql` 안에 Agent 도구 테이블(`log_*`)과 비즈니스 테이블(`app_users`)이 혼재. BE Agent가 schema 확장 요청(e.g. "게임 도메인 추가")을 받으면 `BE/db/schema_game.sql` 같은 파일을 *emit*하지만 시스템에 그 SQL을 *실제 MySQL에 실행하는 메커니즘이 0건* (`agents/be_agent.js`는 `schema.sql`을 read만, `orchestrator.js`/`bootstrap.js`/`init_db.js` 어디서도 `BE/db/*.sql`을 적용하지 않음). 결과: 파일은 디스크에 있는데 DB는 옛 상태 → 런타임 `ER_NO_SUCH_TABLE` 500. 실제 발생: `task_20260512082949_4c3135`.

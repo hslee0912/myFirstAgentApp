@@ -30,19 +30,21 @@ const { ROOT, ENV_PATH, gitOut } = require('./_context');
 
 const BACKUP_PATH = path.join(ROOT, '.env.backup');
 const EXAMPLE_PATH = path.join(ROOT, '.env.example');
-const RESET_SQL = path.join(ROOT, 'db', 'reset.sql');
-const SCHEMA_SQL = path.join(ROOT, 'db', 'agent_schema.sql');
 
 /**
- * DB 전체 reset (DROP log_* → agent_schema.sql 재실행). init/reset-db와 동일
- * 흐름이지만 rollback 컨텍스트에선 단일 connection으로 inline 처리.
+ * DB 전체 reset (D32, 2026-05-14) — reset.sql(모든 테이블 동적 DROP) → db/*.sql 순회 실행.
+ * init.js / lib/reset_db.js와 동일 흐름이지만 rollback 컨텍스트에선 단일 connection으로
+ * inline 처리. 미래에 db/business_schema.sql 같은 새 schema 파일 추가 시 자동 함께 적용.
  *
- * @returns {Promise<{ok:boolean, error?:string}>}
+ * @returns {Promise<{ok:boolean, error?:string, schemaFiles?:string[]}>}
  */
 async function resetDatabase() {
   try {
-    const resetSql = fs.readFileSync(RESET_SQL, 'utf8');
-    const schemaSql = fs.readFileSync(SCHEMA_SQL, 'utf8');
+    const dbDir = path.join(ROOT, 'db');
+    const resetSql = fs.readFileSync(path.join(dbDir, 'reset.sql'), 'utf8');
+    const schemaFiles = fs.readdirSync(dbDir)
+      .filter((f) => f.endsWith('.sql') && f !== 'reset.sql')
+      .sort();
     const conn = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       port: Number(process.env.DB_PORT || 3306),
@@ -52,11 +54,13 @@ async function resetDatabase() {
     });
     try {
       await conn.query(resetSql);
-      await conn.query(schemaSql);
+      for (const f of schemaFiles) {
+        await conn.query(fs.readFileSync(path.join(dbDir, f), 'utf8'));
+      }
     } finally {
       await conn.end();
     }
-    return { ok: true };
+    return { ok: true, schemaFiles };
   } catch (e) {
     return { ok: false, error: e.message };
   }

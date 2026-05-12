@@ -30,7 +30,6 @@ const router = express.Router();
 const BE_SRC = path.join(ROOT, 'BE', 'src');
 const FE_SRC = path.join(ROOT, 'FE', 'src');
 const RESET_SQL = path.join(ROOT, 'db', 'reset.sql');
-const SCHEMA_SQL = path.join(ROOT, 'db', 'agent_schema.sql');
 
 const DB_TABLES = ['log_agent_runs', 'log_agent_decisions', 'log_task_state'];
 
@@ -134,12 +133,15 @@ router.post('/init', async (_req, res) => {
     if (fs.existsSync(BE_SRC)) fs.rmSync(BE_SRC, { recursive: true, force: true });
     if (fs.existsSync(FE_SRC)) fs.rmSync(FE_SRC, { recursive: true, force: true });
 
-    // 4. DB 전체 reset (D31=a, 2026-05-13) — db/reset.sql 실행 후 agent_schema.sql 재실행.
-    //    lib/db.js의 pool은 multipleStatements:false라 여기선 별도 connection
-    //    (multipleStatements:true) 만들어 sql 한 번에 실행. lib/reset_db.js와
-    //    동일 패턴. spawn 안 하는 이유: HTTP 응답 안에서 결과 정리하기 쉬움.
+    // 4. DB 전체 reset (D32, 2026-05-14) — reset.sql(모든 테이블 동적 DROP) → db/*.sql 순회.
+    //    db/*.sql 중 reset.sql 자기 자신은 제외, 알파벳 순서로 결정론적 실행.
+    //    현재는 agent_schema.sql 하나뿐이지만 미래에 db/business_schema.sql 등
+    //    추가되면 자동 함께 적용 (lib/reset_db.js와 동일 흐름).
+    const dbDir = path.join(ROOT, 'db');
     const resetSql = fs.readFileSync(RESET_SQL, 'utf8');
-    const schemaSql = fs.readFileSync(SCHEMA_SQL, 'utf8');
+    const schemaFiles = fs.readdirSync(dbDir)
+      .filter((f) => f.endsWith('.sql') && f !== 'reset.sql')
+      .sort();
     const conn = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       port: Number(process.env.DB_PORT || 3306),
@@ -149,8 +151,11 @@ router.post('/init', async (_req, res) => {
     });
     try {
       await conn.query(resetSql);
-      await conn.query(schemaSql);
+      for (const f of schemaFiles) {
+        await conn.query(fs.readFileSync(path.join(dbDir, f), 'utf8'));
+      }
       result.db_truncated = [...DB_TABLES];
+      result.schema_files_applied = schemaFiles;
     } finally {
       await conn.end();
     }
