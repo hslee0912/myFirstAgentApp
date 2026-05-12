@@ -569,11 +569,157 @@ function areaClass(agent, target) {
   return 'orchestrator';
 }
 
+/** Extract the first meaningful line matching `regex` from a multiline blob. */
+function extractKeyLine(text, regex, maxLen = 300) {
+  const line = String(text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l && regex.test(l));
+  return line ? line.slice(0, maxLen) : '';
+}
+
+/** Find the most relevant FAILED run for top-level surfacing.
+ *  Orchestrator row is a task-level wrap with no detail — prefer the actual
+ *  phase agent that failed (Deploy / PostTest / Lint / BE / FE / CodeChecker).
+ *  Falls back to Orchestrator only if no phase agent failed.
+ */
+function pickFailedRun(runs) {
+  if (!runs || runs.length === 0) return null;
+  const failed = runs.filter((r) => r.status === 'FAILED');
+  if (failed.length === 0) return null;
+  // Prefer non-Orchestrator agent rows (they hold the real cause).
+  const phaseFail = failed.find((r) => r.agent_name !== 'Orchestrator');
+  return phaseFail || failed[0];
+}
+
 /** Classify a FAILED log_agent_runs row → severity / category / label / recommendation. */
 function classifyRunError(run) {
   const oj = safeJson(run.output_json) || {};
   const err = String(oj.error || '');
   const stack = String(oj.stack || '');
+  const agent = String(run.agent_name || '');
+
+  // ===== Deploy (Phase 8) 특수 처리 =====
+  // output_json 구조: { failed_stage, error?, compose_output?, logs?: {be,fe}, exit_code, duration_ms }
+  if (agent === 'Deploy') {
+    const cOut = String(oj.compose_output || '');
+    const logs = oj.logs || {};
+    const logsBe = String(logs.be || '');
+    const logsFe = String(logs.fe || '');
+    const allDeploy = err + '\n' + cOut + '\n' + logsBe + '\n' + logsFe;
+    const fs = String(oj.failed_stage || '');
+
+    // Docker daemon 다운 (Windows: npipe, Linux: socket) — 가장 흔한 환경 에러
+    if (/dockerDesktopLinuxEngine|docker daemon|Cannot connect to the Docker daemon|npipe:\/\/|\/var\/run\/docker\.sock/i.test(allDeploy)) {
+      return {
+        severity: 'error',
+        category: 'DOCKER_DAEMON_DOWN',
+        label: '🐳 Docker Desktop 미실행 (데몬 연결 실패)',
+        detail: extractKeyLine(allDeploy, /docker|daemon|pipe|sock/i) || 'docker daemon에 연결 실패',
+        recommendation: 'Docker Desktop을 시작하세요 (재부팅 후 자동 시작 안 됐을 가능성). 시작 후 `docker info`의 Server 섹션이 나오면 UI의 Redeploy 버튼으로 재시도. 또는 .env의 DEPLOY_MODE=off로 Phase 8/9 skip.',
+      };
+    }
+
+    if (fs === 'docker_check') {
+      return {
+        severity: 'error',
+        category: 'DOCKER_CHECK_FAILED',
+        label: '🐳 Docker CLI/Compose 사전 점검 실패',
+        detail: err || 'docker 명령 자체를 사용할 수 없음',
+        recommendation: 'Docker Desktop 설치 + PATH 확인. 또는 .env의 DEPLOY_MODE=off로 Phase 8/9 skip.',
+      };
+    }
+    if (fs === 'host_mysql_ping') {
+      return {
+        severity: 'error',
+        category: 'HOST_MYSQL_DOWN',
+        label: '🗄 host MySQL 연결 실패',
+        detail: err || 'host MySQL ping 실패',
+        recommendation: 'host MySQL 서비스 실행 확인 + .env의 DB_HOST/PORT/USER/PASSWORD 검토. 컨테이너는 host.docker.internal로 host MySQL에 접근.',
+      };
+    }
+    if (fs === 'port_preflight') {
+      const rp = oj.requested_ports || {};
+      return {
+        severity: 'error',
+        category: 'PORT_CONFLICT',
+        label: '🔌 포트 충돌 (preflight fallback 한계 초과)',
+        detail: err || `요청 포트: be=${rp.be || '?'} fe=${rp.fe || '?'}`,
+        recommendation: '.env의 BE_PORT/FE_PORT 변경 또는 점유 process 종료 (`netstat -ano | findstr :PORT`).',
+      };
+    }
+    if (fs === 'compose_up_timeout') {
+      return {
+        severity: 'error',
+        category: 'COMPOSE_TIMEOUT',
+        label: `⏱ compose up timeout (${oj.duration_ms || '?'}ms)`,
+        detail: err || 'docker compose up이 timeout 안에 healthy 안 됨',
+        recommendation: '이미지 빌드 시간 또는 healthcheck 지연이 원인. DEPLOY_TIMEOUT_MS 늘리거나 Dockerfile 캐시 확인. logs.be/logs.fe 펼쳐 컨테이너 마지막 출력 확인.',
+      };
+    }
+    if (fs === 'compose_up') {
+      const firstLine = extractKeyLine(cOut + '\n' + logsBe + '\n' + logsFe, /error|fail|cannot|denied|refused/i)
+        || (cOut || logsBe || logsFe || '').split('\n').filter((l) => l.trim())[0] || '';
+      return {
+        severity: 'error',
+        category: 'COMPOSE_UP_FAILED',
+        label: `🐳 docker compose up 실패 (exit ${oj.exit_code ?? '?'})`,
+        detail: firstLine.slice(0, 300) || err || 'compose up 실패',
+        recommendation: 'output_json의 compose_output 또는 logs.{be,fe}를 펼쳐 원본 에러 확인. 흔한 원인: 빌드 실패 / 포트 점유 / mysql healthcheck 실패 / 의존성 설치 실패.',
+      };
+    }
+    // generic Deploy fail
+    return {
+      severity: 'error',
+      category: 'DEPLOY_FAILED',
+      label: '🐳 Deploy 실패' + (fs ? ` (${fs})` : ''),
+      detail: err || cOut.slice(0, 200) || '(no error message)',
+      recommendation: 'output_json 전체 펼쳐 failed_stage·compose_output·logs 확인.',
+    };
+  }
+
+  // ===== PostTest (Phase 9) 특수 처리 =====
+  // 케이스 1 (exception): { pass:false, error, baseUrl }
+  // 케이스 2 (endpoint fail): { pass:false, total, passed, results:[per-endpoint] }
+  if (agent === 'PostTest') {
+    const results = Array.isArray(oj.results) ? oj.results : [];
+    // 케이스 1: 예외 (results 없음, error만)
+    if (!results.length && err) {
+      return {
+        severity: 'error',
+        category: 'POSTTEST_EXCEPTION',
+        label: '🧪 PostTest 실행 예외',
+        detail: err,
+        recommendation: `BE 컨테이너가 정상 응답하는지 확인 (baseUrl: ${oj.baseUrl || '?'}). curl로 직접 시도 가능. 컨테이너 healthcheck 또는 BE 시작 실패 의심.`,
+      };
+    }
+    // 케이스 2: endpoint assertion 실패
+    const failedEps = results.filter((r) => !r.pass);
+    if (failedEps.length > 0) {
+      const first = failedEps[0] || {};
+      const firstErr = (Array.isArray(first.errors) && first.errors[0])
+        || first.reason
+        || first.error
+        || 'schema mismatch';
+      const epName = first.name || first.path || `${first.method || ''} ${first.path || ''}`.trim() || 'endpoint';
+      return {
+        severity: 'error',
+        category: 'POSTTEST_ASSERTION_FAIL',
+        label: `🧪 PostTest 실패 (${oj.passed ?? 0}/${oj.total ?? failedEps.length} endpoints)`,
+        detail: `[${epName}] ${firstErr}`.slice(0, 300),
+        recommendation: 'output_json.results를 펼쳐 각 endpoint별 trace/errors 확인. 흔한 원인: BE 응답 형식이 api_contract와 불일치 / status 코드 mismatch / 필드명·타입 차이.',
+      };
+    }
+    return {
+      severity: 'error',
+      category: 'POSTTEST_FAILED',
+      label: '🧪 PostTest 실패',
+      detail: err || '(no detail)',
+      recommendation: 'output_json 전체 펼쳐서 확인.',
+    };
+  }
+
+  // ===== 기존 LLM Agent 류 분류 =====
   const all = err + '\n' + stack;
 
   // UNAUTHORIZED_DEPS — validateAllowedDeps throw
@@ -738,20 +884,25 @@ function renderFinalResultCard(decision, states, runs) {
   };
   const title = titleMap[v] || v;
 
-  // 최종 결과 메시지 후보: final_result_text가 우선, 없으면 첫 FAILED run의
-  // 카테고리화된 에러 메시지를 짧게 추출 (drill-down 안 해도 보이도록).
+  // 최종 결과 메시지 후보: final_result_text가 우선이되, 그게 generic 안내문
+  // ("see ... output_json for details")이면 classified detail로 *보강*해서 drill-down
+  // 없이도 진짜 원인이 보이도록. final_result_text 자체가 없으면 분류 결과로 대체.
   let msg = (decision.final_result_text || '').trim();
-  if (!msg && (v === 'ERROR' || v === 'FAIL')) {
-    const failedRun = (runs || []).find((r) => r.status === 'FAILED');
+  const isGenericMsg = /see\s+.*output_json\s+for\s+details/i.test(msg)
+    || /see\s+\w+\s+run\s+output_json/i.test(msg);
+  if ((!msg || isGenericMsg) && (v === 'ERROR' || v === 'FAIL')) {
+    const failedRun = pickFailedRun(runs);
     if (failedRun) {
       const c = classifyRunError(failedRun);
       const tgt = failedRun.target ? ` / ${failedRun.target}` : '';
-      msg = `[${failedRun.agent_name}${tgt}] ${c.label}\n${c.detail || ''}`.trim();
+      const enriched = `[${failedRun.agent_name}${tgt}] ${c.label}\n${c.detail || ''}`.trim();
+      msg = isGenericMsg ? `${msg}\n\n${enriched}` : enriched;
     } else {
       const failedState = (states || []).find((s) => s.status === 'FAILED');
       if (failedState) {
         const c = classifyLintStage(failedState.failed_stage);
-        msg = `[Lint / ${failedState.target}] ${c.label} (retry ${failedState.retry_count})`;
+        const enriched = `[Lint / ${failedState.target}] ${c.label} (retry ${failedState.retry_count})`;
+        msg = isGenericMsg ? `${msg}\n\n${enriched}` : enriched;
       }
     }
   }
@@ -777,8 +928,9 @@ function renderTopErrorSummary(decision, states, runs) {
   if (!decision) return '';
   if (decision.final_verdict !== 'ERROR' && decision.final_verdict !== 'FAIL') return '';
 
-  // Pick the first FAILED log_agent_runs row — that's the exception path.
-  const failedRun = (runs || []).find((r) => r.status === 'FAILED');
+  // Pick the most informative FAILED run — Orchestrator는 task-level wrap이라
+  // detail이 없으니 실제 phase agent(Deploy/PostTest/Lint/BE/FE/CodeChecker)를 우선.
+  const failedRun = pickFailedRun(runs);
   if (failedRun) {
     const c = classifyRunError(failedRun);
     const area = areaClass(failedRun.agent_name, failedRun.target);
