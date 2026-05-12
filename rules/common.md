@@ -16,8 +16,8 @@
 - **비밀번호는 반드시 bcrypt 해시로 저장**. 평문 저장 금지.
   - 권장: `bcrypt.hash(password, 10)`
 - **SQL은 반드시 Prepared Statement (mysql2 placeholder `?` 사용)**. 문자열 결합 금지.
-  - 좋음: `db.query('SELECT * FROM app_users WHERE email = ?', [email])`
-  - 나쁨: `db.query("SELECT * FROM app_users WHERE email = '" + email + "'")`
+  - 좋음: `db.query('SELECT * FROM some_table WHERE col = ?', [val])`
+  - 나쁨: `db.query("SELECT * FROM some_table WHERE col = '" + val + "'")`
 
 ## 3. API 응답 형식 (필수)
 

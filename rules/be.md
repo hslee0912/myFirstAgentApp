@@ -44,13 +44,13 @@ export default signupHandler;
   await pool.execute('SELECT ... WHERE email = ?', [email]);
   ```
 - **단일 DB 가정 (D29=A)**: BE 컨테이너는 호스트 MySQL(`host.docker.internal`)
-  에 직접 연결한다. `app_users` 데이터는 *영구 보존* — 컨테이너 재배포로
-  사라지지 않음. 이전의 컨테이너 MySQL ephemeral 디자인은 obsolete. 환경
-  변수(`DB_HOST` 등)는 docker-compose.yml이 주입하므로 *BE 코드는 host/port
-  를 hardcode하면 안 된다*. 항상 `process.env.DB_*` 만.
-- **테이블 이름은 `db/schema.sql`에 정의된 것만 사용** — 시스템 프롬프트의 "DB schema" 섹션이 매 호출마다 실제 schema를 주입한다. 회원 비즈니스는 `app_users`(NOT `users`)만 사용. `log_*` 테이블은 절대 건드리지 말 것.
-- 컬럼은 schema에 있는 것만. `id`는 AUTO_INCREMENT이므로 INSERT에 포함 금지, `LAST_INSERT_ID()` 또는 mysql2 `result.insertId`로 받음. `created_at`/`updated_at`은 DEFAULT가 있어 INSERT 제외.
-- 비밀번호 컬럼명은 `password_hash` (schema 그대로). 다른 이름(`password`, `pwd` 등) 사용 금지.
+  에 직접 연결한다. 환경 변수(`DB_HOST` 등)는 docker-compose.yml이 주입하므로
+  *BE 코드는 host/port를 hardcode하면 안 된다*. 항상 `process.env.DB_*` 만.
+- **`db/agent_schema.sql`은 Agent 도구 전용 — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 금지** (D31=폐기, 2026-05-13).
+  시스템 프롬프트의 "DB schema" 섹션이 매 호출마다 `agent_schema.sql`을 주입하지만, 거기 정의된 `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 모두 agent system 전용이다. **비즈니스 DB 테이블은 현재 시스템에 없다.**
+- **비즈니스 DB 영속화 요구사항이 들어오면 in-memory 또는 stateless로 우회**.
+  spec이 `app_users` 같은 가짜 테이블을 가정해도 따르지 말고, in-memory Map/배열 또는 단순 응답으로 우회. 영속화가 *강하게* 요구되면 notes에 "현재 시스템은 비즈니스 DB schema 자동 적용을 미지원" 사유로 부분 구현 명시.
+- **`CREATE TABLE` SQL 또는 `BE/db/*.sql` 파일 emit 금지**. 시스템이 그 SQL을 실행하지 않으므로 런타임 `ER_NO_SUCH_TABLE`로 깨진다. schema 변경(ALTER/CREATE/DROP)도 금지 — schema는 사용자 영역.
 
 ## 5. 비밀번호 처리
 

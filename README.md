@@ -22,7 +22,7 @@ myFirstAgentApp/
 │   ├── bootstrap.js             # FE/BE 스캐폴딩 + Dockerfile/.dockerignore 복사
 │   ├── fs_util.js               # 경로 안전 검증 + 파일 스냅샷
 │   ├── api_test.js              # api_contract → fetch + JSON Schema 검증 (test_agent helper)
-│   ├── init_db.js               # schema.sql 실행
+│   ├── init_db.js               # agent_schema.sql 실행
 │   ├── stack.js                 # stack.config.json 로더
 │   ├── stack.config.json        # FE/BE 스택 정의 (단일 원천)
 │   └── stack_templates/         # 스캐폴딩 템플릿
@@ -40,7 +40,8 @@ myFirstAgentApp/
 │   ├── DECISIONS.md             # 결정 타임라인
 │   └── ROADMAP.md               # 다음 작업 큐
 ├── db/
-│   └── schema.sql               # 단일 DB (myfirstagentapp_db) 4 tables
+│   ├── agent_schema.sql         # Agent 도구 schema (log_* 3 tables)
+│   └── reset.sql                # DROP log_* (D31, init_db.js와 짝으로 동작)
 ├── shared/
 │   └── api_contract.json        # CodeChecker가 BOTH일 때 작성
 ├── FE/                          # 1회 부트스트랩 후 FE Agent가 채움
@@ -50,11 +51,12 @@ myFirstAgentApp/
 └── README.md
 ```
 
-## DB 설계 (단일 DB: `myfirstagentapp_db`)
+## DB 설계 (단일 DB: `myfirstagentapp_db`, Agent 도구 전용 — D31)
+
+`db/agent_schema.sql`은 Agent 도구 테이블(log_*)만 정의한다. 비즈니스 schema(`app_users` 등)는 D31(2026-05-13) 결정으로 폐기됨 — 향후 별도 메커니즘으로 처리 예정.
 
 | 테이블 | 용도 | INSERT | UPDATE |
 |---|---|---|---|
-| `app_users` | 회원가입 비즈니스 | BE 코드 (런타임) | — |
 | `log_agent_runs` | Agent별 실행 row | 각 Agent | 각 Agent (자기 row만) |
 | `log_agent_decisions` | task당 1행 최종 판정 | CodeChecker | Orchestrator |
 | `log_task_state` | FE/BE 영역별 상태 | CodeChecker | Lint |
@@ -113,7 +115,7 @@ npm run init-db
 ```
 또는 직접:
 ```bash
-mysql -u root -p < db/schema.sql
+mysql -u root -p < db/agent_schema.sql
 ```
 
 ### 4) 실행
@@ -214,7 +216,7 @@ FE 또는 BE의 기술 스택을 바꾸려면(예: FE → Phaser.js, BE → Spri
 
 ### 한 곳 더 — 새 스택이 npm 기반이 아니면
 - `package.json` 루트의 `scripts.lint:be`, `scripts.test:be` 같은 보조 스크립트는 npm 의존이라 의미 없어질 수 있음. 사용 안 하면 무시하거나 삭제.
-- DB 비즈니스 코드는 여전히 `app_users` 테이블을 쓰므로 `db/schema.sql` 변경 불필요.
+- `db/agent_schema.sql`은 Agent 도구 전용이라 스택 변경과 무관 — 손댈 일 없음.
 
 ---
 

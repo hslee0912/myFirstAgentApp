@@ -80,11 +80,12 @@ shared/
 
 Agent 코드, lint 로직, bootstrap은 전부 그대로. 자세한 절차는 [README.md](../README.md)의 "스택 변경 체크리스트".
 
-## DB (단일 MySQL: `myfirstagentapp_db`)
+## DB (단일 MySQL: `myfirstagentapp_db`, Agent 도구 전용 — D31)
+
+`db/agent_schema.sql`은 Agent 도구 테이블(log_*)만 정의한다. 비즈니스 schema (`app_users` 등)는 D31(2026-05-13) 결정으로 폐기됨 — LLM이 비즈니스 schema를 emit해도 시스템이 자동 적용하지 않으며, BE Agent는 in-memory 또는 stateless로 우회한다. 향후 비즈니스 schema 적용 메커니즘은 별도 작업.
 
 | 테이블 | INSERT 주체 | UPDATE 주체 |
 |---|---|---|
-| `app_users` | BE 런타임 | — |
 | `log_agent_runs` | 각 Agent (자기 row) | 각 Agent (자기 row만) |
 | `log_agent_decisions` | CodeChecker (task당 1) | Orchestrator (final_verdict) |
 | `log_task_state` | CodeChecker (task당 1~2) | Lint Agent 전용 |

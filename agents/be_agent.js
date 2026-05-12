@@ -70,16 +70,15 @@ function readConvention() {
 
 function readSchemaSection() {
   try {
-    const sql = fs.readFileSync(path.join(ROOT, 'db', 'schema.sql'), 'utf8');
+    const sql = fs.readFileSync(path.join(ROOT, 'db', 'agent_schema.sql'), 'utf8');
     return (
-      '\n\n## DB schema (실제 적용된 db/schema.sql — 반드시 이대로 사용)\n\n' +
+      '\n\n## DB schema (db/agent_schema.sql — Agent 도구 전용)\n\n' +
       '```sql\n' + sql + '\n```\n\n' +
       '규칙:\n' +
-      '- 비즈니스 SQL은 **`app_users`** 테이블만 사용. `users` 같은 다른 이름 사용 절대 금지.\n' +
-      '- `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 agent system 전용 — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 하지 말 것.\n' +
-      '- INSERT/UPDATE 컬럼은 schema에 정의된 것만. `id`는 AUTO_INCREMENT라 INSERT에 포함하지 말 것 (LAST_INSERT_ID로 받기).\n' +
-      '- `created_at`, `updated_at`은 DEFAULT 값이 있으므로 INSERT에 포함하지 말 것.\n' +
-      '- `password_hash` 컬럼이라 bcrypt 해시 결과를 그 이름 그대로 저장 (`password` 같은 다른 컬럼 이름 사용 금지).'
+      '- 위 `log_agent_runs`, `log_agent_decisions`, `log_task_state`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.\n' +
+      '- **비즈니스 DB 테이블은 현재 시스템에 없다.** spec이 DB 영속화를 요구해도 가짜 테이블 가정 금지, `CREATE TABLE` SQL emit 금지, `BE/db/*.sql` 파일 생성 금지.\n' +
+      '- DB가 필요한 요구사항이면 in-memory(Map/배열) 또는 stateless 응답으로 우회. spec이 영속화를 명시 요구하면 notes에 "현재 시스템은 비즈니스 DB 미지원" 사유로 부분 구현 명시.\n' +
+      '- schema 변경(ALTER/CREATE/DROP) 가이드 금지 — schema는 사용자 영역.'
     );
   } catch (_) {
     return '';

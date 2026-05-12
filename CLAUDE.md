@@ -86,9 +86,9 @@ Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
+- 2026-05-13  (TBD)  **D31 schema.sql 분리 + 비즈니스 schema 폐기** — `db/schema.sql` → `db/agent_schema.sql` rename + `app_users` 영구 삭제. Agent 도구 테이블(`log_*`)만 남김. reset-db 흐름은 DROP+CREATE(`db/reset.sql` 단순화 + `lib/reset_db.js`가 reset.sql 실행 후 agent_schema.sql 재실행). 비즈니스 DB 영속화 요구사항은 BE Agent가 in-memory/stateless로 우회 — `CREATE TABLE` / `BE/db/*.sql` emit 금지를 `rules/be.md` §4와 system prompt(`agents/codechecker_agent.js`, `agents/be_agent.js`)에 명시. 비즈니스 schema 자동 적용 메커니즘은 향후 별도 작업. [DECISIONS.md](docs/DECISIONS.md#2026-05-13--d31-schemasql-분리--비즈니스-schema-폐기) 참조.
+- 2026-05-12  04d6423  **D30 Stage 3 retry 허용 + rules 강화** — Stage 3 fail도 retry (이전엔 즉시 FAIL). `rules/fe.md` §4-bis에 안티패턴 명시(조건부 `return null`, default prop, export, import). [DECISIONS.md](docs/DECISIONS.md#2026-05-12--d30-stage-3-retry-허용--rules-강화) 참조.
 - 2026-05-11  (TBD)  **UI control panel (npm run ui)** — Express + 정적 HTML (~200 LOC). `ui/server.js` REST 7개 endpoint, `ui/public/index.html` 단일 페이지 + 1.5초 DB polling. orchestrator spawn (동시 1 run) / 최근 task 목록·상세 / `.env` 토글 GUI editor (`UI_EDITABLE_KEYS` 화이트리스트로 `ANTHROPIC_API_KEY`·`DB_PASSWORD` 보호) / reset-db 버튼. port preflight로 `UI_PORT=4000` 충돌 시 자동 fallback. [ARCHITECTURE.md](docs/ARCHITECTURE.md#ui-control-panel-npm-run-ui) 참조.
-- 2026-05-11  c85d93e  **API contract split layout** — `shared/api_contract.json`은 endpoint index만 (`{name, path, method, description}`), 각 detail은 `shared/router/<name>.json`. CodeChecker가 `api_contract` + `router_details` 두 필드로 emit → 시스템이 두 위치에 write + stale router 파일 자동 cleanup. `normalizeContract(contract, { routerDir })`이 in-memory에서 inline 확장 — Agent/PostTest는 항상 full form을 봄. 사이클 검증 PASS (1 라운드 + PostTest 65ms). [ARCHITECTURE.md](docs/ARCHITECTURE.md#api-contract-레이아웃-split-index--router) 참조.
-- 2026-05-11  f02ebdf  **단일 재사용 test 워크트리 정책** — `.claude/worktrees/test/` (branch `claude/test`) 한 번 만들고 모든 검증에서 재사용. 사이 정리는 `rm -rf BE FE`만 (bootstrap fresh, node_modules 보존). 매번 새 워크트리 만들지 말 것. [OPERATIONS.md](docs/OPERATIONS.md) 참조.
 
 ## Skill routing
 

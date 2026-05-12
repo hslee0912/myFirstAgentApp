@@ -30,8 +30,9 @@ const router = express.Router();
 const BE_SRC = path.join(ROOT, 'BE', 'src');
 const FE_SRC = path.join(ROOT, 'FE', 'src');
 const RESET_SQL = path.join(ROOT, 'db', 'reset.sql');
+const SCHEMA_SQL = path.join(ROOT, 'db', 'agent_schema.sql');
 
-const DB_TABLES = ['app_users', 'log_agent_runs', 'log_agent_decisions', 'log_task_state'];
+const DB_TABLES = ['log_agent_runs', 'log_agent_decisions', 'log_task_state'];
 
 /** 디렉터리 안의 모든 파일을 재귀적으로 열거 (count + sample 최대 N개). */
 function listFilesRecursive(dir, sampleLimit = 10) {
@@ -108,11 +109,12 @@ router.post('/init', async (_req, res) => {
     if (fs.existsSync(BE_SRC)) fs.rmSync(BE_SRC, { recursive: true, force: true });
     if (fs.existsSync(FE_SRC)) fs.rmSync(FE_SRC, { recursive: true, force: true });
 
-    // 3. DB 전체 truncate — db/reset.sql 그대로 실행.
+    // 3. DB 전체 reset (D31=a, 2026-05-13) — db/reset.sql 실행 후 agent_schema.sql 재실행.
     //    lib/db.js의 pool은 multipleStatements:false라 여기선 별도 connection
     //    (multipleStatements:true) 만들어 sql 한 번에 실행. lib/reset_db.js와
     //    동일 패턴. spawn 안 하는 이유: HTTP 응답 안에서 결과 정리하기 쉬움.
-    const sql = fs.readFileSync(RESET_SQL, 'utf8');
+    const resetSql = fs.readFileSync(RESET_SQL, 'utf8');
+    const schemaSql = fs.readFileSync(SCHEMA_SQL, 'utf8');
     const conn = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       port: Number(process.env.DB_PORT || 3306),
@@ -121,7 +123,8 @@ router.post('/init', async (_req, res) => {
       multipleStatements: true,
     });
     try {
-      await conn.query(sql);
+      await conn.query(resetSql);
+      await conn.query(schemaSql);
       result.db_truncated = [...DB_TABLES];
     } finally {
       await conn.end();
@@ -129,7 +132,7 @@ router.post('/init', async (_req, res) => {
 
     result.notice =
       `BE/src ${result.be_src_deleted}개, FE/src ${result.fe_src_deleted}개 파일 삭제 + ` +
-      `DB ${result.db_truncated.length}개 테이블 truncate. ` +
+      `DB ${result.db_truncated.length}개 테이블 reset (DROP+CREATE). ` +
       '다음 Run pipeline 시작 시 bootstrap이 placeholder를 자동 복원합니다. ' +
       '컨테이너는 그대로 떠있으니 새 cycle 결과를 보려면 cycle 완료 후 Redeploy.';
     res.json(result);

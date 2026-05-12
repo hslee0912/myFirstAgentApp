@@ -2,6 +2,39 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-13 — D31 schema.sql 분리 + 비즈니스 schema 폐기
+
+**문제**: 단일 `db/schema.sql` 안에 Agent 도구 테이블(`log_*`)과 비즈니스 테이블(`app_users`)이 혼재. BE Agent가 schema 확장 요청(e.g. "게임 도메인 추가")을 받으면 `BE/db/schema_game.sql` 같은 파일을 *emit*하지만 시스템에 그 SQL을 *실제 MySQL에 실행하는 메커니즘이 0건* (`agents/be_agent.js`는 `schema.sql`을 read만, `orchestrator.js`/`bootstrap.js`/`init_db.js` 어디서도 `BE/db/*.sql`을 적용하지 않음). 결과: 파일은 디스크에 있는데 DB는 옛 상태 → 런타임 `ER_NO_SUCH_TABLE` 500. 실제 발생: `task_20260512082949_4c3135`.
+
+**D31 결정**:
+- **Q1 = 폐기** — `app_users` 영구 삭제. 비즈니스 schema 자동 적용 메커니즘은 별도 작업(scope 미정).
+- **Q2 = a (DROP + CREATE)** — reset-db 흐름. "재실행" 시맨틱에 부합, 컬럼 추가 등 schema 변경도 reset 한 번으로 반영. TRUNCATE보다 일관성 우선.
+- **Q3 = 정리** — 직전 cycle 잔재(BE/src + FE/src) 통째 baseline 복원. Q1=폐기로 회원가입 코드 전체가 schema와 inconsistent해지므로 BE+FE를 bootstrap placeholder 상태로 되돌림.
+
+### 코드 변경
+
+- `db/schema.sql` → `db/agent_schema.sql` rename + `app_users` 정의 제거. 헤더 코멘트에 "Agent 도구 전용, 비즈니스 schema는 향후 별도 메커니즘"으로 명시.
+- `db/reset.sql` → `TRUNCATE` → `DROP TABLE log_*` (FK 의존 순서). agent_schema 재실행은 application code(`lib/reset_db.js`, `ui/routes/init.js`)가 담당.
+- `lib/init_db.js`, `lib/reset_db.js`, `lib/db.js` — 경로/주석 갱신. `reset_db.js`는 DROP 후 agent_schema.sql 재실행하도록 2단계 흐름.
+- `agents/codechecker_agent.js`, `agents/be_agent.js` — schema 주입 경로 + LLM 가이드 강화: "비즈니스 DB 테이블은 현재 시스템에 없다. in-memory/stateless로 우회, `CREATE TABLE` SQL emit 금지, `BE/db/*.sql` 파일 emit 금지".
+- `ui/routes/init.js` — `DB_TABLES`에서 `app_users` 제거 + reset 로직에 agent_schema.sql 재실행 추가.
+- `ui/public/index.html` — reset-db 확인 메시지 "truncate" → "DROP+CREATE".
+
+### Rules / 문서 변경
+
+- `rules/be.md` §4 — "비즈니스 DB 영속화 요구사항이 들어오면 in-memory/stateless로 우회" 정책 명문화. `CREATE TABLE` / `BE/db/*.sql` emit 금지 명시.
+- `rules/common.md` §2 — `app_users` 예시를 generic `some_table`로 교체.
+- `README.md`, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/MIGRATION.md`, `docs/ROADMAP.md` — schema.sql 경로 + DB 테이블 목록 갱신. MIGRATION 검증 step은 회원가입 → `/health` smoke로 교체.
+
+### 무엇이 *해결되지 않는가*
+
+- BE Agent의 *비즈니스 schema 자동 적용 메커니즘*은 여전히 없음. 향후 작업으로 남김.
+- 다음 cycle에서 사용자가 회원가입 같은 비즈니스 DB 영속화를 요구하면 BE Agent는 in-memory로만 처리 (재시작 시 데이터 소실). 학생 PoC scope에선 허용 가능.
+
+### 영향 받지 않는 부분
+
+- Phase 4 lint/test 흐름, Phase 8/9 deploy/posttest 흐름, contract split layout, COMMIT_MODE/VALIDATION_MODE/DEPLOY_MODE 토글, Phase 5 verdict 평가 — 모두 그대로.
+
 ## 2026-05-12 — D30 Stage 3 retry 허용 + rules 강화
 
 **문제**: 이전 정책(Stage 3 fail → 즉시 FAIL, retry 없음)이 LLM의 흔한 안티패턴
