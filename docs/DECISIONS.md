@@ -2,6 +2,37 @@
 
 시간순 결정 기록. 최근 3개는 [CLAUDE.md](../CLAUDE.md)에도 미러.
 
+## 2026-05-14 — D33 BE Agent migration emit + 자동 적용 (B-2 도입 결정)
+
+**배경**: D31에서 *학생 데모 안전성* 위해 "in-memory 우회 + emit 금지" 임시 조치. D32(`db/*.sql` 자동 순회)로 *기반*이 마련됨. D33은 *Agent가 만든 migration .sql을 시스템이 자동 적용*해 D31에서 미루었던 "비즈니스 schema 자동 적용 메커니즘"을 완전 흡수.
+
+**결정 — B-2 방식**:
+- BE Agent가 `BE/db/migrations/<timestamp>_<name>.sql` 형태로 새 schema 변경을 emit
+- orchestrator가 새 migration을 감지해 *MySQL에 자동 실행* + *이력 테이블에 적용 기록*
+- 이력 테이블(`log_db_migrations` 가칭)로 *중복 적용 방지* + *어느 task가 어느 migration을 만들었는지 추적*
+
+**D31의 어느 조항이 폐기되나**:
+- ❌ "CREATE TABLE SQL emit 금지" — *폐기*
+- ❌ "BE/db/*.sql 파일 emit 금지" — *폐기* (단 경로는 `BE/db/migrations/` 하위로 표준화)
+- ❌ "in-memory/stateless 우회" — *선택지로 격하* (영속화 vs in-memory 둘 다 OK)
+- ✅ "agent_schema 분리 (log_*)" — *유지*
+- ✅ "app_users 영구 삭제" — *유지* (필요 시 Agent가 migration으로 재생성)
+- 🔄 "ALTER/CREATE/DROP 가이드 금지" — *완화* (Agent가 직접 SQL 작성, 시스템이 적용)
+
+**적용 범위 (D32와의 분리)**:
+- `db/*.sql` (메인) — *사람·시스템이 정의한 base schema*. agent_schema.sql + (선택) business_schema.sql. reset/init 시 자동 순회 (D32).
+- `BE/db/migrations/*.sql` (Agent emit) — *cycle별 schema 변경*. orchestrator가 각 cycle 직후 적용. 중복 방지 메커니즘 필수.
+
+**구현 진척 (B-2)**:
+- 본 결정문은 *방향 확정*. 코드 변경은 후속 commit.
+- `rules/be.md` §4 / `agents/codechecker_agent.js` / `agents/be_agent.js`의 system prompt는 *B-2 구현 commit과 함께* 갈아엎음. 그 전까지 D31 prompt 유지 — **런타임 안전 보장** (지금 prompt만 풀면 Agent emit이 적용 안 되어 D31 이전 사고 재발).
+- 본 commit은 *문서·메모리 갱신*만. 사용자·미래 세션이 *방향*을 인지할 수 있도록.
+
+**비-영향**:
+- agent_schema(`log_*`) 분리 — 그대로
+- reset.sql 동적 DROP + db/*.sql 순회 — D32 그대로 유효 (D33과 자연 결합)
+- `app_users` 영구 삭제 — 그대로
+
 ## 2026-05-14 — D32 reset.sql 동적 DROP + db/*.sql 자동 순회
 
 **배경**: D31(`agent_schema.sql` 분리)이 "비즈니스 schema 자동 적용 메커니즘은 향후 별도 작업"으로 남겨둠. D32가 그 후속 — 비즈니스 schema 파일을 `db/business_schema.sql` 등으로 추가하기만 하면 reset 흐름에 자동 포함되도록 *기반 메커니즘* 도입.

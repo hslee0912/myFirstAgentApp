@@ -51,9 +51,9 @@ myFirstAgentApp/
 └── README.md
 ```
 
-## DB 설계 (단일 DB: `myfirstagentapp_db`, Agent 도구 전용 — D31)
+## DB 설계 (단일 DB: `myfirstagentapp_db`, D33으로 비즈니스 schema 흡수 결정)
 
-`db/agent_schema.sql`은 Agent 도구 테이블(log_*)만 정의한다. 비즈니스 schema(`app_users` 등)는 D31(2026-05-13) 결정으로 폐기됨 — 향후 별도 메커니즘으로 처리 예정.
+`db/agent_schema.sql`은 Agent 도구 테이블(log_*)을 정의한다. 비즈니스 schema는 **D33(2026-05-14, B-2) 결정으로 *Agent migration emit → orchestrator 자동 적용* 메커니즘** 채택 — BE Agent가 `BE/db/migrations/<ts>_<name>.sql`을 emit하면 orchestrator가 자동 실행 + 이력 추적. **B-2 구현 commit으로 활성화 예정**이며 그 전까지는 D31의 잠정 정책(in-memory 우회)이 코드 prompt에 남아있다. 자세한 내용은 `docs/DECISIONS.md` D33 참조.
 
 | 테이블 | 용도 | INSERT | UPDATE |
 |---|---|---|---|

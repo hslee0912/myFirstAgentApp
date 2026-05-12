@@ -34,12 +34,14 @@ cd .claude/worktrees/test && rm -rf BE FE
 
 ```bash
 # DB 초기화 (CREATE DATABASE/TABLE — 처음 한 번)
-#   db/agent_schema.sql 실행. 비즈니스 schema는 D31(2026-05-13)으로 폐기됨.
+#   db/agent_schema.sql 실행. 비즈니스 schema는 D33(2026-05-14, B-2 미구현)으로
+#   Agent migration(BE/db/migrations/*.sql)을 통한 자동 적용 흐름으로 운영 예정.
+#   B-2 구현 전까지는 비즈니스 테이블 없음 (D31 잠정 정책 유효).
 npm run init-db
 
-# DB 전체 reset — DROP TABLE log_* → agent_schema.sql 재실행 (D31=a)
-#   "재실행" 시맨틱. 컬럼 추가 등 schema 변경도 reset 한 번으로 반영.
-#   FK 의존 순서: log_task_state → log_agent_decisions → log_agent_runs.
+# DB 전체 reset — D32(2026-05-14): 모든 테이블 동적 DROP + db/*.sql 알파벳 순회.
+#   현재는 db/agent_schema.sql 하나뿐이지만, db/business_schema.sql 같은 사람 정의
+#   schema 파일을 추가하면 자동 함께 적용된다.
 npm run reset-db
 
 # 파이프라인 실행

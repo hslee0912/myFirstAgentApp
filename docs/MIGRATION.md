@@ -146,14 +146,17 @@ docker compose --project-directory . -f lib/stack_templates/docker-compose.yml u
 docker compose --project-directory . -f lib/stack_templates/docker-compose.yml ps
 
 # 3. BE health check (BE → host MySQL via host.docker.internal)
-#    회원가입 smoke test는 D31(2026-05-13) app_users 폐기로 제거. 다음 cycle
-#    에서 spec이 요구하면 BE Agent가 새 핸들러를 in-memory로 만든다.
+#    회원가입 smoke test는 D31(2026-05-13)로 제거된 상태. D33(2026-05-14, B-2)
+#    구현 후엔 spec이 영속화를 요구하면 BE Agent가 핸들러 + BE/db/migrations/<ts>.sql
+#    둘 다 emit하고 orchestrator가 migration을 자동 적용한다. B-2 구현 전까지는
+#    in-memory 핸들러만 emit.
 curl -s http://localhost:3001/health
 #    → {"success":true,"data":{"status":"ok"}}
 
 # 4. host MySQL에 Agent 도구 테이블이 시드됐는지
 mysql -uroot -p<password> myfirstagentapp_db -e "SHOW TABLES;"
-#    → log_agent_runs, log_agent_decisions, log_task_state
+#    → 최소: log_agent_runs, log_agent_decisions, log_task_state
+#    D33 구현 후엔 추가: log_db_migrations (적용 이력) + Agent가 emit한 비즈니스 테이블
 
 # 5. (Claude Code 세션 복원 검증)
 claude /resume   # 옛 세션 목록 보임 → 선택

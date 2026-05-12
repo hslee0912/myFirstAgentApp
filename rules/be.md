@@ -52,6 +52,8 @@ export default signupHandler;
   spec이 `app_users` 같은 가짜 테이블을 가정해도 따르지 말고, in-memory Map/배열 또는 단순 응답으로 우회. 영속화가 *강하게* 요구되면 notes에 "현재 시스템은 비즈니스 DB schema 자동 적용을 미지원" 사유로 부분 구현 명시.
 - **`CREATE TABLE` SQL 또는 `BE/db/*.sql` 파일 emit 금지**. 시스템이 그 SQL을 실행하지 않으므로 런타임 `ER_NO_SUCH_TABLE`로 깨진다. schema 변경(ALTER/CREATE/DROP)도 금지 — schema는 사용자 영역.
 
+> **⚠️ D33 예고 (2026-05-14 결정, 미구현)**: 위 emit 금지 조항은 폐기 결정됨. B-2 메커니즘(BE Agent가 `BE/db/migrations/<ts>_<name>.sql` emit → orchestrator 자동 적용) 도입 commit과 함께 §4의 emit 금지·in-memory 우회 본문이 갈아엎어진다. **그 commit 전까지는 현재 정책 그대로** — 지금 emit하면 적용 안 되어 런타임 사고 발생. 자세한 방향은 [DECISIONS.md D33](../docs/DECISIONS.md#2026-05-14--d33-be-agent-migration-emit--자동-적용-b-2-도입-결정) 참조.
+
 ## 5. 비밀번호 처리
 
 - 저장 시: `bcrypt.hash(password, 10)`

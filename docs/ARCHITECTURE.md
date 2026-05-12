@@ -80,9 +80,9 @@ shared/
 
 Agent 코드, lint 로직, bootstrap은 전부 그대로. 자세한 절차는 [README.md](../README.md)의 "스택 변경 체크리스트".
 
-## DB (단일 MySQL: `myfirstagentapp_db`, Agent 도구 전용 — D31)
+## DB (단일 MySQL: `myfirstagentapp_db`, D33으로 비즈니스 schema 흡수 결정)
 
-`db/agent_schema.sql`은 Agent 도구 테이블(log_*)만 정의한다. 비즈니스 schema (`app_users` 등)는 D31(2026-05-13) 결정으로 폐기됨 — LLM이 비즈니스 schema를 emit해도 시스템이 자동 적용하지 않으며, BE Agent는 in-memory 또는 stateless로 우회한다. 향후 비즈니스 schema 적용 메커니즘은 별도 작업.
+`db/agent_schema.sql`은 Agent 도구 테이블(log_*)을 정의한다. 비즈니스 schema 적용은 **D33(2026-05-14, B-2) 결정으로 *Agent migration emit + orchestrator 자동 적용* 메커니즘**으로 운영된다 — BE Agent가 `BE/db/migrations/<ts>_<name>.sql`을 emit하면 orchestrator가 새 migration을 감지해 MySQL에 실행 + 이력 테이블(`log_db_migrations` 가칭)에 기록. **B-2 구현 commit으로 활성화 예정**이며 그 사이엔 D31의 잠정 정책(in-memory 우회 + emit 금지)이 코드 prompt(`rules/be.md` §4, `agents/codechecker_agent.js`, `agents/be_agent.js`)에 그대로 남아 런타임 안전성을 보장한다. 둘의 적용 범위 분리: `db/*.sql`은 사람·시스템이 정의한 base schema(D32 자동 순회), `BE/db/migrations/*.sql`은 cycle별 Agent emit(D33 자동 적용).
 
 | 테이블 | INSERT 주체 | UPDATE 주체 |
 |---|---|---|
