@@ -75,12 +75,7 @@ router.<method>('<subpath>', handler);       // subpath from contract
   에 직접 연결한다. 환경 변수(`DB_HOST` 등)는 docker-compose.yml이 주입하므로
   *BE 코드는 host/port를 hardcode하면 안 된다*. 항상 `process.env.DB_*` 만.
 - **`db/agent_schema.sql`은 Agent 도구 전용** (D31, 2026-05-13). 거기 정의된 `log_agent_runs`, `log_agent_decisions`, `log_task_state`, `log_db_migrations`는 모두 *agent system 전용* — 비즈니스 코드에서 절대 SELECT/INSERT/UPDATE/DELETE 금지.
-- **비즈니스 DB schema가 필요하면 `BE/db/migrations/<YYYYMMDDHHmmss>_<snake_case_name>.sql` 파일을 emit** (D33, 2026-05-14, B-2). orchestrator Phase 2.5가 그 파일을 *자동으로 MySQL에 적용*하고 `log_db_migrations`에 이력을 남긴다.
-  - 파일명: `<UTC timestamp>_<name>.sql`. 알파벳 순서 = 시간순 적용 보장.
-  - **idempotent하게 작성**: `CREATE TABLE IF NOT EXISTS ...`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` (MySQL 8 지원). 한 번 적용된 migration이 다시 실행되지는 않지만(checksum 체크), 사람이 reset 후 처음부터 재실행할 때도 안전.
-  - **이미 적용된 migration 파일은 *수정 금지*** — 시스템이 checksum 변경을 감지하면 즉시 FAIL + retry 흐름 진입. 변경이 필요하면 *새 timestamp의 추가 migration*을 만들 것.
-  - 한 cycle에 1~3개 migration만 emit. 관련된 변경(테이블 + 인덱스 + FK)은 한 파일에 묶을 수 있음.
-  - `USE myfirstagentapp_db;` 문 불필요 — orchestrator가 `database` 옵션으로 connection 함.
+- **비즈니스 DB schema가 필요하면** `BE/db/migrations/<UTC ts>_<name>.sql` 파일을 emit (D33). orchestrator Phase 2.5가 자동 적용. **자세한 규칙·함정·예시는 `rules/db.md` 참조** — 특히 *적용된 migration 수정 금지 (checksum 충돌 사고 방지)* 와 *idempotent 작성*은 반드시 읽을 것.
 - migration이 만든 비즈니스 테이블만 BE 코드(routes/services 등)에서 SELECT/INSERT/UPDATE/DELETE 가능. 회원가입 같은 영속 기능도 이 흐름으로 표현 (in-memory 우회 불필요).
 
 ## 5. 비밀번호 처리
@@ -150,6 +145,32 @@ module.exports = { signupHandler };
 Stage 3 실패 시 시스템이 `fix_instructions`로 jest 출력 전달 + LLM에게 최대 `MAX_RETRIES`(3)회 재시도 요청. 첫 시도부터 룰을 따르는 게 정상 경로.
 - bootstrap이 깐 placeholder test (예: `server.test.js`)는 disk에 그대로 보존된다 — 시스템 자동 생성도 placeholder는 덮어쓰지 않음 (`isTestFile()` skip).
 - **Agent의 책임**: placeholder test가 통과되도록 비즈니스 코드를 작성. test 코드 작성은 Agent의 책임이 아님.
+
+### 7-ter. 모듈에서 비즈니스 함수를 *반드시* export (Stage 3 BE측 흔한 실패)
+
+시스템 smoke test는 `const mod = require('./auth_service'); expect(typeof mod.signup).toBe('function');`처럼 *export된 함수의 타입*을 검증한다. 함수가 export 안 되면 `typeof undefined === 'undefined'` → 실패.
+
+**나쁨** — 함수 정의는 했지만 export 안 함:
+```js
+// auth_service.js
+async function signup(email, password) { ... }
+async function login(email, password) { ... }
+// (module.exports가 없음 → mod = {} 가 됨)
+```
+
+**좋음** — 모든 비즈니스 함수를 명시적으로 export:
+```js
+// auth_service.js
+async function signup(email, password) { ... }
+async function login(email, password) { ... }
+
+module.exports = { signup, login };
+```
+
+핵심 룰:
+- BE는 CommonJS. `module.exports = { fnA, fnB, ... }` 패턴.
+- 한 파일에 여러 함수가 있으면 *모두* exports에 포함 (smoke test가 어떤 걸 검증할지 모르므로).
+- ES Modules 문법(`export default`, `export function`)은 BE에서 *금지* — `rules/be.md` §2 참조.
 
 ## 8. 보호 파일 (BE)
 

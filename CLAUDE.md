@@ -83,6 +83,7 @@ Orchestrator, Lint Agent, Migration Agent, ContractSync Agent, Deploy Agent, Pos
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 다음 작업 큐, 비-목표 | 다음 본격 작업 시작 시 |
 | [rules/common.md](rules/common.md) | BE+FE 공통 코딩 규칙 | BE/FE Agent가 매 LLM 호출 시 자동 |
 | [rules/be.md](rules/be.md) | BE 전용 (snake_case, CommonJS 등) | BE Agent가 매 호출 시 자동 |
+| [rules/db.md](rules/db.md) | DB migration 규칙 (checksum 충돌 방지, idempotent 작성) | BE Agent가 매 호출 시 자동 (D41) |
 | [rules/fe.md](rules/fe.md) | FE 전용 (PascalCase, ES Modules 등) | FE Agent가 매 호출 시 자동 |
 | [README.md](README.md) | 사용자용 setup·실행 가이드 | 신규 환경 셋업 시 |
 

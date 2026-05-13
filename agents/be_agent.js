@@ -64,9 +64,16 @@ function buildSystemPrompt(cfg) {
 }
 
 function readConvention() {
+  // D41 (2026-05-14): rules/db.md를 BE Agent 전용으로 추가 inject.
+  //   migration 관련 사고(특히 checksum 충돌)는 시스템 prompt에 *반복적·명시적*
+  //   으로 박혀있어야 첫 응답에서 사용자 사고를 줄일 수 있음.
   const common = fs.readFileSync(path.join(ROOT, 'rules', 'common.md'), 'utf8');
   const beSpecific = fs.readFileSync(path.join(ROOT, 'rules', 'be.md'), 'utf8');
-  return common + '\n\n---\n\n' + beSpecific;
+  const dbPath = path.join(ROOT, 'rules', 'db.md');
+  const dbSpecific = fs.existsSync(dbPath) ? fs.readFileSync(dbPath, 'utf8') : '';
+  const parts = [common, beSpecific];
+  if (dbSpecific) parts.push(dbSpecific);
+  return parts.join('\n\n---\n\n');
 }
 
 function readSchemaSection() {

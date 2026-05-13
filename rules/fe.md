@@ -70,6 +70,70 @@ function Modal({ isOpen, children }) {
 - Fragment(`<>...</>`)도 *내부 자식이 없으면* `firstChild === null`이 될 수 있으니 주의 — 차라리 빈 `<div />`.
 - 이 룰을 위반하면 Stage 3 단위 테스트가 즉시 실패하고, 시스템이 `fix_instructions`로 LLM에 재시도 요청한다 (최대 `MAX_RETRIES` = 3회). 첫 시도부터 룰을 따르는 게 정상 경로.
 
+### 4-ter. 필수처럼 보이는 prop의 default 값 누락 (Stage 3 두 번째 흔한 실패)
+
+위 §4-bis와 짝. *render(<Component />)* 가 props 없이 호출되므로, 컴포넌트가 *undefined prop에 접근해 throw*하면 smoke test 실패한다.
+
+**나쁨** — undefined.toUpperCase()로 throw:
+```jsx
+function UserBadge({ user }) {
+  return <span>{user.name.toUpperCase()}</span>;   // ← user undefined → throw
+}
+```
+
+**좋음** — default + optional chaining:
+```jsx
+function UserBadge({ user = { name: '' } }) {
+  return <span>{(user.name || '').toUpperCase()}</span>;
+}
+// 또는
+function UserBadge({ user }) {
+  const name = user?.name || '';
+  return <span>{name.toUpperCase()}</span>;
+}
+```
+
+핵심 룰:
+- 모든 prop은 *undefined로 들어와도* throw 없이 일관된 결과 반환.
+- 객체/배열 prop은 default `{}` / `[]` 또는 optional chaining(`?.`).
+- 함수 prop(예: `onClick`)도 *호출 안 해도 안전*해야 하지만, *호출 시*엔 default가 없으면 throw → `onClick = () => {}`처럼 noop default.
+
+### 4-quater. import 경로 오타 / missing default export
+
+모듈 로드 단계에서 throw → smoke test가 컴포넌트 자체를 require하지 못해 실패한다. eslint Stage 1이 *상당 부분* 잡아주지만 default export 누락 같은 케이스는 stage 3까지 가서 깨질 수 있음.
+
+**나쁨**:
+```jsx
+// SignupForm.jsx — export 누락
+function SignupForm() { return <div>...</div>; }
+// (export default가 없음)
+
+// App.jsx에서 import 시 SignupForm은 undefined → render(<undefined />) → throw
+import SignupForm from './SignupForm';
+```
+
+**좋음**:
+```jsx
+// SignupForm.jsx — default export 명시
+export default function SignupForm() { return <div>...</div>; }
+// 또는
+function SignupForm() { return <div>...</div>; }
+export default SignupForm;
+```
+
+```jsx
+// LoginForm.jsx — named export로 emit한 경우
+export function LoginForm() { return <div>...</div>; }
+
+// App.jsx — *named import* 사용 (default import 아님)
+import { LoginForm } from './LoginForm';
+```
+
+핵심 룰:
+- *어떻게 import 할지 미리 정하고* 그에 맞게 export. default와 named 섞지 말 것.
+- 파일명 = 컴포넌트명을 권장 (`SignupForm.jsx`에 `SignupForm` export).
+- import 경로는 *상대 경로 + 확장자 생략*. `./components/SignupForm` (확장자 .jsx 생략 OK, Vite resolve).
+
 ## 5. API 호출 패턴
 
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
