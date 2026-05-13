@@ -346,6 +346,7 @@
         <button id="initBtn" class="secondary" style="border-color: var(--warn); color: var(--warn);" title="git reset --hard origin/main + BE/src + FE/src 삭제 + DB 전체 reset — ahead commit·코드·DB 모두 폐기, .env는 보존">🧹 Init project</button>
         <button id="restartUiBtn" class="secondary" title="UI 서버 process 재가동 — 도구 코드(ui/routes, agents, lib) 변경 시 사용">🔄 Restart UI</button>
         <button id="cleanupMergedBtn" class="secondary" title="머지된 PR의 잔재 워크트리·로컬 branch 일괄 정리 (main·claude/test·uncommitted 변경은 보호)">🧹 Cleanup merged</button>
+        <button id="resumeLastBtn" class="secondary" disabled style="border-color: var(--accent); color: var(--accent); opacity: 0.5;" title="최근 ERROR/FAIL task 없음">🔁 Resume last failed</button>
         <button id="rollbackBtn" class="secondary" style="border-color: var(--fail); color: var(--fail);" title="git reset --hard origin/main + git clean + DB reset + .env 재구성 — 코드·DB·.env 모두 origin/main 직전 상태로">⏮ Reset to origin/main</button>
         <!-- 초기 disabled: pollMergeStatus가 첫 응답을 받기 전엔 클릭 자체를 차단.
              ahead commit이 생겨야만 활성화되고, 비활성 사유는 title 속성에서 hover로 노출. -->
@@ -531,6 +532,26 @@ async function loadTasks() {
       `<td class="muted">${fmtTime(t.updated_at)}</td>`;
     tr.addEventListener('click', () => selectTask(t.task_id));
     tbody.appendChild(tr);
+  }
+  // D35 옵션 C-2: 상단 🔁 Resume last failed 단축 버튼 상태 업데이트.
+  //   task list(id DESC)에서 첫 ERROR/FAIL task를 찾아 활성화. 없으면 disabled.
+  updateResumeLastButton(data.tasks || []);
+}
+
+function updateResumeLastButton(tasks) {
+  const btn = document.getElementById('resumeLastBtn');
+  if (!btn) return;
+  const failed = (tasks || []).find((t) => t.final_verdict === 'ERROR' || t.final_verdict === 'FAIL');
+  if (failed) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.dataset.taskId = failed.task_id;
+    btn.title = `최근 실패 task: ${failed.task_id} (${failed.final_verdict}) — CodeChecker skip + round loop 재진입`;
+  } else {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    btn.dataset.taskId = '';
+    btn.title = '최근 ERROR/FAIL task 없음';
   }
 }
 
@@ -1574,6 +1595,46 @@ $('#cleanupMergedBtn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = '🧹 Cleanup merged';
+  }
+});
+
+/**
+ * D35 옵션 C-2: 🔁 Resume last failed 단축 버튼.
+ * loadTasks가 dataset.taskId에 최근 ERROR/FAIL task_id를 박아둠.
+ * 클릭 시: confirm → POST /api/run/resume/<id> → selectTask로 detail panel 자동 전환.
+ */
+$('#resumeLastBtn').addEventListener('click', async () => {
+  const btn = $('#resumeLastBtn');
+  const taskId = btn.dataset.taskId;
+  if (!taskId) {
+    alert('최근 ERROR/FAIL task가 없습니다.');
+    return;
+  }
+  const msg =
+    '🔁 Resume last failed — 최근 실패 task로 재진입\n\n' +
+    `task_id: ${taskId}\n\n` +
+    '• CodeChecker 결과 재사용 (LLM 비용 절감)\n' +
+    '• 같은 task_id / decision_id 유지, retry_count 누적\n' +
+    '• 코드 수정이 있었다면 그 변경이 반영된 상태로 재실행\n\n' +
+    '계속할까요?';
+  if (!confirm(msg)) return;
+  btn.disabled = true;
+  btn.textContent = '🔁 resuming…';
+  try {
+    const r = await fetchJSON(`/api/run/resume/${encodeURIComponent(taskId)}`, { method: 'POST' });
+    if (r.ok) {
+      alert(`Resume 시작됨 (pid=${r.pid}). detail panel 자동 전환.`);
+      selectTask(taskId);
+    } else if (r._status === 409) {
+      alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
+    } else {
+      alert('Resume 실패: ' + (r.error || r._text || 'unknown'));
+    }
+  } catch (e) {
+    alert('Resume 호출 실패: ' + e.message);
+  } finally {
+    btn.textContent = '🔁 Resume last failed';
+    // disabled 상태는 loadTasks의 updateResumeLastButton이 다음 polling에서 재계산
   }
 });
 
