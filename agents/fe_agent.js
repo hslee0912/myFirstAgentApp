@@ -23,6 +23,7 @@ const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
+const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -101,6 +102,9 @@ function ensureEslintrc() {
 }
 
 function buildInitialUserPrompt({ fe_spec, api_contract, existing_files }) {
+  // D39 (2026-05-14): endpoint checklist — FE도 contract 모든 endpoint를 *fetch
+  //   호출 대상*으로 인지해야 함. JSON 외에 명시적 list 추가.
+  const checklist = endpointChecklist(api_contract);
   return [
     '## fe_spec',
     '```json',
@@ -109,6 +113,10 @@ function buildInitialUserPrompt({ fe_spec, api_contract, existing_files }) {
     '',
     '## api_contract (BE 엔드포인트 — 이 형식 그대로 fetch 호출)',
     api_contract ? '```json\n' + JSON.stringify(api_contract, null, 2) + '\n```' : '(없음)',
+    '',
+    '## 사용 가능한 endpoint (api_contract 선언 — fetch URL은 정확히 이 path와 일치해야 함)',
+    checklist || '(없음)',
+    '- 절대 다른 path로 fetch 호출하지 말 것. base_url 누락이나 prefix 오타는 BE에서 404.',
     '',
     '## 기존 파일 (bootstrap이 깐 placeholder + 이전 라운드 산출물)',
     '```json',
@@ -130,6 +138,7 @@ function buildInitialUserPrompt({ fe_spec, api_contract, existing_files }) {
 }
 
 function buildRetryUserPrompt({ fe_spec, api_contract, existing_files, allowed_paths, fix_instructions }) {
+  const checklist = endpointChecklist(api_contract);
   return [
     '## 모드: RETRY (부분 수정)',
     '',
@@ -140,6 +149,9 @@ function buildRetryUserPrompt({ fe_spec, api_contract, existing_files, allowed_p
     '',
     '## api_contract (참고)',
     api_contract ? '```json\n' + JSON.stringify(api_contract, null, 2) + '\n```' : '(없음)',
+    '',
+    '## 사용 가능한 endpoint (api_contract 선언)',
+    checklist || '(없음)',
     '',
     '## 현재 파일 상태 (existing_files)',
     '```json',
@@ -267,4 +279,8 @@ async function run(params) {
   }
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  // exported for unit tests only — prompt 함수 직접 검증용 (D39).
+  _internal: { buildInitialUserPrompt, buildRetryUserPrompt },
+};

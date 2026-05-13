@@ -27,6 +27,34 @@ export default signupHandler;
 - bootstrap이 깔아둔 `server.js` placeholder가 있으면 **그 응답 형식·동작을 보존**하면서 비즈니스 로직 추가.
 - `GET /health` 엔드포인트는 placeholder 테스트가 기대하는 형식(`{ success: true, data: { status: 'ok' } }`) 그대로 유지.
 
+### 3-bis. Contract endpoint mount — *모든* endpoint 빠짐없이 구현 (필수)
+
+`shared/api_contract.json`에 선언된 **모든** endpoint는 `BE/src/server.js` + `BE/src/routes/*.js`에 mount해야 한다. 하나라도 빠지면 **Phase 2.7 ContractSync (정적 분석)** 가 즉시 FAIL → 다음 retry의 `fix_instructions`로 누락 list 전달. *retry로 풀지 말고 첫 응답에서 모두 mount하는 게 정상 경로*.
+
+mount 패턴 (변수명·경로는 *해당 cycle의 api_contract*에 따라 결정 — 아래는 형태만 보여주는 placeholder):
+
+```js
+// BE/src/server.js
+const <feature>Routes = require('./routes/<feature>_routes');
+app.use('<공통 prefix>', <feature>Routes);  // prefix from contract
+
+// BE/src/routes/<feature>_routes.js
+router.<method>('<subpath>', handler);       // subpath from contract
+// 최종 경로 = prefix + subpath = api_contract endpoint path와 *정확히 일치*해야 함
+```
+
+구체 예시 (auth 시나리오):
+- `app.use('/api/v1/auth', authRoutes)` + `router.post('/signup', ...)` → `POST /api/v1/auth/signup`
+- `app.use('/api/v1', resultRoutes)` + `router.get('/best', ...)` → `GET /api/v1/best`
+
+→ 변수명(authRoutes, resultRoutes), prefix(/api/v1/auth, /api/v1), subpath(/signup, /best)는 *모두* 이 시나리오의 예시값. 다른 cycle의 contract면 다른 값을 써야 한다.
+
+핵심 룰:
+- 최종 path = `app.use prefix` + `router.<method> subpath`. **둘 다 정확해야 contract path와 매칭**.
+- ContractSync는 `(METHOD, full path)` tuple로 비교. OpenAPI 스타일 `{id}` ↔ Express 스타일 `:id`는 동등 처리.
+- contract에 *없는* extra endpoint를 만들지는 말 것 (warning은 나지만 FAIL은 아님 — FE는 contract만 보므로 dead code가 됨).
+- prompt에 `## 구현해야 할 endpoint` 체크리스트가 함께 표시되므로 그것을 빠짐없이 확인할 것 (D39, 2026-05-14).
+
 ## 4. DB 접근 패턴
 
 - `mysql2` 패키지 사용 (`allowedDeps`에 등록됨).

@@ -16,6 +16,7 @@ const {
   normalizeContract,
   validate,
   exampleBodyFromSchema,
+  endpointChecklist,
 } = require('../lib/api_test');
 
 // ─────────── normalizeContract: canonical format passes through ───────────
@@ -332,4 +333,63 @@ test('normalizeContract: routerDir set but endpoint already has request/response
     { routerDir },
   );
   assert.equal(out.endpoints[0].path, '/auth/signup');
+});
+
+// ─────────── D39 (2026-05-14): endpointChecklist (BE/FE prompt 보조) ───────────
+
+test('endpointChecklist: 4개 endpoint 모두 "- METHOD path" 줄로 변환', () => {
+  const contract = {
+    version: '1.0',
+    base_url: '/api/v1',
+    endpoints: [
+      { name: 'auth_signup', method: 'POST', path: '/auth/signup' },
+      { name: 'auth_login', method: 'POST', path: '/auth/login' },
+      { name: 'result_save', method: 'POST', path: '/result' },
+      { name: 'result_best', method: 'GET', path: '/best' },
+    ],
+  };
+  const out = endpointChecklist(contract);
+  // 각 endpoint가 한 줄씩 표시
+  assert.equal(out.split('\n').length, 4);
+  assert.match(out, /- POST\s+\/api\/v1\/auth\/signup/);
+  assert.match(out, /- POST\s+\/api\/v1\/auth\/login/);
+  assert.match(out, /- POST\s+\/api\/v1\/result/);
+  assert.match(out, /- GET\s+\/api\/v1\/best/);
+});
+
+test('endpointChecklist: normalize 거친 contract (base_url=\'\') 도 정상 처리 — 중복 prefix 없음', () => {
+  const normalized = {
+    base_url: '',
+    endpoints: [
+      { method: 'POST', path: '/api/v1/auth/signup' },
+      { method: 'GET', path: '/api/v1/best' },
+    ],
+  };
+  const out = endpointChecklist(normalized);
+  // /api/v1이 중복으로 prepend되지 않아야 함
+  assert.doesNotMatch(out, /\/api\/v1\/api\/v1/);
+  assert.match(out, /- POST\s+\/api\/v1\/auth\/signup/);
+});
+
+test('endpointChecklist: contract가 비어있거나 endpoints 없으면 빈 문자열', () => {
+  assert.equal(endpointChecklist(null), '');
+  assert.equal(endpointChecklist(undefined), '');
+  assert.equal(endpointChecklist({}), '');
+  assert.equal(endpointChecklist({ endpoints: [] }), '');
+  assert.equal(endpointChecklist({ endpoints: [{ /* missing method+path */ name: 'x' }] }), '');
+});
+
+test('endpointChecklist: method는 대문자 정규화, padding으로 정렬', () => {
+  const contract = {
+    base_url: '',
+    endpoints: [
+      { method: 'get', path: '/a' },
+      { method: 'post', path: '/b' },
+      { method: 'DELETE', path: '/c' },
+    ],
+  };
+  const out = endpointChecklist(contract);
+  assert.match(out, /- GET\s/);
+  assert.match(out, /- POST\s/);
+  assert.match(out, /- DELETE\s/);
 });

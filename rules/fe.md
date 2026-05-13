@@ -148,6 +148,10 @@ function Modal({ isOpen, children }) {
 - 라우팅: `react-router-dom` 등 — `allowedDeps`에 없으므로 단일 페이지 또는 조건부 렌더링으로 처리.
 - 폼 라이브러리: `react-hook-form`, `formik` — `useState`로 직접 controlled form.
 - 아이콘: `react-icons`, `@mui/icons-material` — SVG 인라인 또는 텍스트로.
+- **보안·해싱 라이브러리: `bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API (PBKDF2/SubtleCrypto 등) — *FE에서 비밀번호 해싱 시도 자체가 안티패턴*.**
+  - 비밀번호는 **평문 그대로 fetch body에 담아 BE로 전송**. HTTPS가 전송 구간 암호화 담당.
+  - BE가 bcrypt로 해시해 DB에 저장 (rules/be.md §5 참조).
+  - FE에서 미리 해시하면 *해시값이 곧 비밀번호*가 되어 보안 효과 없음 + DB는 *해시의 해시*만 갖게 됨 (이중 해시 안티패턴).
 - 위반 시 응답 시점에 라운드 ERROR 종료.
 
 ## 8. 보호 파일 (FE)

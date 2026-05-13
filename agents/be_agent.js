@@ -23,6 +23,7 @@ const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
+const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -125,6 +126,10 @@ function ensureEslintrc() {
 }
 
 function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
+  // D39 (2026-05-14): endpoint checklist — JSON 블록 외에 *명시적 list*도 표시.
+  //   LLM에게 "모두 mount하라"는 강제 신호를 추가. Phase 2.7 ContractSync가
+  //   누락 retry로 잡지만 *첫 시도부터 따르는 게 정상 경로* (다른 가드들과 동일).
+  const checklist = endpointChecklist(api_contract);
   return [
     '## be_spec',
     '```json',
@@ -133,6 +138,10 @@ function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
     '',
     '## api_contract',
     api_contract ? '```json\n' + JSON.stringify(api_contract, null, 2) + '\n```' : '(없음)',
+    '',
+    '## 구현해야 할 endpoint (api_contract 선언 — 빠짐없이 mount 필수)',
+    checklist || '(없음)',
+    '하나라도 빠지면 Phase 2.7 ContractSync(정적 분석)가 즉시 FAIL → retry. 첫 응답에 모두 포함하라.',
     '',
     '## 기존 파일 (bootstrap이 깐 placeholder + 이전 라운드 산출물)',
     '```json',
@@ -155,6 +164,9 @@ function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
 }
 
 function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_paths, fix_instructions }) {
+  // D39: retry mode에서도 endpoint checklist 표시 — CONTRACT_SYNC retry라면
+  //   특히 도움. allowed_paths 제약 안에서 누락된 endpoint를 보강해야 함.
+  const checklist = endpointChecklist(api_contract);
   return [
     '## 모드: RETRY (부분 수정)',
     '',
@@ -165,6 +177,9 @@ function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_p
     '',
     '## api_contract (참고)',
     api_contract ? '```json\n' + JSON.stringify(api_contract, null, 2) + '\n```' : '(없음)',
+    '',
+    '## 구현해야 할 endpoint (api_contract 선언 — 빠짐없이 mount 필수)',
+    checklist || '(없음)',
     '',
     '## 현재 파일 상태 (existing_files)',
     '```json',
@@ -293,4 +308,8 @@ async function run(params) {
   }
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  // exported for unit tests only — prompt 함수 직접 검증용 (D39).
+  _internal: { buildInitialUserPrompt, buildRetryUserPrompt },
+};
