@@ -980,41 +980,62 @@ function renderFinalResultCard(decision, states, runs) {
     </div>`;
 }
 
-/** D35 (2026-05-14, 옵션 C): Resume / Prompt fill 액션 카드.
- *  verdict가 ERROR/FAIL + resume.eligible일 때만 노출. 두 버튼:
- *    🔁 Resume — POST /api/run/resume/:task_id (CodeChecker skip)
- *    📋 prompt에 채우기 — textarea에 user_request 복사 (옵션 a)
+/** D35 (2026-05-14, 옵션 C) + UI v2 (활성/비활성 모드): Resume / Prompt fill 카드.
+ *  decision이 있으면 *verdict 무관* 카드를 항상 노출하고, 각 버튼은 *조건에
+ *  따라 enable/disable*. 비활성 사유는 disabled 버튼의 title + 카드 안 muted
+ *  텍스트로 안내. 사용자가 *기능의 존재 자체*를 항상 인지하면서, *현재 task가
+ *  적격*일 때만 클릭 가능.
+ *
+ *  활성 조건:
+ *    🔁 Resume        — verdict in (ERROR, FAIL) AND resume.eligible
+ *    📋 prompt 채우기 — user_request 가 존재
  */
 function renderResumeCard(decision, resume) {
-  if (!decision || !resume) return '';
-  const v = decision.final_verdict;
-  if (v !== 'ERROR' && v !== 'FAIL') return '';
+  if (!decision) return '';     // manual 작업 등 decision 없으면 카드 자체 미노출
+  if (!resume) resume = { eligible: false, reason: 'resume 정보 없음', user_request: '' };
 
+  const v = decision.final_verdict || 'IN_PROGRESS';
   const userReq = String(resume.user_request || '');
   const preview = userReq.slice(0, 200);
   const more = userReq.length > 200 ? '...' : '';
 
-  // resume.eligible=false면 Resume 버튼은 사유와 함께 disabled. Prompt fill은
-  // user_request만 있으면 동작 가능 (CodeChecker output 없어도 OK).
-  const resumeBtnHtml = resume.eligible
-    ? `<button id="resumeBtn" class="secondary" data-task-id="${esc(decision.task_id)}" data-preview="${esc(userReq)}" style="border-color: var(--accent); color: var(--accent);">🔁 Resume (CodeChecker skip, 같은 task)</button>`
-    : `<button class="secondary" disabled title="${esc(resume.reason || '')}">🔁 Resume (불가)</button>`;
-  const fillBtnHtml = userReq
-    ? `<button id="fillPromptBtn" class="secondary" data-prompt="${esc(userReq)}">📋 prompt에 채우기</button>`
+  // Resume 버튼: verdict가 ERROR/FAIL + eligible일 때만 활성
+  const isFailed = (v === 'ERROR' || v === 'FAIL');
+  const resumeActive = isFailed && resume.eligible;
+  const resumeDisableReason = !resumeActive
+    ? (!isFailed
+        ? `verdict=${v} — ERROR/FAIL일 때만 사용 가능`
+        : (resume.reason || 'resume 불가'))
     : '';
-  const ineligibleNote = !resume.eligible
-    ? `<p class="muted" style="font-size: 12px;">Resume 불가 사유: ${esc(resume.reason || 'unknown')}</p>`
+
+  // Prompt fill 버튼: user_request 있을 때만 활성
+  const fillActive = userReq.length > 0;
+  const fillDisableReason = fillActive ? '' : 'user_request 복원 실패 — DB에서 찾을 수 없음';
+
+  const resumeBtn = resumeActive
+    ? `<button id="resumeBtn" class="secondary" data-task-id="${esc(decision.task_id)}" data-preview="${esc(userReq)}" style="border-color: var(--accent); color: var(--accent);">🔁 Resume (CodeChecker skip, 같은 task)</button>`
+    : `<button class="secondary" disabled title="${esc(resumeDisableReason)}" style="opacity: 0.5;">🔁 Resume (CodeChecker skip, 같은 task)</button>`;
+
+  const fillBtn = fillActive
+    ? `<button id="fillPromptBtn" class="secondary" data-prompt="${esc(userReq)}">📋 prompt에 채우기</button>`
+    : `<button class="secondary" disabled title="${esc(fillDisableReason)}" style="opacity: 0.5;">📋 prompt에 채우기</button>`;
+
+  // 카드 본문: user_request preview + 비활성 사유 (있는 경우만)
+  const reasonNote = !resumeActive
+    ? `<p class="muted" style="font-size: 12px; margin-top: 4px;">🔁 Resume 비활성: ${esc(resumeDisableReason)}</p>`
     : '';
 
   return `
     <div class="err-card sev-info" style="margin-top: 10px;">
       <div class="err-head"><span class="err-title">🔁 Resume / 📋 Prompt</span></div>
       <div class="err-body">
-        ${userReq ? `<p>user_request: <code>${esc(preview)}${esc(more)}</code></p>` : '<p class="muted">user_request 복원 실패 — DB에서 찾을 수 없음.</p>'}
-        ${ineligibleNote}
+        ${userReq
+          ? `<p>user_request: <code>${esc(preview)}${esc(more)}</code></p>`
+          : '<p class="muted">user_request 복원 실패 — DB에서 찾을 수 없음.</p>'}
+        ${reasonNote}
         <div class="toolbar" style="margin-top: 10px; gap: 8px; display: flex; flex-wrap: wrap;">
-          ${resumeBtnHtml}
-          ${fillBtnHtml}
+          ${resumeBtn}
+          ${fillBtn}
         </div>
       </div>
     </div>`;
