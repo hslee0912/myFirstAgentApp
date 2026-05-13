@@ -9,6 +9,12 @@
   └─ Orchestrator (LLM 안 부름, 컨트롤러)
       ├─ Phase 1  CodeChecker (LLM)    → FE/BE/BOTH 분류, spec + api_contract 생성
       ├─ Phase 2  BE Agent (LLM)       → BE/ 코드 + Jest 테스트
+      ├─ Phase 2.5 Migration Agent (LLM X) → BE/db/migrations/*.sql 자동 적용
+      │                                       (D33, 2026-05-14).
+      ├─ Phase 2.7 ContractSync Agent (LLM X) → api_contract 선언 endpoint vs
+      │                                          BE/src/server.js + routes/ 정적 diff.
+      │                                          BOTH/BE 모드일 때만. FAIL → BE 재진입.
+      │                                          VALIDATION_MODE 무관 항상 ON (D36).
       ├─ Phase 3  FE Agent (LLM)       → FE/ 코드 + Vitest+RTL 테스트
       ├─ Phase 4  Lint Agent (LLM X)   → eslint → build → tests
       │                                    (VALIDATION_MODE=off면 skip,
@@ -31,7 +37,7 @@
 ```
 
 LLM은 **CodeChecker, BE Agent, FE Agent 안에서만** 호출됨.
-Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
+Orchestrator, Lint Agent, Migration Agent, ContractSync Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 절대 규칙 (위반 금지)
 
@@ -86,9 +92,9 @@ Orchestrator, Lint Agent, Deploy Agent, PostTest Agent는 결정론적.
 
 ## 최근 결정 (3개만, 전체는 docs/DECISIONS.md)
 
-- 2026-05-14  (TBD)  **D33 BE Agent migration emit + 자동 적용 (B-2 도입 결정)** — D31의 "in-memory 우회 + emit 금지"를 *결정 차원*에서 폐기. BE Agent가 `BE/db/migrations/<ts>_<name>.sql`을 emit하면 orchestrator가 자동 실행 + 이력 테이블(`log_db_migrations` 가칭)로 중복 방지·추적. 본 commit은 *방향 명시*만 — `rules/be.md` §4 / `agents/*.js` system prompt는 *B-2 구현 commit과 함께* 갈아엎어야 런타임 안전 보장(지금 prompt만 풀면 Agent emit이 적용 안 되어 D31 이전 사고 재발). agent_schema 분리 + app_users 영구 삭제는 그대로 유지. [DECISIONS.md](docs/DECISIONS.md#2026-05-14--d33-be-agent-migration-emit--자동-적용-b-2-도입-결정) 참조.
-- 2026-05-14  (TBD)  **D32 reset.sql 동적 DROP + db/*.sql 자동 순회** — `db/reset.sql`을 *log_* 명시 DROP*에서 *information_schema 기반 동적 DROP*으로 교체. `lib/reset_db.js` + `ui/routes/init.js` + `ui/routes/git.js#resetDatabase` 셋 다 *db/\*.sql 알파벳 순서 순회* 로 변경. D31의 "비즈니스 schema 자동 적용 메커니즘은 향후 별도 작업" 후속 *기반*. [DECISIONS.md](docs/DECISIONS.md#2026-05-14--d32-resetsql-동적-drop--dbsql-자동-순회) 참조.
-- 2026-05-13  (TBD)  **D31 schema.sql 분리 + 비즈니스 schema 폐기** — `db/schema.sql` → `db/agent_schema.sql` rename + `app_users` 영구 삭제. Agent 도구 테이블(`log_*`)만 남김. reset-db 흐름은 DROP+CREATE. *"비즈니스 DB 영속화는 in-memory 우회 + emit 금지"* 정책은 D33(2026-05-14)에서 *임시 조치였음*으로 명시되어 폐기 방향 결정. agent_schema 분리·app_users 삭제는 D33에서도 유지. [DECISIONS.md](docs/DECISIONS.md#2026-05-13--d31-schemasql-분리--비즈니스-schema-폐기) 참조.
+- 2026-05-14  (TBD)  **D36 Phase 2.7 ContractSync Agent** — BE Agent 산출 직후 Migration Agent 통과한 뒤에 정규식 기반 정적 분석으로 `shared/api_contract.json` endpoint vs `BE/src/server.js`+`routes/*.js` 의 `(method, full path)` tuple diff. missing 발견 시 `failed_stage='CONTRACT_SYNC'`로 BE 재진입(round loop 안). 비용 ~0.1s, *VALIDATION_MODE 무관 항상 ON* (safety guard 등급). PostTest(Phase 9)는 런타임 schema 검증 전담으로 그대로 유지(Deploy 의존, round loop 밖, 1회). 두 검증의 목적·비용 분리. [lib/contract_sync.js](lib/contract_sync.js) / [agents/contract_sync_agent.js](agents/contract_sync_agent.js).
+- 2026-05-14  (TBD)  **D33 BE Agent migration emit + 자동 적용 (B-2 도입 결정)** — D31의 "in-memory 우회 + emit 금지"를 *결정 차원*에서 폐기. BE Agent가 `BE/db/migrations/<ts>_<name>.sql`을 emit하면 orchestrator가 자동 실행 + 이력 테이블(`log_db_migrations` 가칭)로 중복 방지·추적. [DECISIONS.md](docs/DECISIONS.md#2026-05-14--d33-be-agent-migration-emit--자동-적용-b-2-도입-결정) 참조.
+- 2026-05-14  (TBD)  **D32 reset.sql 동적 DROP + db/*.sql 자동 순회** — `db/reset.sql`을 *log_* 명시 DROP*에서 *information_schema 기반 동적 DROP*으로 교체. `lib/reset_db.js` + `ui/routes/init.js` + `ui/routes/git.js#resetDatabase` 셋 다 *db/\*.sql 알파벳 순서 순회* 로 변경. [DECISIONS.md](docs/DECISIONS.md#2026-05-14--d32-resetsql-동적-drop--dbsql-자동-순회) 참조.
 
 ## Skill routing
 

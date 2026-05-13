@@ -22,7 +22,7 @@ USE myfirstagentapp_db;
 CREATE TABLE IF NOT EXISTS log_agent_runs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id VARCHAR(64) NOT NULL,
-    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint','Migration','Deploy','PostTest') NOT NULL,
+    agent_name ENUM('Orchestrator','CodeChecker','FE','BE','Lint','Migration','ContractSync','Deploy','PostTest') NOT NULL,
     target ENUM('FE','BE') NULL,
     input_json JSON,
     output_json JSON,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS log_task_state (
     target ENUM('FE','BE') NOT NULL,
     status ENUM('PENDING','SUCCESS','FAILED') NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
-    failed_stage ENUM('STAGE1','STAGE2','STAGE3','MIGRATION','AGENT_GUARD') NULL,
+    failed_stage ENUM('STAGE1','STAGE2','STAGE3','MIGRATION','CONTRACT_SYNC','AGENT_GUARD') NULL,
     fix_instructions TEXT NULL,
     stage_logs JSON NULL,
     result_text TEXT NULL,

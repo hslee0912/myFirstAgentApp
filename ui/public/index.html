@@ -657,6 +657,29 @@ function classifyRunError(run) {
   const stack = String(oj.stack || '');
   const agent = String(run.agent_name || '');
 
+  // ===== ContractSync (Phase 2.7, D36) 특수 처리 =====
+  // output_json 구조: { pass, contract_count, code_count, missing?[], extra?[], fix_instructions? }
+  if (agent === 'ContractSync') {
+    if (Array.isArray(oj.missing) && oj.missing.length > 0) {
+      const first = oj.missing[0];
+      const more = oj.missing.length > 1 ? ` 외 ${oj.missing.length - 1}개` : '';
+      return {
+        severity: 'error',
+        category: 'CONTRACT_SYNC_MISSING',
+        label: `🔗 Contract sync — endpoint ${oj.missing.length}개 누락`,
+        detail: `${first.method} ${first.path}${more}. contract 선언과 실제 BE routes 매칭 실패.`,
+        recommendation: 'BE Agent가 api_contract.json의 모든 endpoint를 server.js + routes/에서 mount하도록 다음 retry에서 보강됩니다. fix_instructions 참조.',
+      };
+    }
+    return {
+      severity: 'error',
+      category: 'CONTRACT_SYNC_FAILED',
+      label: '🔗 Contract sync 실패',
+      detail: (err || oj.error || '(no detail)').slice(0, 300),
+      recommendation: 'output_json 전체 확인 — contract vs code endpoint diff 결과 표시됨.',
+    };
+  }
+
   // ===== Migration (Phase 2.5, D33) 특수 처리 =====
   // output_json 구조: { status, applied[], conflicts?, failed?, error?, fix_instructions? }
   if (agent === 'Migration') {
@@ -912,6 +935,7 @@ function classifyLintStage(failedStage) {
     case 'STAGE2':       return { label: '🔧 Lint Stage 2 (build/syntax) 실패', sev: 'info', retryable: true };
     case 'STAGE3':       return { label: '🧪 Lint Stage 3 (tests) 실패', sev: 'error', retryable: true };
     case 'MIGRATION':    return { label: '🗄 Migration (BE/db/migrations/*.sql) 실패', sev: 'error', retryable: true };
+    case 'CONTRACT_SYNC':return { label: '🔗 Contract sync 실패 (api_contract ↔ BE routes 불일치)', sev: 'error', retryable: true };
     case 'AGENT_GUARD':  return { label: '🛡 Agent 가드 (deps/path/JSON 등) 실패', sev: 'info', retryable: true };
     default:             return { label: failedStage || 'Lint 실패', sev: 'warn', retryable: false };
   }

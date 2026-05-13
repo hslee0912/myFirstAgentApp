@@ -39,6 +39,7 @@ const beAgent = require('./be_agent');
 const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
 const migrationAgent = require('./migration_agent');
+const contractSyncAgent = require('./contract_sync_agent');
 const { classifyAgentError, buildFixInstructions } = require('../lib/agent_error_classifier');
 const { checkResumeEligibility } = require('../lib/resume_helper');
 const deployAgent = require('./deploy_agent');
@@ -311,7 +312,7 @@ async function main() {
     console.log('[phase 0] bootstrapping FE/ and BE/ if needed...');
     await runBootstrap({ install: true });
 
-    let fe_spec, be_spec, api_contract, decision_id;
+    let fe_spec, be_spec, api_contract, decision_id, targets;
 
     if (isResume) {
       // Phase 1 SKIP — 기존 CodeChecker 결과를 DB에서 복원
@@ -326,7 +327,8 @@ async function main() {
       fe_spec = cc_output.fe_spec;
       be_spec = cc_output.be_spec;
       api_contract = cc_output.api_contract;
-      console.log(`[phase 1] restored: targets=${cc_output.targets || '?'} decision_id=${decision_id}, user_request="${userRequest.slice(0, 100)}"`);
+      targets = cc_output.targets || 'BOTH';
+      console.log(`[phase 1] restored: targets=${targets} decision_id=${decision_id}, user_request="${userRequest.slice(0, 100)}"`);
     } else {
       userRequest = readUserRequest();
       console.log(`[phase 0] user_request: ${userRequest}`);
@@ -340,6 +342,7 @@ async function main() {
       be_spec = cc.be_spec;
       api_contract = cc.api_contract;
       decision_id = cc.decision_id;
+      targets = cc.targets || 'BOTH';
     }
 
     // ---------------- round loop ----------------
@@ -425,20 +428,53 @@ async function main() {
             stage_logs: { migration: migResult },
             result_text: `Migration FAILED: ${migResult.failed || migResult.error}`,
           });
-          // Lint 건너뛰고 verdict 단계로 — Phase 5가 retry 결정
-        } else if (validationMode === 'off') {
-          console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for BE, auto-SUCCESS (state_id=${beState.id})`);
-          await logger.updateTaskState(beState.id, {
-            status: 'SUCCESS', failed_stage: null, fix_instructions: null,
-            stage_logs: { skipped: 'VALIDATION_MODE=off', migration: migResult },
-            result_text: null,
-          });
+          // ContractSync + Lint 둘 다 건너뛰고 verdict 단계로
         } else {
-          console.log(`[phase 4] Lint Agent target=BE (state_id=${beState.id})`);
-          await lintAgent.run({
-            task_id, target: 'BE', state_id: beState.id,
-            current_retry_count: beState.retry_count || 0,
-          });
+          // Phase 2.7 (D36, 2026-05-14): ContractSync Agent — BE Agent 산출물의
+          //   라우터 mount가 shared/api_contract.json과 일치하는지 정적 검증.
+          //   BE/BOTH 모드일 때만 실행 (FE-only는 verify할 BE 산출물 없음).
+          //   FAIL 시 Lint 건너뛰고 task_state를 FAILED+CONTRACT_SYNC로 → BE 재진입.
+          //   VALIDATION_MODE 무관 항상 ON (safety guard 등급).
+          let contractSyncFailed = false;
+          if (targets === 'BE' || targets === 'BOTH') {
+            console.log(`[phase 2.7] ContractSync Agent`);
+            const csResult = await contractSyncAgent.run({ task_id });
+            if (csResult.status === 'FAILED') {
+              contractSyncFailed = true;
+              const missingCount = (csResult.missing || []).length;
+              console.log(`[phase 2.7] ContractSync FAILED — ${missingCount} missing endpoints`);
+              const newRetryCount = (beState.retry_count || 0) + 1;
+              await logger.updateTaskState(beState.id, {
+                status: 'FAILED',
+                failed_stage: 'CONTRACT_SYNC',
+                retry_count: newRetryCount,
+                fix_instructions: csResult.fix_instructions || csResult.error || 'contract sync failed',
+                stage_logs: {
+                  migration: migResult,
+                  contract_sync: { missing: csResult.missing, extra: csResult.extra },
+                },
+                result_text: `ContractSync FAILED: ${missingCount} missing endpoints`,
+              });
+              // Lint 건너뛰고 verdict 단계로 — BE 재진입
+            }
+          }
+
+          if (contractSyncFailed) {
+            // 위에서 task_state 갱신 — Lint skip
+          } else if (validationMode === 'off') {
+            console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for BE, auto-SUCCESS (state_id=${beState.id})`);
+            await logger.updateTaskState(beState.id, {
+              status: 'SUCCESS', failed_stage: null, fix_instructions: null,
+              stage_logs: { skipped: 'VALIDATION_MODE=off', migration: migResult },
+              result_text: null,
+            });
+          } else {
+            console.log(`[phase 4] Lint Agent target=BE (state_id=${beState.id})`);
+            await lintAgent.run({
+              task_id, target: 'BE', state_id: beState.id,
+              current_retry_count: beState.retry_count || 0,
+            });
+          }
         }
         }  // /beAgentThrew else
       }
