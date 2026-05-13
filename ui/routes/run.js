@@ -11,12 +11,23 @@ const { spawn } = require('child_process');
 const express = require('express');
 const { ROOT, currentRunRef } = require('./_context');
 
-function startOrchestrator(userPrompt) {
+/**
+ * Orchestrator child process spawn.
+ *
+ * @param {string} userPrompt — initial mode면 user_request 문자열
+ * @param {Object} [opts]
+ * @param {string} [opts.resumeTaskId] — set이면 --resume=<id>로 spawn. CodeChecker skip 모드.
+ */
+function startOrchestrator(userPrompt, opts = {}) {
   if (currentRunRef.value) {
     return { ok: false, error: 'busy', current: currentRunRef.value };
   }
   const args = [path.join(ROOT, 'agents', 'orchestrator.js')];
-  if (userPrompt && userPrompt.trim()) args.push(userPrompt);
+  if (opts.resumeTaskId) {
+    args.push(`--resume=${opts.resumeTaskId}`);
+  } else if (userPrompt && userPrompt.trim()) {
+    args.push(userPrompt);
+  }
 
   const child = spawn('node', args, {
     cwd: ROOT,
@@ -89,6 +100,21 @@ router.post('/', (req, res) => {
   const result = startOrchestrator(prompt);
   if (!result.ok) return res.status(409).json(result);
   res.json({ ok: true, pid: result.pid });
+});
+
+// D35 (2026-05-14, 옵션 C): POST /api/run/resume/:task_id
+//   기존 task의 CodeChecker 결과 재사용 + round loop만 재진입.
+//   eligibility는 orchestrator(resume_helper) 안에서 한 번 더 검증 — UI 측에서도
+//   미리 확인하면 더 빠른 피드백 가능하지만 race condition 방지를 위해 spawn 후
+//   orchestrator에서 검증해 fail이면 즉시 exit하도록 함.
+router.post('/resume/:task_id', (req, res) => {
+  const { task_id } = req.params;
+  if (!task_id || !/^[a-z0-9_]+$/i.test(task_id)) {
+    return res.status(400).json({ ok: false, error: 'invalid task_id format' });
+  }
+  const result = startOrchestrator('', { resumeTaskId: task_id });
+  if (!result.ok) return res.status(409).json(result);
+  res.json({ ok: true, pid: result.pid, resume_task_id: task_id });
 });
 
 module.exports = router;

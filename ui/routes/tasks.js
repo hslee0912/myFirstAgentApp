@@ -9,6 +9,7 @@ const path = require('path');
 const express = require('express');
 const db = require('../../lib/db');
 const { normalizeContract } = require('../../lib/api_test');
+const { checkResumeEligibility } = require('../../lib/resume_helper');
 const { ROOT } = require('./_context');
 
 const router = express.Router();
@@ -49,7 +50,21 @@ router.get('/:task_id', async (req, res) => {
         [decision.id],
       );
     }
-    res.json({ decision, states, runs });
+
+    // D35 (2026-05-14, 옵션 C): resume 가능 여부 + user_request preview
+    //   UI가 detail panel에서 🔁 Resume / 📋 prompt에 채우기 버튼 노출 결정용.
+    //   eligibility 검증은 DB query 1~2회 (가벼움).
+    let resume = { eligible: false, reason: 'no decision', user_request: '' };
+    if (decision) {
+      const elig = await checkResumeEligibility(task_id);
+      resume = {
+        eligible: elig.eligible,
+        reason: elig.reason,
+        user_request: elig.user_request || '',
+      };
+    }
+
+    res.json({ decision, states, runs, resume });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

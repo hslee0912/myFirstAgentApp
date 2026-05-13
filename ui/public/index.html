@@ -980,6 +980,46 @@ function renderFinalResultCard(decision, states, runs) {
     </div>`;
 }
 
+/** D35 (2026-05-14, 옵션 C): Resume / Prompt fill 액션 카드.
+ *  verdict가 ERROR/FAIL + resume.eligible일 때만 노출. 두 버튼:
+ *    🔁 Resume — POST /api/run/resume/:task_id (CodeChecker skip)
+ *    📋 prompt에 채우기 — textarea에 user_request 복사 (옵션 a)
+ */
+function renderResumeCard(decision, resume) {
+  if (!decision || !resume) return '';
+  const v = decision.final_verdict;
+  if (v !== 'ERROR' && v !== 'FAIL') return '';
+
+  const userReq = String(resume.user_request || '');
+  const preview = userReq.slice(0, 200);
+  const more = userReq.length > 200 ? '...' : '';
+
+  // resume.eligible=false면 Resume 버튼은 사유와 함께 disabled. Prompt fill은
+  // user_request만 있으면 동작 가능 (CodeChecker output 없어도 OK).
+  const resumeBtnHtml = resume.eligible
+    ? `<button id="resumeBtn" class="secondary" data-task-id="${esc(decision.task_id)}" data-preview="${esc(userReq)}" style="border-color: var(--accent); color: var(--accent);">🔁 Resume (CodeChecker skip, 같은 task)</button>`
+    : `<button class="secondary" disabled title="${esc(resume.reason || '')}">🔁 Resume (불가)</button>`;
+  const fillBtnHtml = userReq
+    ? `<button id="fillPromptBtn" class="secondary" data-prompt="${esc(userReq)}">📋 prompt에 채우기</button>`
+    : '';
+  const ineligibleNote = !resume.eligible
+    ? `<p class="muted" style="font-size: 12px;">Resume 불가 사유: ${esc(resume.reason || 'unknown')}</p>`
+    : '';
+
+  return `
+    <div class="err-card sev-info" style="margin-top: 10px;">
+      <div class="err-head"><span class="err-title">🔁 Resume / 📋 Prompt</span></div>
+      <div class="err-body">
+        ${userReq ? `<p>user_request: <code>${esc(preview)}${esc(more)}</code></p>` : '<p class="muted">user_request 복원 실패 — DB에서 찾을 수 없음.</p>'}
+        ${ineligibleNote}
+        <div class="toolbar" style="margin-top: 10px; gap: 8px; display: flex; flex-wrap: wrap;">
+          ${resumeBtnHtml}
+          ${fillBtnHtml}
+        </div>
+      </div>
+    </div>`;
+}
+
 /** Render the most-critical error summary card on top (Layer 1). */
 function renderTopErrorSummary(decision, states, runs) {
   if (!decision) return '';
@@ -1158,7 +1198,7 @@ async function loadDetail() {
   if (lastDetailTerminal) return;
 
   const data = await fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`);
-  const { decision, states, runs } = data;
+  const { decision, states, runs, resume } = data;
 
   // 직전 응답과 비교 — RUNNING 중에도 의미 있는 변화가 없으면 re-render skip.
   // runs/states는 timestamp 일부만 fingerprint에 포함 (id+status면 충분).
@@ -1170,6 +1210,7 @@ async function loadDetail() {
     },
     s: (states || []).map((s) => [s.id, s.target, s.status, s.retry_count, s.failed_stage]),
     r: (runs || []).map((r) => [r.id, r.agent_name, r.target, r.status, r.ended_at]),
+    re: resume && resume.eligible,
   });
   if (fingerprint === lastDetailHash) return;
   lastDetailHash = fingerprint;
@@ -1183,6 +1224,9 @@ async function loadDetail() {
   if (!decision) {
     html += '<div class="muted" style="margin-top: 8px;">(아직 log_agent_decisions row 없음 — orchestrator가 Phase 1 진입 전이거나, 일반 cycle이 아닌 manual 작업[Redeploy 등])</div>';
   }
+
+  // D35 (2026-05-14, 옵션 C): Resume / Prompt fill 액션 카드 (ERROR/FAIL + eligible 시에만)
+  html += renderResumeCard(decision, resume);
 
   // Layer 1 — drill-down용 분류 카드 (final-card와 중복일 수 있지만 권장 대응이 같이 보임).
   html += renderTopErrorSummary(decision, states, runs);
@@ -1231,6 +1275,54 @@ async function loadDetail() {
         stopBtn.textContent = r.ok ? '🛑 stopped' : '🛑 failed';
       } catch (_) { stopBtn.textContent = '🛑 failed'; }
       setTimeout(() => { stopBtn.disabled = false; stopBtn.textContent = '🛑 Stop containers'; }, 1800);
+    });
+  }
+
+  // D35 (2026-05-14, 옵션 C): Resume + Prompt fill 버튼 바인딩 (renderResumeCard에서 출력된 경우)
+  const resumeBtn = document.getElementById('resumeBtn');
+  if (resumeBtn) {
+    resumeBtn.addEventListener('click', async () => {
+      const taskId = resumeBtn.dataset.taskId;
+      const preview = resumeBtn.dataset.preview || '';
+      const msg =
+        '🔁 Resume — 같은 task로 CodeChecker skip + round loop 재진입\n\n' +
+        `user_request: "${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}"\n\n` +
+        '• 같은 task_id / decision_id 유지 (task_state.retry_count 누적)\n' +
+        '• 코드 수정이 있었다면 그 변경이 반영된 상태로 BE/FE Agent 재실행\n' +
+        '• 새 task로 처음부터 (CodeChecker 다시) 가 아닌 *연속 시도*로 추적됨\n\n' +
+        '계속할까요?';
+      if (!confirm(msg)) return;
+      resumeBtn.disabled = true;
+      resumeBtn.textContent = '🔁 resuming…';
+      try {
+        const r = await fetchJSON(`/api/run/resume/${encodeURIComponent(taskId)}`, { method: 'POST' });
+        if (r.ok) {
+          alert(`Resume 시작됨 (pid=${r.pid}). task_id=${taskId}는 그대로, retry round 추가 진행.`);
+          lastDetailTerminal = false;   // verdict가 다시 흐를 수 있으니 polling 재개
+          lastDetailHash = '';
+        } else if (r._status === 409) {
+          alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
+        } else {
+          alert('Resume 실패: ' + (r.error || r._text || 'unknown'));
+        }
+      } catch (e) {
+        alert('Resume 호출 실패: ' + e.message);
+      } finally {
+        resumeBtn.disabled = false;
+        resumeBtn.textContent = '🔁 Resume (CodeChecker skip, 같은 task)';
+      }
+    });
+  }
+
+  // D35 옵션 (a): 📋 prompt에 채우기 — textarea로 user_request 복사
+  const fillBtn = document.getElementById('fillPromptBtn');
+  if (fillBtn) {
+    fillBtn.addEventListener('click', () => {
+      const promptInput = $('#prompt');
+      promptInput.value = fillBtn.dataset.prompt || '';
+      promptInput.focus();
+      fillBtn.textContent = '✅ 채워졌어요';
+      setTimeout(() => { fillBtn.textContent = '📋 prompt에 채우기'; }, 1200);
     });
   }
 }

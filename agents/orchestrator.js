@@ -40,6 +40,7 @@ const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
 const migrationAgent = require('./migration_agent');
 const { classifyAgentError, buildFixInstructions } = require('../lib/agent_error_classifier');
+const { checkResumeEligibility } = require('../lib/resume_helper');
 const deployAgent = require('./deploy_agent');
 const testAgent = require('./test_agent');
 const { resolveModel } = require('../lib/llm');
@@ -258,9 +259,28 @@ function evaluateFinalVerdict({ initialVerdict, deployStatus, posttestStatus }) 
 
 // ---------------- main flow ----------------
 
+/**
+ * argv에서 --resume=<task_id> 또는 --resume <task_id> 파싱.
+ * @returns {string|null} resume할 task_id (없으면 null)
+ */
+function parseResumeArg() {
+  const args = process.argv.slice(2);
+  const idx = args.findIndex((a) => a === '--resume' || a.startsWith('--resume='));
+  if (idx === -1) return null;
+  if (args[idx].startsWith('--resume=')) {
+    return args[idx].slice('--resume='.length).trim() || null;
+  }
+  return (args[idx + 1] || '').trim() || null;
+}
+
 async function main() {
-  const task_id = generateTaskId();
-  console.log(`[orchestrator] task_id=${task_id}`);
+  // D35 (2026-05-14, 옵션 C): --resume=<task_id>면 기존 task의 CodeChecker 결과
+  // 재사용하고 round loop만 재진입. 같은 task_id, 같은 decision_id 유지 →
+  // task_state.retry_count 누적, log_db_migrations 이력 그대로.
+  const resumeTaskId = parseResumeArg();
+  const isResume = !!resumeTaskId;
+  const task_id = resumeTaskId || generateTaskId();
+  console.log(`[orchestrator] ${isResume ? 'RESUME' : 'NEW'} task_id=${task_id}`);
 
   const commitMode = (process.env.COMMIT_MODE || 'auto').toLowerCase();
   const validationMode = (process.env.VALIDATION_MODE || 'on').toLowerCase();
@@ -279,7 +299,7 @@ async function main() {
   const orchRun = await logger.startRun({
     task_id,
     agent_name: 'Orchestrator',
-    input_json: { argv: process.argv.slice(2), commitMode, validationMode, models },
+    input_json: { argv: process.argv.slice(2), commitMode, validationMode, models, resume: isResume },
   });
 
   let finalVerdict = 'ERROR';
@@ -291,18 +311,36 @@ async function main() {
     console.log('[phase 0] bootstrapping FE/ and BE/ if needed...');
     await runBootstrap({ install: true });
 
-    userRequest = readUserRequest();
-    console.log(`[phase 0] user_request: ${userRequest}`);
+    let fe_spec, be_spec, api_contract, decision_id;
 
-    // Phase 1: CodeChecker
-    console.log('[phase 1] CodeChecker running...');
-    const cc = await codeChecker.run({ task_id, user_request: userRequest });
-    console.log(`[phase 1] targets=${cc.targets} decision_id=${cc.decision_id}`);
+    if (isResume) {
+      // Phase 1 SKIP — 기존 CodeChecker 결과를 DB에서 복원
+      console.log(`[phase 1] CodeChecker SKIPPED (resume mode — restoring spec from DB)`);
+      const elig = await checkResumeEligibility(task_id);
+      if (!elig.eligible) {
+        throw new Error(`Resume not eligible: ${elig.reason}`);
+      }
+      userRequest = elig.user_request || '';
+      decision_id = elig.decision_id;
+      const cc_output = elig.codechecker_output;
+      fe_spec = cc_output.fe_spec;
+      be_spec = cc_output.be_spec;
+      api_contract = cc_output.api_contract;
+      console.log(`[phase 1] restored: targets=${cc_output.targets || '?'} decision_id=${decision_id}, user_request="${userRequest.slice(0, 100)}"`);
+    } else {
+      userRequest = readUserRequest();
+      console.log(`[phase 0] user_request: ${userRequest}`);
 
-    const fe_spec = cc.fe_spec;
-    const be_spec = cc.be_spec;
-    const api_contract = cc.api_contract;
-    const decision_id = cc.decision_id;
+      // Phase 1: CodeChecker (정상 모드)
+      console.log('[phase 1] CodeChecker running...');
+      const cc = await codeChecker.run({ task_id, user_request: userRequest });
+      console.log(`[phase 1] targets=${cc.targets} decision_id=${cc.decision_id}`);
+
+      fe_spec = cc.fe_spec;
+      be_spec = cc.be_spec;
+      api_contract = cc.api_contract;
+      decision_id = cc.decision_id;
+    }
 
     // ---------------- round loop ----------------
     let round = 0;
