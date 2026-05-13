@@ -72,6 +72,65 @@ test('JSON_PARSE_FAIL — callJSON 최종 실패', () => {
   assert.equal(c.category, 'JSON_PARSE_FAIL');
 });
 
+// ─────────── classifyAgentError — anthropic SDK throw (D34+) ───────────
+
+test('LLM_API_TRANSIENT — rate limit (429 in message)', () => {
+  const e = makeErr('429 Too Many Requests');
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, true);
+  assert.equal(c.category, 'LLM_API_TRANSIENT');
+});
+
+test('LLM_API_TRANSIENT — rate_limit_error type', () => {
+  const e = Object.assign(new Error('Anthropic API error'), { status: 429, error: { type: 'rate_limit_error' } });
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, true);
+  assert.equal(c.category, 'LLM_API_TRANSIENT');
+});
+
+test('LLM_API_TRANSIENT — overloaded_error', () => {
+  const e = Object.assign(new Error('Overloaded'), { error: { type: 'overloaded_error' } });
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, true);
+  assert.equal(c.category, 'LLM_API_TRANSIENT');
+});
+
+test('LLM_API_TRANSIENT — ECONNRESET network error', () => {
+  const e = makeErr('connect ECONNRESET 192.168.0.1:443');
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, true);
+  assert.equal(c.category, 'LLM_API_TRANSIENT');
+});
+
+test('LLM_API_TRANSIENT — 503 service unavailable', () => {
+  const e = Object.assign(new Error('Service Unavailable'), { status: 503 });
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, true);
+  assert.equal(c.category, 'LLM_API_TRANSIENT');
+});
+
+test('LLM_API_AUTH — 401 invalid API key', () => {
+  const e = Object.assign(new Error('Invalid x-api-key header'), { status: 401, error: { type: 'authentication_error' } });
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, false);  // override
+  assert.equal(c.category, 'LLM_API_AUTH');
+});
+
+test('LLM_API_AUTH — message에 401만 있어도 매치', () => {
+  const e = makeErr('Request failed with status code 401');
+  const c = classifyAgentError(e);
+  assert.equal(c.retryable, false);
+  assert.equal(c.category, 'LLM_API_AUTH');
+});
+
+test('우선순위 — AUTH(401)이 TRANSIENT보다 먼저 매치', () => {
+  // 만약 AUTH 패턴이 TRANSIENT 뒤에 있으면 401이 transient에 잘못 잡힐 위험 — 순서 검증.
+  const e = makeErr('401 Unauthorized');
+  const c = classifyAgentError(e);
+  assert.equal(c.category, 'LLM_API_AUTH');
+  assert.equal(c.retryable, false);
+});
+
 // ─────────── classifyAgentError — non-retryable ───────────
 
 test('UNKNOWN — 시스템 예외 (ECONNREFUSED, EACCES 등)는 non-retryable', () => {
@@ -124,9 +183,18 @@ test('buildFixInstructions — 1000자 넘는 원본 메시지는 자름', () =>
 
 // ─────────── RETRYABLE_PATTERNS 자체 sanity ───────────
 
-test('RETRYABLE_PATTERNS — 7개 모두 unique category', () => {
+test('RETRYABLE_PATTERNS — 9개 모두 unique category (D34+ 2개 추가)', () => {
   const cats = new Set(RETRYABLE_PATTERNS.map((p) => p.category));
-  assert.equal(cats.size, 7);
+  assert.equal(cats.size, 9);
+  // 핵심 카테고리 존재 확인
+  assert.ok(cats.has('UNAUTHORIZED_DEPS'));
+  assert.ok(cats.has('LLM_API_TRANSIENT'));
+  assert.ok(cats.has('LLM_API_AUTH'));
+});
+
+test('RETRYABLE_PATTERNS — retryable_override가 있으면 false 강제', () => {
+  const auth = RETRYABLE_PATTERNS.find((p) => p.category === 'LLM_API_AUTH');
+  assert.equal(auth.retryable_override, false);
 });
 
 test('RETRYABLE_PATTERNS — 각 패턴이 hint를 갖춤', () => {
