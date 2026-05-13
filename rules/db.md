@@ -58,10 +58,6 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS player_name VARCHAR(50) NOT NULL DEFAULT '';
 ```
 
-### 만약 *대대적 schema 재설계*가 필요한 경우
-
-`Reset to origin/main` 버튼(또는 `npm run reset-db`)으로 DB·이력 모두 폐기하고 처음부터 다시 작성하는 게 정답. 단, 이 경우 **모든 기존 task의 데이터가 사라지므로** 신중히.
-
 ## 4. Idempotent하게 작성 (필수)
 
 같은 migration이 *두 번 적용되어도 깨지지 않게* 작성하세요. MySQL 8 기준:
@@ -106,7 +102,7 @@ ALTER TABLE users ADD COLUMN player_name VARCHAR(50);
 ## 8. 흔한 함정 모음
 
 - **`CREATE DATABASE` 작성 금지** — DB는 시스템이 이미 만들어둠.
-- **`DROP TABLE` / `TRUNCATE` 작성 금지** — 데이터 보호. 진짜로 필요하면 `Reset to origin/main` 으로.
+- **`DROP TABLE` / `TRUNCATE` 작성 금지** — 데이터 보호.
 - **`agent_schema.sql`의 테이블(`log_*`)을 ALTER/DROP 시도 금지** — 시스템 도구 영역.
 - **타임존 의존 코드 금지** — `CURRENT_TIMESTAMP` 만 사용. `TIMEZONE('Asia/Seoul', ...)` 같은 종속 X.
 - **trigger / stored procedure 작성 비추** — 디버그 어렵고 PoC scope 밖.

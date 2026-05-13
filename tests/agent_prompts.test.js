@@ -202,3 +202,29 @@ test('CLAUDE.md — 문서 구조 테이블에 rules/db.md row 추가', () => {
   assert.match(md, /rules\/db\.md/);
   assert.match(md, /DB migration 규칙/);
 });
+
+// ─────────── D41-fix (2026-05-14): "Reset to origin/main" 언급 금지 ───────────
+//   LLM이 destructive 작업(ahead commit + 코드 + DB 모두 폐기)을 *해결책으로
+//   제안*하지 않도록, prompt에 inject되는 .md 파일(rules/* + CLAUDE.md)에서
+//   해당 문구를 완전히 제거. 미래 회귀 방지.
+
+test('rules/*.md + CLAUDE.md에 "Reset to origin/main" 언급 없음 (destructive 작업 제안 차단)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const candidates = [
+    path.resolve(__dirname, '..', 'CLAUDE.md'),
+    path.resolve(__dirname, '..', 'rules', 'common.md'),
+    path.resolve(__dirname, '..', 'rules', 'be.md'),
+    path.resolve(__dirname, '..', 'rules', 'fe.md'),
+    path.resolve(__dirname, '..', 'rules', 'db.md'),
+  ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    const md = fs.readFileSync(p, 'utf8');
+    assert.doesNotMatch(
+      md,
+      /Reset to origin\/main/i,
+      `${path.basename(p)}에 "Reset to origin/main" 언급이 남아있음 — LLM에게 destructive 옵션을 제안하면 안 됨`
+    );
+  }
+});
