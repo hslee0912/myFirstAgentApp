@@ -24,6 +24,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const logger = require('../lib/logger');
 const stack = require('../lib/stack');
+const { checkBeServerSanity } = require('../lib/container_sanity');
 
 const ROOT = path.resolve(__dirname, '..');
 const TRUNCATE = 4000;
@@ -174,6 +175,35 @@ async function run(p) {
   const stage_logs = {};
 
   try {
+    // D45 (2026-05-14): BE container sanity 정적 grep — eslint 돌리기 전에
+    //   server.js의 4 antipattern (process.env.PORT, listen localhost,
+    //   require.main 가드 부재, express.json 부재) 검출. 위반 시 Stage 1 FAIL
+    //   로 처리해 retry 흐름과 통합. eslint는 *안 돌림* (이미 명백한 위반).
+    if (target === 'BE') {
+      const sanity = checkBeServerSanity(cwd);
+      if (!sanity.pass) {
+        stage_logs.stage1 = {
+          pass: false,
+          cmd: 'container_sanity (BE/src/server.js static grep)',
+          violations: sanity.violations,
+          stdout: sanity.fix_instructions,
+          stderr: '',
+          code: 1,
+        };
+        await logger.updateTaskState(state_id, {
+          status: 'FAILED',
+          retry_count: (current_retry_count || 0) + 1,
+          failed_stage: 'STAGE1',
+          fix_instructions: sanity.fix_instructions,
+          stage_logs,
+          result_text: null,
+        });
+        const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE1' };
+        await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
+        return out;
+      }
+    }
+
     stage_logs.stage1 = runStage(cfg.lint.stage1, cwd);
     if (!stage_logs.stage1.pass) {
       const fix = buildFixInstructions('STAGE1', stage_logs.stage1);

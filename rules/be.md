@@ -27,6 +27,38 @@ export default signupHandler;
 - bootstrap이 깔아둔 `server.js` placeholder가 있으면 **그 응답 형식·동작을 보존**하면서 비즈니스 로직 추가.
 - `GET /health` 엔드포인트는 placeholder 테스트가 기대하는 형식(`{ success: true, data: { status: 'ok' } }`) 그대로 유지.
 
+### 3-zero. 컨테이너 sanity — *반드시 지킬 4가지* (위반 시 Lint Stage 1 즉시 FAIL, D45)
+
+placeholder의 *port·listen·middleware 코드는 절대 갈아치우지 말 것*. 학습 데이터의 Heroku/PaaS 패턴을 무의식적으로 적용하면 컨테이너가 *시작은 됐는데 listen을 잘못 잡아* PostTest의 `fetch failed` 사고 발생. 다음 4가지는 `lib/container_sanity.js`가 정적 grep으로 검출 → 위반 시 Stage 1 FAIL + retry:
+
+1. **`process.env.PORT` 사용 금지** — Heroku 컨벤션. 본 시스템 docker-compose는 `BE_PORT=3001`을 주입.
+   ```js
+   // ❌ const port = process.env.PORT || 3000;
+   // ✅ const port = process.env.BE_PORT || 3001;
+   ```
+2. **`app.listen(port, 'localhost')` 또는 `'127.0.0.1'` 금지** — 컨테이너 외부(호스트/다른 컨테이너)에서 접근 불가 → ECONNREFUSED.
+   ```js
+   // ❌ app.listen(port, 'localhost', () => ...);
+   // ✅ app.listen(port, () => ...);          // 호스트 인자 무지정
+   // ✅ app.listen(port, '0.0.0.0', () => ...); // 명시
+   ```
+3. **`if (require.main === module)` 가드 *반드시 보존*** — jest가 server.js를 require할 때 listen이 자동 시작되면 port 충돌 또는 테스트 hang.
+   ```js
+   // ❌ app.listen(port, () => ...);    // top-level
+   // ✅ if (require.main === module) {
+   //      app.listen(port, () => ...);
+   //    }
+   //    module.exports = app;            // jest는 app 객체를 require해서 supertest로 검증
+   ```
+4. **`express.json()` middleware *반드시 모든 route 등록 전*** — 누락하면 POST body가 `undefined` → handler 안에서 throw 또는 잘못된 400.
+   ```js
+   // ✅
+   app.use(express.json());      // route 전
+   app.use('/api/v1/auth', authRoutes);
+   ```
+
+placeholder (`lib/stack_templates/BE/src/server.js`)는 위 4가지를 모두 만족하는 정답 패턴이다. **port 핸들링 + listen 가드 + middleware 코드는 그대로 두고 route 등록만 추가**하는 게 정상 경로.
+
 ### 3-bis. Contract endpoint mount — *모든* endpoint 빠짐없이 구현 (필수)
 
 `shared/api_contract.json`에 선언된 **모든** endpoint는 `BE/src/server.js` + `BE/src/routes/*.js`에 mount해야 한다. 하나라도 빠지면 **Phase 2.7 ContractSync (정적 분석)** 가 즉시 FAIL → 다음 retry의 `fix_instructions`로 누락 list 전달. *retry로 풀지 말고 첫 응답에서 모두 mount하는 게 정상 경로*.
