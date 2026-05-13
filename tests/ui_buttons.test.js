@@ -173,3 +173,26 @@ test('UI: Restart 버튼 텍스트가 "Restart Server"로 변경됨', () => {
   // 옛 "Restart UI" 텍스트는 표시 영역에 남아있으면 안 됨
   assert.doesNotMatch(html, />🔄 Restart UI</);
 });
+
+// D40 (2026-05-14): detail-panel Resume/Prompt 카드 제거 + textarea height 확대
+
+test('UI: renderResumeCard 함수 제거됨 (상단 🔁 Resume last failed 버튼으로 대체)', () => {
+  assert.doesNotMatch(html, /function\s+renderResumeCard\s*\(/);
+  // 호출도 남아있으면 ReferenceError → 호출 라인도 없어야 함
+  assert.doesNotMatch(html, /renderResumeCard\s*\(/);
+});
+
+test('UI: detail-panel용 resumeBtn / fillPromptBtn DOM id 제거됨 (상단 resumeLastBtn은 유지)', () => {
+  // 카드가 동적으로 생성하던 두 ID는 정적 HTML에도 없어야 함
+  assert.doesNotMatch(html, /id=["']resumeBtn["']/);
+  assert.doesNotMatch(html, /id=["']fillPromptBtn["']/);
+  // 상단 단축 버튼 resumeLastBtn은 그대로 존재해야 함
+  assert.match(html, /id=["']resumeLastBtn["']/);
+});
+
+test('UI: textarea min-height 확대 (작업 prompt 입력창 더 넓게)', () => {
+  // 80px → 280px (사용자 요청 +200px). 정확한 값을 확인 — 회귀 시 잡힘.
+  assert.match(html, /textarea\s*\{\s*resize:\s*vertical;\s*min-height:\s*280px;\s*\}/);
+  // 옛 80px 값은 남아있으면 안 됨 (회귀 방지)
+  assert.doesNotMatch(html, /textarea\s*\{\s*resize:\s*vertical;\s*min-height:\s*80px;\s*\}/);
+});

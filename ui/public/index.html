@@ -87,7 +87,7 @@
       border-radius: 6px;
       font: inherit;
     }
-    textarea { resize: vertical; min-height: 80px; }
+    textarea { resize: vertical; min-height: 280px; }
     button {
       padding: 7px 12px;
       background: var(--accent);
@@ -1178,57 +1178,6 @@ function renderFinalResultCard(decision, states, runs) {
  *    🔁 Resume        — verdict in (ERROR, FAIL) AND resume.eligible
  *    📋 prompt 채우기 — user_request 가 존재
  */
-function renderResumeCard(decision, resume) {
-  if (!decision) return '';     // manual 작업 등 decision 없으면 카드 자체 미노출
-  if (!resume) resume = { eligible: false, reason: 'resume 정보 없음', user_request: '' };
-
-  const v = decision.final_verdict || 'IN_PROGRESS';
-  const userReq = String(resume.user_request || '');
-  const preview = userReq.slice(0, 200);
-  const more = userReq.length > 200 ? '...' : '';
-
-  // Resume 버튼: verdict가 ERROR/FAIL + eligible일 때만 활성
-  const isFailed = (v === 'ERROR' || v === 'FAIL');
-  const resumeActive = isFailed && resume.eligible;
-  const resumeDisableReason = !resumeActive
-    ? (!isFailed
-        ? `verdict=${v} — ERROR/FAIL일 때만 사용 가능`
-        : (resume.reason || 'resume 불가'))
-    : '';
-
-  // Prompt fill 버튼: user_request 있을 때만 활성
-  const fillActive = userReq.length > 0;
-  const fillDisableReason = fillActive ? '' : 'user_request 복원 실패 — DB에서 찾을 수 없음';
-
-  const resumeBtn = resumeActive
-    ? `<button id="resumeBtn" class="secondary" data-task-id="${esc(decision.task_id)}" data-preview="${esc(userReq)}" style="border-color: var(--accent); color: var(--accent);">🔁 Resume (CodeChecker skip, 같은 task)</button>`
-    : `<button class="secondary" disabled title="${esc(resumeDisableReason)}" style="opacity: 0.5;">🔁 Resume (CodeChecker skip, 같은 task)</button>`;
-
-  const fillBtn = fillActive
-    ? `<button id="fillPromptBtn" class="secondary" data-prompt="${esc(userReq)}">📋 prompt에 채우기</button>`
-    : `<button class="secondary" disabled title="${esc(fillDisableReason)}" style="opacity: 0.5;">📋 prompt에 채우기</button>`;
-
-  // 카드 본문: user_request preview + 비활성 사유 (있는 경우만)
-  const reasonNote = !resumeActive
-    ? `<p class="muted" style="font-size: 12px; margin-top: 4px;">🔁 Resume 비활성: ${esc(resumeDisableReason)}</p>`
-    : '';
-
-  return `
-    <div class="err-card sev-info" style="margin-top: 10px;">
-      <div class="err-head"><span class="err-title">🔁 Resume / 📋 Prompt</span></div>
-      <div class="err-body">
-        ${userReq
-          ? `<p>user_request: <code>${esc(preview)}${esc(more)}</code></p>`
-          : '<p class="muted">user_request 복원 실패 — DB에서 찾을 수 없음.</p>'}
-        ${reasonNote}
-        <div class="toolbar" style="margin-top: 10px; gap: 8px; display: flex; flex-wrap: wrap;">
-          ${resumeBtn}
-          ${fillBtn}
-        </div>
-      </div>
-    </div>`;
-}
-
 /** Render the most-critical error summary card on top (Layer 1). */
 function renderTopErrorSummary(decision, states, runs) {
   if (!decision) return '';
@@ -1459,8 +1408,8 @@ async function loadDetail() {
     html += '<div class="muted" style="margin-top: 8px;">(아직 log_agent_decisions row 없음 — orchestrator가 Phase 1 진입 전이거나, 일반 cycle이 아닌 manual 작업[Redeploy 등])</div>';
   }
 
-  // D35 (2026-05-14, 옵션 C): Resume / Prompt fill 액션 카드 (ERROR/FAIL + eligible 시에만)
-  html += renderResumeCard(decision, resume);
+  // D35 detail-panel Resume/Prompt 카드는 D40(2026-05-14)에서 제거됨 — 상단
+  // 🔁 Resume last failed 버튼이 같은 역할을 하므로 중복.
 
   // Layer 1 — drill-down용 분류 카드 (final-card와 중복일 수 있지만 권장 대응이 같이 보임).
   html += renderTopErrorSummary(decision, states, runs);
@@ -1512,53 +1461,9 @@ async function loadDetail() {
     });
   }
 
-  // D35 (2026-05-14, 옵션 C): Resume + Prompt fill 버튼 바인딩 (renderResumeCard에서 출력된 경우)
-  const resumeBtn = document.getElementById('resumeBtn');
-  if (resumeBtn) {
-    resumeBtn.addEventListener('click', async () => {
-      const taskId = resumeBtn.dataset.taskId;
-      const preview = resumeBtn.dataset.preview || '';
-      const msg =
-        '🔁 Resume — 같은 task로 CodeChecker skip + round loop 재진입\n\n' +
-        `user_request: "${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}"\n\n` +
-        '• 같은 task_id / decision_id 유지 (task_state.retry_count 누적)\n' +
-        '• 코드 수정이 있었다면 그 변경이 반영된 상태로 BE/FE Agent 재실행\n' +
-        '• 새 task로 처음부터 (CodeChecker 다시) 가 아닌 *연속 시도*로 추적됨\n\n' +
-        '계속할까요?';
-      if (!confirm(msg)) return;
-      resumeBtn.disabled = true;
-      resumeBtn.textContent = '🔁 resuming…';
-      try {
-        const r = await fetchJSON(`/api/run/resume/${encodeURIComponent(taskId)}`, { method: 'POST' });
-        if (r.ok) {
-          alert(`Resume 시작됨 (pid=${r.pid}). task_id=${taskId}는 그대로, retry round 추가 진행.`);
-          lastDetailTerminal = false;   // verdict가 다시 흐를 수 있으니 polling 재개
-          lastDetailHash = '';
-        } else if (r._status === 409) {
-          alert(r.error || '다른 작업 진행 중. 끝난 후 다시 시도하세요.');
-        } else {
-          alert('Resume 실패: ' + (r.error || r._text || 'unknown'));
-        }
-      } catch (e) {
-        alert('Resume 호출 실패: ' + e.message);
-      } finally {
-        resumeBtn.disabled = false;
-        resumeBtn.textContent = '🔁 Resume (CodeChecker skip, 같은 task)';
-      }
-    });
-  }
-
-  // D35 옵션 (a): 📋 prompt에 채우기 — textarea로 user_request 복사
-  const fillBtn = document.getElementById('fillPromptBtn');
-  if (fillBtn) {
-    fillBtn.addEventListener('click', () => {
-      const promptInput = $('#prompt');
-      promptInput.value = fillBtn.dataset.prompt || '';
-      promptInput.focus();
-      fillBtn.textContent = '✅ 채워졌어요';
-      setTimeout(() => { fillBtn.textContent = '📋 prompt에 채우기'; }, 1200);
-    });
-  }
+  // D40 (2026-05-14): detail-panel Resume/Prompt fill 버튼 바인딩 코드 제거됨
+  //   — 카드 자체가 제거되어 동적으로 생성되지 않음. 상단 🔁 Resume last failed
+  //   버튼이 같은 역할 (가장 최근 ERROR/FAIL task로 Resume).
 }
 
 async function pollRunStatus() {
