@@ -361,6 +361,37 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .meta-chip.warn { color: var(--sev-warn-fg); border-color: var(--sev-warn-fg); }
+    /* ⚙ Advanced env modal — uses native <dialog>. */
+    dialog#envAdvancedDialog {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0;
+      width: min(640px, 92vw);
+      max-height: 80vh;
+    }
+    dialog#envAdvancedDialog::backdrop { background: rgba(0,0,0,0.55); }
+    dialog#envAdvancedDialog .dlg-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    dialog#envAdvancedDialog .dlg-body {
+      padding: 12px 16px;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    dialog#envAdvancedDialog .dlg-foot {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      text-align: right;
+    }
+    dialog#envAdvancedDialog h3 { margin: 0; font-size: 14px; }
+    dialog#envAdvancedDialog .row { display: flex; gap: 8px; align-items: center; }
+    dialog#envAdvancedDialog .row + .row { margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -391,6 +422,9 @@
 
       <h2 style="margin-top: 18px;">.env 토글</h2>
       <div id="envEditor"></div>
+      <div style="margin-top: 8px;">
+        <button id="envAdvancedOpenBtn" class="secondary" title="모델·포트·재시도·타임아웃 등 토글 외 .env 키 편집">⚙ Advanced env…</button>
+      </div>
     </section>
 
     <section>
@@ -456,6 +490,11 @@ async function putEnv(key, value) {
   });
 }
 
+/**
+ * Inline env panel — 토글 키 4종만 노출 (D37, 2026-05-14).
+ *   기타 키(모델·포트·타임아웃 등)는 ⚙ Advanced env… 버튼 → modal로 분리.
+ *   서버는 같은 PUT /api/env + 같은 allowlist를 사용 — 레이아웃만 분리.
+ */
 async function loadEnv() {
   const data = await fetchJSON('/api/env');
   // Refresh PUBLIC_HOST so subsequent FE/BE links pick up any UI edit
@@ -466,9 +505,12 @@ async function loadEnv() {
   const root = $('#envEditor');
   root.innerHTML = '';
 
-  // Toggle row at the top — checked = "on value", unchecked = "off value".
-  // change event writes to .env immediately.
-  for (const k of data.editableKeys) {
+  // 서버가 toggleKeys를 명시적으로 주면 그걸 따름, 없으면 클라이언트 fallback.
+  const toggleKeys = Array.isArray(data.toggleKeys) && data.toggleKeys.length > 0
+    ? data.toggleKeys
+    : Object.keys(TOGGLE_KEYS);
+
+  for (const k of toggleKeys) {
     if (!TOGGLE_KEYS[k]) continue;
     const t = TOGGLE_KEYS[k];
     const val = data.editable[k] ?? '';
@@ -483,20 +525,6 @@ async function loadEnv() {
         `<span data-toggle-value="${k}" style="font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px;">${checked ? t.on : t.off}</span>` +
       `</label>` +
       `<span data-toggle-status="${k}" class="status" style="flex:0 0 60px; text-align:right;"></span>`;
-    root.appendChild(wrap);
-  }
-
-  // The remaining keys (models, ports, retries, ...) keep the text+save layout.
-  for (const k of data.editableKeys) {
-    if (TOGGLE_KEYS[k]) continue;
-    const val = data.editable[k] ?? '';
-    const wrap = document.createElement('div');
-    wrap.className = 'row';
-    wrap.style.marginBottom = '4px';
-    wrap.innerHTML =
-      `<label style="flex:0 0 200px; margin:0; font-family: ui-monospace, monospace;">${k}</label>` +
-      `<input type="text" data-key="${k}" value="${val.replace(/"/g, '&quot;')}" />` +
-      `<button class="secondary" data-save="${k}">save</button>`;
     root.appendChild(wrap);
   }
 
@@ -516,7 +544,6 @@ async function loadEnv() {
           valueEl.textContent = value;
           statusEl.textContent = '✓ saved';
         } else {
-          // Revert checkbox state on failure.
           cb.checked = !cb.checked;
           statusEl.textContent = '✗ fail';
         }
@@ -529,12 +556,38 @@ async function loadEnv() {
       }
     });
   });
+}
 
-  // Wire text+save buttons (unchanged behavior).
-  root.querySelectorAll('button[data-save]').forEach((btn) => {
+/**
+ * ⚙ Advanced env modal — 토글 외의 .env 키 (모델·포트·타임아웃 등) 편집.
+ *   `data.advancedKeys`로 서버가 정의한 화이트리스트만 표시. 서버 PUT은 동일.
+ *   modal 열릴 때마다 호출 — 항상 최신값으로 채움.
+ */
+async function loadEnvAdvanced() {
+  const data = await fetchJSON('/api/env');
+  const body = $('#envAdvancedBody');
+  body.innerHTML = '';
+  const keys = Array.isArray(data.advancedKeys) && data.advancedKeys.length > 0
+    ? data.advancedKeys
+    : (data.editableKeys || []).filter((k) => !TOGGLE_KEYS[k]);
+  if (keys.length === 0) {
+    body.innerHTML = '<div class="muted">편집 가능한 advanced 키가 없음.</div>';
+    return;
+  }
+  for (const k of keys) {
+    const val = data.editable[k] ?? '';
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML =
+      `<label style="flex:0 0 180px; margin:0; font-family: ui-monospace, monospace;">${k}</label>` +
+      `<input type="text" data-adv-key="${k}" value="${val.replace(/"/g, '&quot;')}" style="flex:1;" />` +
+      `<button class="secondary" data-adv-save="${k}">save</button>`;
+    body.appendChild(wrap);
+  }
+  body.querySelectorAll('button[data-adv-save]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const key = btn.getAttribute('data-save');
-      const input = root.querySelector(`input[data-key="${key}"]`);
+      const key = btn.getAttribute('data-adv-save');
+      const input = body.querySelector(`input[data-adv-key="${key}"]`);
       const value = input.value;
       btn.disabled = true;
       try {
@@ -550,6 +603,38 @@ async function loadEnv() {
     });
   });
 }
+
+/**
+ * D37 (2026-05-14): 모든 toolbar 버튼 클릭 후 호출되는 통합 UI 새로고침.
+ *   - location.reload하는 강한 갱신과 별개로, *부분 갱신*만 필요한 곳에서 사용.
+ *   - Detail panel은 lastDetailHash 무효화해서 강제 re-render.
+ *   - 실패는 silent — 한 갱신이 깨져도 다른 갱신은 계속 진행되어야 함.
+ */
+async function refreshAll() {
+  lastDetailHash = '';   // detail panel 강제 re-render
+  try { await loadEnv(); } catch (_) { /* silent */ }
+  try { await loadTasks(); } catch (_) { /* silent */ }
+  try { loadDetail(); } catch (_) { /* silent */ }
+  try { pollRunStatus(); } catch (_) { /* silent */ }
+  try { pollMergeStatus(); } catch (_) { /* silent */ }
+}
+
+// ⚙ Advanced env modal — open/close wiring.
+document.getElementById('envAdvancedOpenBtn').addEventListener('click', () => {
+  const dlg = document.getElementById('envAdvancedDialog');
+  loadEnvAdvanced();
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');   // <dialog> polyfill fallback
+});
+document.getElementById('envAdvancedCloseBtn').addEventListener('click', () => {
+  const dlg = document.getElementById('envAdvancedDialog');
+  if (typeof dlg.close === 'function') dlg.close();
+  else dlg.removeAttribute('open');
+  refreshAll();   // modal로 변경한 값이 inline 패널·polling에 즉시 반영
+});
+document.getElementById('envAdvancedDoneBtn').addEventListener('click', () => {
+  document.getElementById('envAdvancedCloseBtn').click();
+});
 
 async function loadTasks() {
   const data = await fetchJSON('/api/tasks');
@@ -1505,6 +1590,9 @@ $('#runBtn').addEventListener('click', async () => {
   if (!r.ok && r._status === 409) {
     $('#runStatus').textContent = 'busy — another run is already executing';
   }
+  // D37: 새 run spawn 후 즉시 task list 갱신 — 다음 polling tick(1.5s) 기다리지 않고
+  // 새 task row가 곧바로 보이도록.
+  refreshAll();
 });
 
 $('#resetDbBtn').addEventListener('click', async () => {
@@ -1679,6 +1767,7 @@ $('#cleanupMergedBtn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = '🧹 Cleanup merged';
+    refreshAll();   // D37: merge 상태·worktree 목록 변경 가능 → 즉시 새로고침
   }
 });
 
@@ -1717,6 +1806,7 @@ $('#resumeLastBtn').addEventListener('click', async () => {
   } catch (e) {
     alert('Resume 호출 실패: ' + e.message);
   } finally {
+    refreshAll();   // D37: task list + run status 즉시 갱신
     btn.textContent = '🔁 Resume last failed';
     // disabled 상태는 loadTasks의 updateResumeLastButton이 다음 polling에서 재계산
   }
@@ -1774,7 +1864,7 @@ $('#redeployBtn').addEventListener('click', async () => {
   } finally {
     $('#redeployBtn').disabled = false;
     $('#redeployBtn').textContent = '🚀 Redeploy';
-    loadTasks();
+    refreshAll();
   }
 });
 
@@ -1931,6 +2021,7 @@ $('#mergeBtn').addEventListener('click', async () => {
   } finally {
     $('#mergeBtn').disabled = false;
     $('#mergeBtn').textContent = '🔀 Merge to main';
+    refreshAll();   // D37: ahead commit 변화 → merge 버튼 상태·tasks 즉시 갱신
   }
 });
 
@@ -1941,5 +2032,26 @@ $('#mergeBtn').addEventListener('click', async () => {
   pollMergeStatus();
 })();
 </script>
+
+<!--
+  ⚙ Advanced env settings popup (D37, 2026-05-14).
+  Hidden by default. Opened by #envAdvancedOpenBtn → dialog.showModal().
+  Toggle keys (COMMIT_MODE 등 4종)은 본 패널에 inline으로 노출되고, *그 외*
+  UI_EDITABLE_KEYS만 이 popup으로 분리. 같은 PUT /api/env 엔드포인트 사용 —
+  레이아웃만 분리한 결정.
+-->
+<dialog id="envAdvancedDialog">
+  <div class="dlg-head">
+    <h3>⚙ Advanced env settings</h3>
+    <button class="secondary" id="envAdvancedCloseBtn" style="padding: 2px 8px;">✕</button>
+  </div>
+  <div class="dlg-body" id="envAdvancedBody">
+    <div class="muted">불러오는 중…</div>
+  </div>
+  <div class="dlg-foot">
+    <button class="secondary" id="envAdvancedDoneBtn">닫기</button>
+  </div>
+</dialog>
+
 </body>
 </html>

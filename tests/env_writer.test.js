@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { readEnv, updateEnv, UI_EDITABLE_KEYS } = require('../lib/env_writer');
+const { readEnv, updateEnv, UI_EDITABLE_KEYS, TOGGLE_KEYS, ADVANCED_KEYS } = require('../lib/env_writer');
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-writer-'));
 after(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} });
@@ -113,4 +113,45 @@ test('UI_EDITABLE_KEYS: frozen allowlist with the expected mode toggles', () => 
   assert.ok(!UI_EDITABLE_KEYS.includes('ANTHROPIC_API_KEY'));
   assert.ok(!UI_EDITABLE_KEYS.includes('DB_PASSWORD'));
   assert.ok(!UI_EDITABLE_KEYS.includes('UI_PORT')); // UI shouldn't move its own port at runtime
+});
+
+// ─────────── D37 (2026-05-14): TOGGLE_KEYS / ADVANCED_KEYS 분리 ───────────
+
+test('TOGGLE_KEYS: 4개 토글만 (frozen) — UI 인라인 패널에 노출되는 키', () => {
+  assert.ok(Object.isFrozen(TOGGLE_KEYS));
+  assert.deepEqual(
+    [...TOGGLE_KEYS].sort(),
+    ['COMMIT_MODE', 'DEPLOY_MODE', 'DEPLOY_TEARDOWN_ON_PASS', 'VALIDATION_MODE'].sort()
+  );
+});
+
+test('ADVANCED_KEYS: frozen + 토글 외의 모든 editable 키 포함', () => {
+  assert.ok(Object.isFrozen(ADVANCED_KEYS));
+  // 모델·포트·타임아웃 같은 대표 키들이 advanced에 있어야 함
+  assert.ok(ADVANCED_KEYS.includes('ANTHROPIC_MODEL'));
+  assert.ok(ADVANCED_KEYS.includes('DEPLOY_PORT_BE'));
+  assert.ok(ADVANCED_KEYS.includes('MAX_RETRIES'));
+  assert.ok(ADVANCED_KEYS.includes('PUBLIC_HOST'));
+  // 토글 키는 ADVANCED에 없어야 함
+  for (const k of TOGGLE_KEYS) {
+    assert.ok(!ADVANCED_KEYS.includes(k), `${k}는 TOGGLE_KEYS인데 ADVANCED_KEYS에도 있음`);
+  }
+});
+
+test('TOGGLE_KEYS ∪ ADVANCED_KEYS = UI_EDITABLE_KEYS (분리는 레이아웃만, allowlist 동일)', () => {
+  const union = new Set([...TOGGLE_KEYS, ...ADVANCED_KEYS]);
+  const editable = new Set(UI_EDITABLE_KEYS);
+  assert.equal(union.size, editable.size);
+  for (const k of editable) assert.ok(union.has(k), `UI_EDITABLE에 ${k}가 있는데 분리된 두 그룹엔 없음`);
+  // 길이 합 = UI_EDITABLE_KEYS (disjoint 보장 — 위 테스트와 함께)
+  assert.equal(TOGGLE_KEYS.length + ADVANCED_KEYS.length, UI_EDITABLE_KEYS.length);
+});
+
+test('TOGGLE_KEYS ∩ ADVANCED_KEYS = ∅ (disjoint)', () => {
+  for (const k of TOGGLE_KEYS) {
+    assert.ok(!ADVANCED_KEYS.includes(k), `${k}가 양쪽 모두에 있음`);
+  }
+  for (const k of ADVANCED_KEYS) {
+    assert.ok(!TOGGLE_KEYS.includes(k), `${k}가 양쪽 모두에 있음`);
+  }
 });
