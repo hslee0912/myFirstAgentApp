@@ -1,17 +1,17 @@
 /**
- * Deploy + DB ops:
+ * Deploy ops:
  *   POST /api/stop-containers — `docker compose down` for the managed compose.
  *   POST /api/redeploy        — compose up only (Phase 8 standalone, no PostTest).
- *   POST /api/reset-db        — invokes lib/reset_db.js as a child.
+ *
+ * DB reset은 별도 단독 버튼에서 제거됨 — Init project (POST /api/init) 가 코드+DB
+ * 모두 reset하므로 단독 reset-db는 죽은 기능이 됨 (D38, 2026-05-14).
  */
 'use strict';
 
-const path = require('path');
-const { spawn } = require('child_process');
 const express = require('express');
 const { readEnv } = require('../../lib/env_writer');
 const deployAgent = require('../../agents/deploy_agent');
-const { ROOT, ENV_PATH, currentRunRef } = require('./_context');
+const { ENV_PATH, currentRunRef } = require('./_context');
 
 const router = express.Router();
 
@@ -66,21 +66,6 @@ router.post('/redeploy', async (_req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
-});
-
-router.post('/reset-db', async (_req, res) => {
-  const child = spawn('node', [path.join(ROOT, 'lib', 'reset_db.js')], {
-    cwd: ROOT,
-    env: { ...process.env },
-    windowsHide: true,
-  });
-  let out = '';
-  child.stdout.on('data', (b) => { out += b.toString(); });
-  child.stderr.on('data', (b) => { out += b.toString(); });
-  child.on('exit', (code) => {
-    if (code === 0) res.json({ ok: true, output: out.slice(-2000) });
-    else res.status(500).json({ ok: false, code, output: out.slice(-2000) });
-  });
 });
 
 module.exports = router;

@@ -12,9 +12,8 @@
  *   ui/routes/env.js    — GET/PUT /api/env
  *   ui/routes/tasks.js  — GET /api/tasks[, /:task_id[, /:task_id/contract]]
  *   ui/routes/run.js    — GET/POST /api/run (orchestrator child process)
- *   ui/routes/deploy.js  — POST /api/{stop-containers,redeploy,reset-db}
+ *   ui/routes/deploy.js  — POST /api/{stop-containers,redeploy}
  *   ui/routes/git.js     — GET /api/rollback-preview + POST /api/rollback
- *   ui/routes/cleanup.js — GET /api/cleanup-preview + POST /api/cleanup-merged
  *
  * Concurrency: one orchestrator run at a time (single in-memory slot lives in
  * ui/routes/_context.js#currentRunRef). Subsequent /api/run while busy → 409.
@@ -36,7 +35,6 @@ const runRoutes = require('./routes/run');
 const deployRoutes = require('./routes/deploy');
 const gitRoutes = require('./routes/git');
 const initRoutes = require('./routes/init');
-const cleanupRoutes = require('./routes/cleanup');
 
 const REQUESTED_PORT = Number(process.env.UI_PORT || 4000);
 
@@ -136,7 +134,6 @@ app.use('/api/run', runRoutes);
 app.use('/api', deployRoutes);
 app.use('/api', gitRoutes);
 app.use('/api', initRoutes);
-app.use('/api', cleanupRoutes);
 
 // ---------------- bootstrap ----------------
 
