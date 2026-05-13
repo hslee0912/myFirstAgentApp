@@ -40,6 +40,7 @@ const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
 const migrationAgent = require('./migration_agent');
 const contractSyncAgent = require('./contract_sync_agent');
+const dbState = require('../lib/db_state');
 const { classifyAgentError, buildFixInstructions } = require('../lib/agent_error_classifier');
 const { checkResumeEligibility } = require('../lib/resume_helper');
 const deployAgent = require('./deploy_agent');
@@ -373,7 +374,25 @@ async function main() {
         const beState = stateMap.BE;
         const isRetry = beState.status === 'FAILED';
         console.log(`[phase 2] BE Agent (mode=${isRetry ? 'retry' : 'initial'})`);
-        const params = { task_id, mode: isRetry ? 'retry' : 'initial', be_spec, api_contract };
+
+        // D44 (2026-05-14): BE Agent에 *이미 적용된 migration 이력* + *디스크의
+        //   migration 파일 list* + *현재 비즈니스 DB schema* inject. rules/db.md의
+        //   *원칙*만으로는 LLM이 *실제 상태*를 추론 못해 checksum 충돌 사고 발생 →
+        //   상태 정보 자체를 prompt에 박아 사고 차단.
+        let beStateBundle;
+        try {
+          beStateBundle = await dbState.getBeStateBundle();
+          console.log(
+            `[phase 2] db_state: applied=${beStateBundle.applied.length}, ` +
+            `disk=${beStateBundle.disk.length}, ` +
+            `business_tables=${Object.keys(beStateBundle.schema.tables).length}`
+          );
+        } catch (e) {
+          console.warn(`[phase 2] db_state fetch failed: ${e.message} — proceeding with empty state`);
+          beStateBundle = { applied: [], disk: [], diff: { in_sync: true, conflicts: [], orphan_on_disk: [], orphan_in_db: [] }, schema: { tables: {} } };
+        }
+
+        const params = { task_id, mode: isRetry ? 'retry' : 'initial', be_spec, api_contract, db_state: beStateBundle };
         if (isRetry) {
           params.fix_instructions = beState.fix_instructions || '';
           params.allowed_paths = extractAllowedPathsFromFix('BE', beState.fix_instructions);

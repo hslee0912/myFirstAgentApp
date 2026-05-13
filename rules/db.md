@@ -110,3 +110,5 @@ ALTER TABLE users ADD COLUMN player_name VARCHAR(50);
 ---
 
 **핵심 요약**: 한 cycle당 1~3개의 *새* `.sql` 파일을 `BE/db/migrations/<ts>_<name>.sql`에 emit. 이미 적용된 파일은 *절대 수정 금지* — 변경이 필요하면 *새 timestamp 파일*로 ALTER. Idempotent (`IF NOT EXISTS`)로 작성.
+
+> ℹ️ D44 (2026-05-14): 매 BE Agent 호출의 user prompt에 `## 이미 적용된 migration`, `## 디스크의 migration 파일`, `## 현재 비즈니스 DB schema` 세 섹션이 *실제 상태로* 함께 inject된다. 그것들을 *반드시* 확인 — 같은 파일명을 재사용하거나 이미 있는 컬럼을 다시 CREATE 하지 말 것.

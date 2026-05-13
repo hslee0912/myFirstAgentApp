@@ -24,6 +24,7 @@ const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
+const { formatApplied, formatDisk, formatSchema } = require('../lib/db_state');
 const fsu = require('../lib/fs_util');
 const stack = require('../lib/stack');
 
@@ -131,11 +132,15 @@ function ensureEslintrc() {
   return false;
 }
 
-function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
+function buildInitialUserPrompt({ be_spec, api_contract, existing_files, db_state }) {
   // D39 (2026-05-14): endpoint checklist — JSON 블록 외에 *명시적 list*도 표시.
   //   LLM에게 "모두 mount하라"는 강제 신호를 추가. Phase 2.7 ContractSync가
   //   누락 retry로 잡지만 *첫 시도부터 따르는 게 정상 경로* (다른 가드들과 동일).
   const checklist = endpointChecklist(api_contract);
+  // D44 (2026-05-14): 현재 DB 상태 + migration 이력을 prompt에 inject.
+  //   rules/db.md의 *원칙*만으로는 LLM이 *실제 상태*를 추론 못함 → 상태 자체를
+  //   prompt에 넣어 checksum 충돌 사고 차단.
+  const stateBundle = db_state || { applied: [], disk: [], schema: { tables: {} } };
   return [
     '## be_spec',
     '```json',
@@ -148,6 +153,16 @@ function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
     '## 구현해야 할 endpoint (api_contract 선언 — 빠짐없이 mount 필수)',
     checklist || '(없음)',
     '하나라도 빠지면 Phase 2.7 ContractSync(정적 분석)가 즉시 FAIL → retry. 첫 응답에 모두 포함하라.',
+    '',
+    '## 이미 적용된 migration (수정 금지 — 변경 필요 시 새 timestamp 파일로 ALTER만 emit)',
+    formatApplied(stateBundle.applied),
+    '',
+    '## 디스크의 migration 파일 (위 list와 정확히 일치해야 정상)',
+    formatDisk(stateBundle.disk),
+    '',
+    '## 현재 비즈니스 DB schema (log_* 제외 — 이미 적용된 migration들의 결과)',
+    formatSchema(stateBundle.schema),
+    '- 이 schema 위에서 *추가/변경*만 새 migration 파일로 emit. 같은 이름·내용으로 재정의 금지.',
     '',
     '## 기존 파일 (bootstrap이 깐 placeholder + 이전 라운드 산출물)',
     '```json',
@@ -169,10 +184,12 @@ function buildInitialUserPrompt({ be_spec, api_contract, existing_files }) {
   ].join('\n');
 }
 
-function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_paths, fix_instructions }) {
+function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_paths, fix_instructions, db_state }) {
   // D39: retry mode에서도 endpoint checklist 표시 — CONTRACT_SYNC retry라면
   //   특히 도움. allowed_paths 제약 안에서 누락된 endpoint를 보강해야 함.
   const checklist = endpointChecklist(api_contract);
+  // D44: retry에서도 DB 상태 보여줌. MIGRATION/CONTRACT_SYNC retry에서 특히 도움.
+  const stateBundle = db_state || { applied: [], disk: [], schema: { tables: {} } };
   return [
     '## 모드: RETRY (부분 수정)',
     '',
@@ -186,6 +203,15 @@ function buildRetryUserPrompt({ be_spec, api_contract, existing_files, allowed_p
     '',
     '## 구현해야 할 endpoint (api_contract 선언 — 빠짐없이 mount 필수)',
     checklist || '(없음)',
+    '',
+    '## 이미 적용된 migration (수정 금지 — 새 timestamp 파일로 ALTER만)',
+    formatApplied(stateBundle.applied),
+    '',
+    '## 디스크의 migration 파일',
+    formatDisk(stateBundle.disk),
+    '',
+    '## 현재 비즈니스 DB schema',
+    formatSchema(stateBundle.schema),
     '',
     '## 현재 파일 상태 (existing_files)',
     '```json',
@@ -258,6 +284,7 @@ async function run(params) {
         existing_files: abridgeForRetry(params.existing_files || {}, params.allowed_paths || []),
         allowed_paths: params.allowed_paths || [],
         fix_instructions: params.fix_instructions || '',
+        db_state: params.db_state,   // D44
       });
     } else {
       const initialExisting =
@@ -268,6 +295,7 @@ async function run(params) {
         be_spec: params.be_spec || {},
         api_contract,
         existing_files: abridgeExistingFiles(initialExisting),
+        db_state: params.db_state,   // D44
       });
     }
 
