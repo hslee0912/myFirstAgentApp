@@ -39,6 +39,7 @@ const beAgent = require('./be_agent');
 const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
 const migrationAgent = require('./migration_agent');
+const { classifyAgentError, buildFixInstructions } = require('../lib/agent_error_classifier');
 const deployAgent = require('./deploy_agent');
 const testAgent = require('./test_agent');
 const { resolveModel } = require('../lib/llm');
@@ -195,27 +196,44 @@ function maybeAutoCommit({ task_id, userRequest, finalVerdict }) {
 // ---------------- Phase 5 evaluator ----------------
 
 async function evaluateVerdict(task_id, decision_id) {
-  // ① ERROR
-  if (await logger.hasFailedRun(task_id)) {
-    return { verdict: 'ERROR', reason: 'one or more log_agent_runs are FAILED (exception path)' };
-  }
   const stateMap = await fetchStateMap(decision_id);
   const states = Object.values(stateMap);
-  // ② PASS
+
+  // ① PASS — 모든 영역 SUCCESS
   if (states.length > 0 && states.every((s) => s.status === 'SUCCESS')) {
     return { verdict: 'PASS', reason: 'all areas SUCCESS' };
   }
-  // ③ retry exceeded — D30=A 이후 Stage 3도 retry 대상이라 별도 분기 불필요.
-  //    Stage 1/2/3 모두 MAX_RETRIES(3) 도달 시 FAIL.
+
+  // ② retry exceeded — Stage 1/2/3/MIGRATION/AGENT_GUARD 모두 MAX_RETRIES(3) 도달 시 FAIL.
   for (const s of states) {
     if (s.retry_count >= MAX_RETRIES) {
-      const reason = s.failed_stage === 'STAGE3'
-        ? `Stage 3 (tests) failed ${s.retry_count}회 for ${s.target} — LLM이 fix_instructions 받고 retry했으나 끝까지 통과 못 함`
-        : `retry_count(${s.retry_count}) >= MAX(${MAX_RETRIES}) for ${s.target} (failed_stage=${s.failed_stage || '-'})`;
-      return { verdict: 'FAIL', reason };
+      return {
+        verdict: 'FAIL',
+        reason: `retry_count(${s.retry_count}) >= MAX(${MAX_RETRIES}) for ${s.target} (failed_stage=${s.failed_stage || '-'})`,
+      };
     }
   }
-  return { verdict: 'CONTINUE', reason: 'retry FAILED areas' };
+
+  // ③ FAILED 영역이 있으면 retry (CONTINUE).
+  //    D34 (2026-05-14): Agent guard throw도 task_state.status='FAILED'로 표시되므로
+  //    여기서 자연 흐름. log_agent_runs.status='FAILED'가 있어도 task_state가 갱신됐다면
+  //    분류된 retryable 케이스라 retry 흐름.
+  if (states.some((s) => s.status === 'FAILED')) {
+    return { verdict: 'CONTINUE', reason: 'retry FAILED areas' };
+  }
+
+  // ④ 모든 task_state가 PENDING/SUCCESS인데 log_agent_runs에 FAILED가 있다면 —
+  //    *분류 안 된 throw* (orchestrator catch에서 분류 못한 시스템 예외 등).
+  //    이건 진짜 ERROR.
+  if (await logger.hasFailedRun(task_id)) {
+    return {
+      verdict: 'ERROR',
+      reason: 'unclassified agent exception (task_state not updated by retry handler)',
+    };
+  }
+
+  // ⑤ 도달하면 비정상 (states 비어있음 등) — 안전 위해 ERROR.
+  return { verdict: 'ERROR', reason: 'no decisive state' };
 }
 
 /**
@@ -323,12 +341,39 @@ async function main() {
           }
           params.existing_files = snapshotArea('BE');
         }
-        await beAgent.run(params);
+
+        // D34 (2026-05-14): Agent run의 retryable guard throw도 retry 흐름으로.
+        //   classifyAgentError가 retryable=true면 task_state FAILED + retry_count++
+        //   + fix_instructions = 카테고리별 hint + 원본 message → 다음 round에서
+        //   BE Agent가 retry mode로 받아 회복 시도.
+        //   분류 안 되는 throw(시스템 예외)는 그대로 throw → main catch ERROR.
+        let beAgentThrew = false;
+        try {
+          await beAgent.run(params);
+        } catch (e) {
+          const cls = classifyAgentError(e);
+          if (!cls.retryable) throw e;
+          beAgentThrew = true;
+          const newRetryCount = (beState.retry_count || 0) + 1;
+          console.log(`[phase 2] BE Agent guard throw (${cls.category}) — retry_count=${newRetryCount}`);
+          await logger.updateTaskState(beState.id, {
+            status: 'FAILED',
+            failed_stage: 'AGENT_GUARD',
+            retry_count: newRetryCount,
+            fix_instructions: buildFixInstructions(cls),
+            stage_logs: { agent_guard: { category: cls.category, original_message: cls.original_message.slice(0, 1000) } },
+            result_text: `BE Agent guard: ${cls.category}`,
+          });
+        }
 
         // Phase 2.5 (D33, 2026-05-14): Migration Agent — BE Agent가 emit한
         //   BE/db/migrations/*.sql을 MySQL에 적용. Lint 직전에 실행해야 stage 3
         //   (jest)가 정상 schema 위에서 runtime 검증 가능.
         //   FAIL 시 Lint 건너뛰고 task_state를 FAILED로 표시 (retry 흐름 진입).
+        //   beAgentThrew면 BE Agent 출력이 없으니 Migration·Lint 둘 다 skip.
+        if (beAgentThrew) {
+          // 위에서 task_state를 이미 FAILED로 갱신 — Migration·Lint 건너뛰고 verdict 단계로
+        } else {
         console.log(`[phase 2.5] Migration Agent`);
         const migResult = await migrationAgent.run({ task_id });
         if (migResult.status === 'FAILED') {
@@ -357,6 +402,7 @@ async function main() {
             current_retry_count: beState.retry_count || 0,
           });
         }
+        }  // /beAgentThrew else
       }
 
       // Inter-LLM cooldown between BE Lint and FE LLM call.
@@ -379,9 +425,30 @@ async function main() {
           }
           params.existing_files = snapshotArea('FE');
         }
-        await feAgent.run(params);
 
-        if (validationMode === 'off') {
+        // D34 (2026-05-14): FE Agent도 동일한 retryable guard 처리.
+        let feAgentThrew = false;
+        try {
+          await feAgent.run(params);
+        } catch (e) {
+          const cls = classifyAgentError(e);
+          if (!cls.retryable) throw e;
+          feAgentThrew = true;
+          const newRetryCount = (feState.retry_count || 0) + 1;
+          console.log(`[phase 3] FE Agent guard throw (${cls.category}) — retry_count=${newRetryCount}`);
+          await logger.updateTaskState(feState.id, {
+            status: 'FAILED',
+            failed_stage: 'AGENT_GUARD',
+            retry_count: newRetryCount,
+            fix_instructions: buildFixInstructions(cls),
+            stage_logs: { agent_guard: { category: cls.category, original_message: cls.original_message.slice(0, 1000) } },
+            result_text: `FE Agent guard: ${cls.category}`,
+          });
+        }
+
+        if (feAgentThrew) {
+          // Lint 건너뛰고 verdict 단계로 — Phase 5가 retry 결정
+        } else if (validationMode === 'off') {
           console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for FE, auto-SUCCESS (state_id=${feState.id})`);
           await logger.updateTaskState(feState.id, {
             status: 'SUCCESS', failed_stage: null, fix_instructions: null,

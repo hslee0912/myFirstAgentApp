@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS log_task_state (
     target ENUM('FE','BE') NOT NULL,
     status ENUM('PENDING','SUCCESS','FAILED') NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
-    failed_stage ENUM('STAGE1','STAGE2','STAGE3','MIGRATION') NULL,
+    failed_stage ENUM('STAGE1','STAGE2','STAGE3','MIGRATION','AGENT_GUARD') NULL,
     fix_instructions TEXT NULL,
     stage_logs JSON NULL,
     result_text TEXT NULL,
