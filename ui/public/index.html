@@ -117,6 +117,41 @@
     .pill.FAIL, .pill.FAILED { background: var(--fail); color: #fff; }
     .pill.ERROR { background: var(--fail); color: #fff; }
     .pill.IN_PROGRESS, .pill.RUNNING, .pill.PENDING { background: var(--warn); color: #0a0d14; }
+
+    /* D35+ (2026-05-14): 진행 중 시각화 — pulse + 점 로딩 */
+    @keyframes pulse-running {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    @keyframes dots-loading {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+      100% { content: ''; }
+    }
+    .pill.IN_PROGRESS, .pill.RUNNING, .pill.PENDING {
+      animation: pulse-running 1.4s ease-in-out infinite;
+    }
+    .run-row.sev-info {   /* timeline 안 status=RUNNING row */
+      animation: pulse-running 1.4s ease-in-out infinite;
+    }
+    .loading-dots::after {
+      content: '';
+      display: inline-block;
+      min-width: 1.2em;
+      animation: dots-loading 1.5s steps(1) infinite;
+    }
+    .running-banner {
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: rgba(245, 158, 11, 0.12);   /* warn 베이스 */
+      border: 1px solid var(--warn);
+      border-radius: 8px;
+      color: var(--warn);
+      font-weight: 600;
+      animation: pulse-running 1.4s ease-in-out infinite;
+    }
     pre {
       background: var(--panel-2);
       border: 1px solid var(--border);
@@ -1180,16 +1215,38 @@ function renderTimeline(runs) {
       ? `<details class="disclosure" data-runidx="${idx}"><summary>상세 보기</summary><div class="disclosure-body">${expand}</div></details>`
       : '';
 
+    // D35+ (2026-05-14): RUNNING row에 점 로딩 표시 — 사용자가 진행 중임을 즉시 인지
+    const runningTag = r.status === 'RUNNING'
+      ? '<span class="loading-dots" style="color: var(--warn); margin-left: 6px;"></span>'
+      : '';
     return `
       <div class="run-row ${sev}">
         <span class="area-chip ${area}">${esc(r.agent_name)}</span>
         ${tgt}
-        <span>${pill(r.status)}</span>
+        <span>${pill(r.status)}</span>${runningTag}
         <span class="ts">${ts}</span>
       </div>
       ${expandWrapped}`;
   });
   return `<h2 style="margin-top: 14px;">타임라인 (Phase 1~9)</h2><div class="timeline">${rows.join('')}</div>`;
+}
+
+/** D35+ (2026-05-14): detail panel 최상단의 "진행 중" 배너.
+ *  log_agent_runs에서 status='RUNNING' row가 있으면 그 agent + target을 표시.
+ *  여러 RUNNING 동시면 가장 최근(id DESC) 하나만 — orchestrator는 직렬이라 보통 1개.
+ */
+function renderRunningBanner(runs) {
+  if (!Array.isArray(runs)) return '';
+  // id 가장 큰 RUNNING (가장 최근 시작)
+  const running = [...runs].reverse().find((r) => r.status === 'RUNNING');
+  if (!running) return '';
+  const area = areaClass(running.agent_name, running.target);
+  const tgt = running.target ? ` / ${esc(running.target)}` : '';
+  return `
+    <div class="running-banner">
+      ▶ <span class="area-chip ${area}">${esc(running.agent_name)}${esc(tgt)}</span>
+      <span>진행 중</span><span class="loading-dots"></span>
+    </div>`;
 }
 
 /** Render task_state rows with stage_logs disclosure (Lint stage details). */
@@ -1259,6 +1316,9 @@ async function loadDetail() {
 
   const root = $('#detail');
   let html = '';
+
+  // D35+ (2026-05-14): 진행 중 배너 — RUNNING agent run이 있으면 최상단에 펄스 표시.
+  html += renderRunningBanner(runs);
 
   // (B) "최종 결과" 큰 카드 — verdict + final_result_text를 가장 위에 풀 노출.
   html += renderFinalResultCard(decision, states, runs);
