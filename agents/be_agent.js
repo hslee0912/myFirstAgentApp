@@ -77,6 +77,13 @@ function readConvention() {
 }
 
 function readSchemaSection() {
+  // D43 (2026-05-14): Migration 관련 인라인 규칙 블록을 *완전 제거*하고
+  // rules/db.md 참조 1줄로 대체. 이유:
+  //   - 같은 룰이 prompt에 두 번 등장(인라인 + readConvention의 db.md) → 토큰 낭비
+  //   - 미래에 rules/db.md만 갱신하면 인라인은 그대로 남아 *불일치* 위험
+  //   - single source of truth = rules/db.md
+  // 단, `db/agent_schema.sql` 본문 inline은 *유지* — rules/db.md엔 본문이
+  // 없으므로 중복 아님. log_* 컬럼 구조 LLM이 직접 봐야 안전.
   try {
     const sql = fs.readFileSync(path.join(ROOT, 'db', 'agent_schema.sql'), 'utf8');
     return (
@@ -84,15 +91,7 @@ function readSchemaSection() {
       '```sql\n' + sql + '\n```\n\n' +
       '규칙:\n' +
       '- 위 `log_agent_runs`, `log_agent_decisions`, `log_task_state`, `log_db_migrations`는 **agent system 전용**. 비즈니스 코드에서 SELECT/INSERT/UPDATE/DELETE 절대 금지.\n' +
-      '\n## 비즈니스 DB schema — Migration emit 흐름 (D33, 2026-05-14)\n\n' +
-      '비즈니스 영속화가 필요하면 **`BE/db/migrations/<YYYYMMDDHHmmss>_<name>.sql`** 파일을 emit하라. orchestrator(Phase 2.5)가 자동 적용한다.\n\n' +
-      '필수 규칙:\n' +
-      '- 파일명: `<UTC timestamp>_<snake_case_name>.sql` 예: `20260514120000_create_users.sql`. 알파벳 순서 = 시간순 적용 보장.\n' +
-      '- **idempotent하게 작성**: `CREATE TABLE IF NOT EXISTS ...`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` (MySQL 8 지원). 이미 적용된 migration은 다시 실행되지 않지만 idempotent로 작성하면 사람이 직접 reset 후 재실행할 때도 안전.\n' +
-      '- **이미 적용된 migration 파일은 수정 금지** — checksum 변경이 감지되면 시스템이 즉시 FAIL. 수정이 필요하면 *새 timestamp의 새 파일*로 ALTER/추가 migration 작성.\n' +
-      '- 한 cycle에 1~3개 migration만 emit. 한 migration에 여러 관련 변경(테이블 + 인덱스 + FK)을 묶을 수 있음.\n' +
-      '- migration이 만든 테이블만 BE 코드(server.js / routes / services)에서 SELECT/INSERT/UPDATE/DELETE 가능.\n' +
-      '- USE 문 불필요 — 시스템이 `database` 옵션으로 connection 함.\n'
+      '- 비즈니스 DB migration 관련 모든 규칙(파일명·idempotent·checksum 충돌 방지 등)은 **`rules/db.md` 참조** — 본 system prompt에 함께 inject되어 있음.\n'
     );
   } catch (_) {
     return '';
@@ -317,6 +316,6 @@ async function run(params) {
 
 module.exports = {
   run,
-  // exported for unit tests only — prompt 함수 직접 검증용 (D39).
-  _internal: { buildInitialUserPrompt, buildRetryUserPrompt },
+  // exported for unit tests only — prompt 함수 직접 검증용 (D39 / D42).
+  _internal: { buildInitialUserPrompt, buildRetryUserPrompt, SYSTEM_PROMPT, readConvention },
 };

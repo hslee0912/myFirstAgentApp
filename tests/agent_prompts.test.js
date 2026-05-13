@@ -184,14 +184,60 @@ test('rules/be.md — §7-ter (모듈 export 누락) 패턴 추가', () => {
   assert.match(md, /module\.exports/);
 });
 
-test('BE agent system prompt에 rules/db.md 내용 inject (readConvention 통해)', () => {
-  // be_agent.js의 SYSTEM_PROMPT는 module load 시 한 번 빌드. 직접 require → readConvention 결과 검증.
-  // 다만 SYSTEM_PROMPT 자체는 export 안 되어 있어, readConvention의 동작을 *간접* 검증.
-  const fs = require('node:fs');
-  const path = require('node:path');
-  // db.md가 prompt에 들어가는 흔적: be_agent.js 소스에 db.md path 참조가 존재
-  const src = fs.readFileSync(path.resolve(__dirname, '..', 'agents', 'be_agent.js'), 'utf8');
-  assert.match(src, /['"]rules['"]\s*,\s*['"]db\.md['"]/);
+test('BE agent system prompt에 rules/db.md 내용 *실제* inject (D42 직접 검증)', () => {
+  // D41까지는 *소스 참조만* 검증 (간접) → D42에서 SYSTEM_PROMPT 자체를
+  // _internal로 노출 + *실제 prompt 결과*에 db.md 핵심 키워드가 있는지 직접 확인.
+  const be = require('../agents/be_agent');
+  const sp = be._internal.SYSTEM_PROMPT;
+  assert.ok(typeof sp === 'string' && sp.length > 1000, 'SYSTEM_PROMPT가 비정상');
+
+  // db.md의 모든 핵심 섹션이 prompt에 포함되어야 함
+  assert.match(sp, /# DB Migration Convention/);            // 타이틀
+  assert.match(sp, /두 schema의 \*완전 분리\*/);            // §1
+  assert.match(sp, /UTC YYYYMMDDHHmmss/);                   // §2 파일명
+  assert.match(sp, /checksum 충돌/);                        // §3 핵심 사고
+  assert.match(sp, /새 timestamp의 추가 migration/);        // §3 정답 패턴
+  assert.match(sp, /IF NOT EXISTS/);                        // §4 idempotent
+  assert.match(sp, /1~3개/);                                // §5 cycle 개수
+  assert.match(sp, /CREATE DATABASE/);                      // §8 함정
+  // Reset to origin/main 언급은 D41-fix에서 제거됨 — prompt에도 부재 확인
+  assert.doesNotMatch(sp, /Reset to origin\/main/i);
+});
+
+// ─────────── D43 (2026-05-14): readSchemaSection 슬림화 — 인라인 Migration 룰 제거 ───────────
+
+test('D43: be_agent.js readSchemaSection 인라인의 D33 Migration 헤더가 prompt에서 *0회* 등장 (rules/db.md로 single source)', () => {
+  const be = require('../agents/be_agent');
+  const sp = be._internal.SYSTEM_PROMPT;
+  // 옛 인라인 헤더 — 제거 확인. (D43)
+  assert.doesNotMatch(sp, /## 비즈니스 DB schema — Migration emit 흐름 \(D33/);
+  // 인라인 본문에만 있던 정확한 표현 — 사라져야.
+  assert.doesNotMatch(sp, /checksum 변경이 감지되면 시스템이 즉시 FAIL/);
+  // 옛 인라인의 다른 specific 문구도 확인 (rules/db.md 본문엔 다른 표현으로 들어있음)
+  assert.doesNotMatch(sp, /비즈니스 영속화가 필요하면 \*\*`BE\/db\/migrations/);
+});
+
+test('D43: rules/db.md 참조 1줄이 readSchemaSection 출력에 들어있음', () => {
+  const be = require('../agents/be_agent');
+  const sp = be._internal.SYSTEM_PROMPT;
+  // 새 referencer 문구
+  assert.match(sp, /`rules\/db\.md` 참조/);
+});
+
+test('D43: agent_schema.sql 본문 inject는 유지 — log_* 테이블 컬럼 정의 prompt에 있음', () => {
+  const be = require('../agents/be_agent');
+  const sp = be._internal.SYSTEM_PROMPT;
+  // agent_schema.sql 안의 대표 키워드들
+  assert.match(sp, /CREATE TABLE IF NOT EXISTS log_agent_runs/);
+  assert.match(sp, /CREATE TABLE IF NOT EXISTS log_db_migrations/);
+});
+
+test('D43: prompt 길이 감소 확인 — 인라인 ~700 chars 제거되어 24,045보다 작음', () => {
+  const be = require('../agents/be_agent');
+  const sp = be._internal.SYSTEM_PROMPT;
+  // 정확한 byte 수는 비교 안 함 (rules 추가에 따라 변동) — 다만 D42 시점 24,045보다
+  // *작아야* D43 슬림화 효과 확인. 합리적 lower bound로 23,500 미만이면 통과.
+  assert.ok(sp.length < 23500, `SYSTEM_PROMPT total = ${sp.length} chars — D43 슬림화로 23,500 미만이어야 (D42 24,045 → ~700 감소 기대)`);
 });
 
 test('CLAUDE.md — 문서 구조 테이블에 rules/db.md row 추가', () => {
