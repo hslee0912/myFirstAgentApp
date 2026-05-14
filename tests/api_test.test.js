@@ -17,6 +17,7 @@ const {
   validate,
   exampleBodyFromSchema,
   endpointChecklist,
+  substitutePathParams,
 } = require('../lib/api_test');
 
 // ─────────── normalizeContract: canonical format passes through ───────────
@@ -392,4 +393,92 @@ test('endpointChecklist: method는 대문자 정규화, padding으로 정렬', (
   assert.match(out, /- GET\s/);
   assert.match(out, /- POST\s/);
   assert.match(out, /- DELETE\s/);
+});
+
+// ─────────── D49 (2026-05-14): substitutePathParams ───────────
+
+test('★ D49: Express :param 치환 (사용자 보고 사고 정확 재현)', () => {
+  // big-cycle 5 사고: /api/result/best/:player_id 를 그대로 fetch
+  const r = substitutePathParams('/api/result/best/:player_id', {});
+  assert.equal(r, '/api/result/best/1');  // fallback 1
+});
+
+test('D49: OpenAPI {param} 치환', () => {
+  const r = substitutePathParams('/api/users/{user_id}/posts/{post_id}', {});
+  assert.equal(r, '/api/users/1/posts/1');
+});
+
+test('D49: path_params의 example 우선 사용', () => {
+  const r = substitutePathParams('/api/users/:user_id', {
+    path_params: { user_id: { example: 42 } },
+  });
+  assert.equal(r, '/api/users/42');
+});
+
+test('D49: request.schema.properties.example fallback (path_params 없을 때)', () => {
+  const r = substitutePathParams('/api/users/:user_id', {
+    request: {
+      schema: {
+        type: 'object',
+        properties: { user_id: { example: 7 } },
+      },
+    },
+  });
+  assert.equal(r, '/api/users/7');
+});
+
+test('D49: path_params가 request.schema보다 우선', () => {
+  const r = substitutePathParams('/api/users/:user_id', {
+    path_params: { user_id: { example: 'EXPLICIT' } },
+    request: { schema: { properties: { user_id: { example: 'SCHEMA' } } } },
+  });
+  assert.equal(r, '/api/users/EXPLICIT');
+});
+
+test('D49: 여러 param 동시 치환', () => {
+  const r = substitutePathParams('/a/:x/b/:y/c/{z}', {
+    path_params: {
+      x: { example: 1 },
+      y: { example: 'foo' },
+      z: { example: 'bar' },
+    },
+  });
+  assert.equal(r, '/a/1/b/foo/c/bar');
+});
+
+test('D49: param 없으면 그대로 (RESTful 단순 GET 등)', () => {
+  const r = substitutePathParams('/api/health', {});
+  assert.equal(r, '/api/health');
+});
+
+test('D49: 특수문자 값은 URL-encode', () => {
+  const r = substitutePathParams('/api/search/:q', {
+    path_params: { q: { example: 'a b&c' } },
+  });
+  assert.equal(r, '/api/search/a%20b%26c');
+});
+
+test('D49: example=0은 truthy 아니지만 null이 아니므로 사용', () => {
+  // 0은 falsy지만 유효한 ID
+  const r = substitutePathParams('/api/x/:id', {
+    path_params: { id: { example: 0 } },
+  });
+  assert.equal(r, '/api/x/0');
+});
+
+test('D49: example=null 또는 undefined면 fallback', () => {
+  const r1 = substitutePathParams('/x/:id', { path_params: { id: { example: null } } });
+  const r2 = substitutePathParams('/x/:id', { path_params: { id: {} } });
+  assert.equal(r1, '/x/1');
+  assert.equal(r2, '/x/1');
+});
+
+test('D49: 비슷한 이름 param (:user vs :user_id) 정확히 매칭', () => {
+  const r = substitutePathParams('/u/:user/p/:user_id', {
+    path_params: {
+      user: { example: 'alice' },
+      user_id: { example: 99 },
+    },
+  });
+  assert.equal(r, '/u/alice/p/99');
 });
