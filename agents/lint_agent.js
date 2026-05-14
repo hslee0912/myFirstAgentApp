@@ -25,6 +25,7 @@ const fs = require('fs');
 const logger = require('../lib/logger');
 const stack = require('../lib/stack');
 const { checkBeServerSanity } = require('../lib/container_sanity');
+const { checkMigrationSanity } = require('../lib/migration_sanity');
 
 const ROOT = path.resolve(__dirname, '..');
 const TRUNCATE = 4000;
@@ -195,6 +196,33 @@ async function run(p) {
           retry_count: (current_retry_count || 0) + 1,
           failed_stage: 'STAGE1',
           fix_instructions: sanity.fix_instructions,
+          stage_logs,
+          result_text: null,
+        });
+        const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE1' };
+        await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
+        return out;
+      }
+
+      // D48 (2026-05-14): BE migration SQL 정적 grep — Migration Agent가
+      //   *MySQL syntax error*로 fail하는 LLM 사고 패턴(PostgreSQL 문법 등)을
+      //   Migration 호출 *이전*에 차단. 위반 시 즉시 Stage 1 FAIL + retry.
+      //   현재 검출: CREATE INDEX [IF NOT EXISTS] (MySQL 미지원).
+      const migSanity = checkMigrationSanity();
+      if (!migSanity.pass) {
+        stage_logs.stage1 = {
+          pass: false,
+          cmd: 'migration_sanity (BE/db/migrations/*.sql static grep)',
+          violations: migSanity.violations,
+          stdout: migSanity.fix_instructions,
+          stderr: '',
+          code: 1,
+        };
+        await logger.updateTaskState(state_id, {
+          status: 'FAILED',
+          retry_count: (current_retry_count || 0) + 1,
+          failed_stage: 'STAGE1',
+          fix_instructions: migSanity.fix_instructions,
           stage_logs,
           result_text: null,
         });

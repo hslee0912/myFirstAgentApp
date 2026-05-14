@@ -69,7 +69,6 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) NOT NULL UNIQUE
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS player_name VARCHAR(50);
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 ```
 
 ```sql
@@ -79,6 +78,38 @@ ALTER TABLE users ADD COLUMN player_name VARCHAR(50);
 ```
 
 > 시스템이 checksum 체크로 중복 적용을 막아주긴 하지만, 사람이 reset 후 처음부터 재실행할 때 idempotent여야 안전합니다.
+
+### 4-bis. ⚠️ 인덱스 (INDEX) — `IF NOT EXISTS` 미지원 (MySQL)
+
+**MySQL은 `CREATE INDEX`에 `IF NOT EXISTS` 옵션을 *지원하지 않습니다* (5.x, 8.x 모두).** PostgreSQL과 다릅니다. 학습 데이터에서 본 `CREATE INDEX IF NOT EXISTS ...` 패턴은 *MySQL에서는 syntax error*. 다음 3가지 패턴 중 하나를 사용하세요:
+
+**(1) 권장 — `CREATE TABLE` 정의 안에 INDEX 같이 명시**:
+```sql
+CREATE TABLE IF NOT EXISTS game_results (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  player_id INT NOT NULL,
+  score INT NOT NULL,
+  INDEX idx_player_score (player_id, score DESC),     -- 테이블 정의 안에 인덱스
+  FOREIGN KEY (player_id) REFERENCES users(id)
+);
+```
+→ `CREATE TABLE IF NOT EXISTS`가 idempotent를 보장. 인덱스는 테이블과 함께 만들어지므로 별도 안 다룸.
+
+**(2) 새 migration 파일에서 ALTER로 인덱스 추가**:
+```sql
+-- 20260514130000_add_index_to_results.sql (별도 파일)
+ALTER TABLE game_results ADD INDEX idx_player_score (player_id, score DESC);
+```
+→ migration 파일은 *한 번만 적용*되므로(`log_db_migrations` checksum) idempotent. 단, 이미 같은 인덱스 있으면 `Duplicate key name` 에러 → 그 파일은 *처음부터 한 번만* 적용되도록 보장.
+
+**(3) ❌ 절대 금지 — `CREATE INDEX IF NOT EXISTS`**:
+```sql
+-- ❌ MySQL syntax error
+CREATE INDEX IF NOT EXISTS idx_player_score ON game_results(player_id, score DESC);
+```
+이 패턴은 `lib/migration_sanity.js` 정적 grep이 *Lint Stage 1에서 즉시 잡아* retry를 강제합니다 (D48, 2026-05-14).
+
+> 참고: MySQL 8.0.29+에는 `ALTER TABLE ... ADD INDEX` 자체에도 `IF NOT EXISTS` 옵션이 *없습니다*. `DROP INDEX IF EXISTS` (제거)는 있으나 `CREATE INDEX IF NOT EXISTS` (생성)는 PostgreSQL 전용 패턴입니다.
 
 ## 5. 한 cycle의 migration 개수
 
