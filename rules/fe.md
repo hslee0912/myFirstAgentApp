@@ -134,6 +134,37 @@ import { LoginForm } from './LoginForm';
 - 파일명 = 컴포넌트명을 권장 (`SignupForm.jsx`에 `SignupForm` export).
 - import 경로는 *상대 경로 + 확장자 생략*. `./components/SignupForm` (확장자 .jsx 생략 OK, Vite resolve).
 
+## 4-quinque. Canvas 컴포넌트 — smoke test 친화적 작성 (D50)
+
+`<canvas>` 사용 컴포넌트(예: 게임 캔버스)는 jsdom 환경에서 `getContext`가 native 구현 안 됩니다. 시스템 setup file (`FE/src/setupTests.js`)이 *no-op stub*을 자동 제공하지만, 추가로 *컴포넌트 코드 측 가드*도 권장됩니다 (이중 보호).
+
+**가드 패턴**:
+```jsx
+import { useRef, useEffect } from 'react';
+
+function GameCanvas({ width = 1000, height = 750 }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof canvas.getContext !== 'function') return;  // 가드 — jsdom 안전
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    // 정상 게임 로직 (drawImage, fillRect, requestAnimationFrame 루프 등)
+  }, []);
+
+  return <canvas ref={canvasRef} width={width} height={height} />;
+}
+```
+
+핵심 룰:
+- 컴포넌트는 *props 없이 render되어도 throw 안 함* (§4-bis와 동일).
+- `getContext` 호출 *직전*에 `typeof === 'function'` 검사 — setup stub은 *항상* 함수 반환하지만, *코드 가드*가 있으면 setup file 없는 환경에서도 안전.
+- `requestAnimationFrame` 게임 루프도 useEffect cleanup에서 `cancelAnimationFrame`로 정리 (setup file이 둘 다 mock 제공).
+- canvas 자체는 *항상 DOM 노드 반환* — 빈 canvas여도 OK (§4-bis non-null).
+
+> 시스템 setup file이 잡아주는 안전망이지만, *컴포넌트가 직접 가드*하면 *다른 환경 (server-side rendering, Node CLI 테스트 등)에서도 재사용 가능* — 안정성 ↑.
+
 ## 5. API 호출 패턴
 
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
