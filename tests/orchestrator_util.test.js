@@ -11,7 +11,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractAllowedPathsFromFix } = require('../agents/orchestrator');
+const { extractAllowedPathsFromFix, shouldRunFeThisRound } = require('../agents/orchestrator');
 
 // ─────────── extractAllowedPathsFromFix ───────────
 
@@ -110,4 +110,31 @@ test('does not extract paths from other targets', () => {
   const fix = 'Fix FE/src/App.jsx (mentioned in BE context)';
   const result = extractAllowedPathsFromFix('BE', fix);
   assert.ok(!result.includes('FE/src/App.jsx'));
+});
+
+// ─────────── D46 (2026-05-14): shouldRunFeThisRound ───────────
+
+test('D46: needFE=false → 무조건 false (FE 이미 SUCCESS 또는 안 만드는 모드)', () => {
+  assert.equal(shouldRunFeThisRound({ needFE: false, needBE: true, beFinalStatus: 'SUCCESS' }), false);
+  assert.equal(shouldRunFeThisRound({ needFE: false, needBE: false, beFinalStatus: null }), false);
+});
+
+test('D46: needBE=false + needFE=true → true (BE 안 돌리는 cycle, FE 그대로 진행)', () => {
+  // 예: CodeChecker가 targets='FE' 분류 — BE는 만들 필요 없음
+  assert.equal(shouldRunFeThisRound({ needFE: true, needBE: false, beFinalStatus: null }), true);
+});
+
+test('D46: needBE=true + BE SUCCESS + needFE=true → true (BE 안정화 후 FE 진행)', () => {
+  assert.equal(shouldRunFeThisRound({ needFE: true, needBE: true, beFinalStatus: 'SUCCESS' }), true);
+});
+
+test('D46: needBE=true + BE FAILED + needFE=true → false ★ 사용자 의도 핵심', () => {
+  // BE가 이번 round에서 실패 → FE skip → 다음 round에서 BE retry
+  assert.equal(shouldRunFeThisRound({ needFE: true, needBE: true, beFinalStatus: 'FAILED' }), false);
+});
+
+test('D46: needBE=true + beFinalStatus null (BE 처리 직후 fetch 실패 등) → false (안전)', () => {
+  // 만약 fetchStateMap가 실패해서 status 모를 때도 SUCCESS 아니므로 skip
+  assert.equal(shouldRunFeThisRound({ needFE: true, needBE: true, beFinalStatus: null }), false);
+  assert.equal(shouldRunFeThisRound({ needFE: true, needBE: true, beFinalStatus: 'PENDING' }), false);
 });

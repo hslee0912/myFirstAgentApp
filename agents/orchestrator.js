@@ -135,6 +135,25 @@ function extractAllowedPathsFromFix(target, fix) {
   return [...out].filter((p) => !protectedFiles.has(p));
 }
 
+/**
+ * D46 (2026-05-14): round 안에서 FE Agent를 *이번 round에* 실행할지 결정.
+ *   - needBE=false (예: targets='FE')면 → BE 안 돌렸으니 그대로 FE 진행.
+ *   - needBE=true + BE가 이번 round에서 SUCCESS → FE 진행.
+ *   - needBE=true + BE가 SUCCESS 아님 (FAILED 또는 다른 상태) → FE skip.
+ *     사용자 결정: BE 안정화 후 FE 진행. BE FAIL task는 어차피 최종 FAIL →
+ *     그 cycle의 FE 호출은 폐기될 코드 → LLM 비용 낭비.
+ *
+ * Pure function — orchestrator round loop에서 직접 호출. 단위 테스트 용이.
+ *
+ * @param {{ needFE: boolean, needBE: boolean, beFinalStatus: string|null }} p
+ * @returns {boolean}
+ */
+function shouldRunFeThisRound({ needFE, needBE, beFinalStatus }) {
+  if (!needFE) return false;
+  if (needBE && beFinalStatus !== 'SUCCESS') return false;
+  return true;
+}
+
 // ---------------- Phase 7 auto-commit ----------------
 
 /**
@@ -498,14 +517,28 @@ async function main() {
         }  // /beAgentThrew else
       }
 
+      // D46 (2026-05-14): BE가 이번 round에서 실행됐는데 SUCCESS가 아니면 FE skip.
+      //   사용자 결정: BE 정의가 명확히 끝난 후 FE 진행 — BE FAIL인 task는 어차피
+      //   최종 task FAIL → 그 task의 FE 작업은 폐기됨 → 미리 부르면 LLM 비용 낭비.
+      //   needBE=false (예: targets='FE')인 경우는 그대로 FE 진행.
+      let beFinalStatus = null;
+      if (needBE) {
+        const afterBe = await fetchStateMap(decision_id);
+        beFinalStatus = afterBe.BE && afterBe.BE.status;
+      }
+      const skipFeBecauseBe = needBE && beFinalStatus !== 'SUCCESS';
+      if (skipFeBecauseBe) {
+        console.log(`[round ${round}] BE status=${beFinalStatus} — FE skip this round (D46: BE 안정화 후 FE 진행)`);
+      }
+
       // Inter-LLM cooldown between BE Lint and FE LLM call.
-      if (needBE && needFE) {
+      if (needBE && needFE && !skipFeBecauseBe) {
         console.log(`[round ${round}] inter-LLM cooldown ${SLEEP_BETWEEN_LLM_MS}ms...`);
         await sleep(SLEEP_BETWEEN_LLM_MS);
       }
 
       // Phase 3 + Phase 4(FE): FE Agent → Lint(FE)
-      if (needFE) {
+      if (needFE && !skipFeBecauseBe) {
         const feState = stateMap.FE;
         const isRetry = feState.status === 'FAILED';
         console.log(`[phase 3] FE Agent (mode=${isRetry ? 'retry' : 'initial'})`);
@@ -667,4 +700,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main, extractAllowedPathsFromFix, snapshotArea };
+module.exports = { main, extractAllowedPathsFromFix, snapshotArea, shouldRunFeThisRound };
