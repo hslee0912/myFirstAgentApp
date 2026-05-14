@@ -96,30 +96,61 @@ function diff(diskList, appliedMap) {
 }
 
 /**
- * 단일 migration 적용. 성공/실패 둘 다 `log_db_migrations`에 row INSERT.
+ * 단일 migration 적용. 성공/실패 둘 다 `log_db_migrations`에 *upsert*.
+ *
+ * D47 (2026-05-14): 옛 흐름(SUCCESS INSERT / FAILED INSERT 둘 다 plain INSERT)이
+ *   retry 시점에 `filename` UNIQUE 충돌 → applyOne이 "Duplicate entry..." 라는
+ *   *misleading한* 에러로 끝나 LLM에게 잘못된 fix_instructions 전달 → BE Agent가
+ *   진짜 SQL 원인을 모르고 retry 3회 모두 실패 → task FAIL (big-cycle 2 사고).
+ *
+ * 해결: ON DUPLICATE KEY UPDATE upsert. 같은 filename으로 재시도 시 row가
+ *   *update*되어 UNIQUE 충돌 없음. *진짜 SQL 에러*가 그대로 fix_instructions로
+ *   전달되어 LLM이 정확한 원인 인지 가능.
+ *
+ * 의미적 효과:
+ *   - round 1 SQL fail → FAILED row 기록
+ *   - round 2 같은 파일 재시도 + 수정된 SQL → 성공 시 *같은 row를 SUCCESS로
+ *     update* (UNIQUE 충돌 없음). 실패 시 *FAILED row update* (error_message 갱신).
+ *   - 부수효과: 이전 round의 error_message는 덮어쓰임. 진행 추적 *최신 시점만*
+ *     보존 (시스템 도구 테이블이라 OK).
  *
  * @returns {Promise<{ok:boolean, error?:string}>}
  */
 async function applyOne(conn, m, task_id) {
+  let sqlError = null;
   try {
     // multipleStatements: true 옵션이 connection에 설정되어 있어야 multi-statement OK.
     await conn.query(m.content);
-    await conn.query(
-      'INSERT INTO log_db_migrations (filename, task_id, checksum, status) VALUES (?, ?, ?, ?)',
-      [m.filename, task_id, m.checksum, 'SUCCESS']
-    );
-    return { ok: true };
   } catch (e) {
-    const errMsg = String(e.message || e).slice(0, 2000);
-    // 실패 row도 기록 — 운영 추적용. UNIQUE(filename) 충돌 가능성 있으니 try.
-    try {
-      await conn.query(
-        'INSERT INTO log_db_migrations (filename, task_id, checksum, status, error_message) VALUES (?, ?, ?, ?, ?)',
-        [m.filename, task_id, m.checksum, 'FAILED', errMsg]
-      );
-    } catch (_) { /* UNIQUE 충돌이면 무시 — 이전에 FAILED row가 이미 있는 경우 */ }
-    return { ok: false, error: errMsg };
+    sqlError = String(e.message || e).slice(0, 2000);
   }
+
+  const isOk = sqlError == null;
+  const sql =
+    'INSERT INTO log_db_migrations (filename, task_id, checksum, status, error_message) ' +
+    'VALUES (?, ?, ?, ?, ?) ' +
+    'ON DUPLICATE KEY UPDATE ' +
+    '  task_id = VALUES(task_id), ' +
+    '  checksum = VALUES(checksum), ' +
+    '  status = VALUES(status), ' +
+    '  error_message = VALUES(error_message), ' +
+    '  applied_at = CURRENT_TIMESTAMP';
+  const params = [
+    m.filename,
+    task_id,
+    m.checksum,
+    isOk ? 'SUCCESS' : 'FAILED',
+    isOk ? null : sqlError,
+  ];
+
+  try {
+    await conn.query(sql, params);
+  } catch (e) {
+    // 매우 드문 경우 (DB 자체 문제) — log만 남기고 진행. orchestrator가 verdict로 처리.
+    console.warn('[migration] failed to record outcome row for ' + m.filename + ':', e.message);
+  }
+
+  return isOk ? { ok: true } : { ok: false, error: sqlError };
 }
 
 /**
