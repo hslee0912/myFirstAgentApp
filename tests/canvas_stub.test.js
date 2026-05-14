@@ -34,6 +34,18 @@ test('D50: setupTests.js에 canvas getContext stub + requestAnimationFrame mock 
   assert.match(src, /@testing-library\/jest-dom/);
 });
 
+test('★ D50-fix: requestAnimationFrame mock이 *no-op* (콜백 호출 안 함, 무한 재귀 방지)', () => {
+  // 사용자 보고 사고 (cycle 1 hang 2026-05-15): rAF가 setTimeout(cb, 16)로
+  // 콜백 *실제 호출*하면 게임 루프 (gameLoop → rAF(gameLoop) → ...) 무한 재귀.
+  // 정답: rAF mock이 콜백 호출 안 함 (no-op).
+  const p = path.resolve(__dirname, '..', 'lib', 'stack_templates', 'FE', 'src', 'setupTests.js');
+  const src = fs.readFileSync(p, 'utf8');
+  // setTimeout으로 콜백 호출하는 *옛 흐름* 부재 확인
+  assert.doesNotMatch(src, /requestAnimationFrame\s*=\s*\(cb\)\s*=>\s*setTimeout/);
+  // no-op 형태 (콜백 인자 무시 또는 안 호출)
+  assert.match(src, /requestAnimationFrame\s*=\s*\(\s*\)\s*=>/);
+});
+
 test('D50: stub의 getContext가 *함수 반환*이어야 (LLM 코드가 if typeof getContext check 통과)', () => {
   // 실제 setup file을 import해서 동작 검증은 jsdom 환경에서만 가능하지만,
   // 본 테스트는 *소스 내용*만 검증. getContext가 noopCtx 반환 코드 확인.
