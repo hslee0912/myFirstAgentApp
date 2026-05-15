@@ -22,6 +22,7 @@ const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
+const { autoFixDependencyAliases } = require('../lib/dep_autofix');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
 const { formatApplied, formatDisk, formatSchema } = require('../lib/db_state');
@@ -305,21 +306,55 @@ async function run(params) {
     const max_tokens = 30000;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'be', max_tokens });
-    const llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
-    // Y: silent-drop protected files BEFORE validatePaths.
-    const { files: filesA, dropped: droppedProtected } =
-      dropProtectedFiles(llmOut.files || {}, PROTECTED_FILES, 'BE Agent');
-    // Drop any agent-generated tests — system auto-generates them deterministically.
-    const { files: filesB, dropped: droppedTests } =
-      dropAgentGeneratedTests(filesA, 'BE Agent');
-    // Auto-generate smoke tests for new code files (deterministic, no LLM).
-    const autoTests = generateSmokeTests(filesB);
-    const files = { ...filesB, ...autoTests };
 
-    // Dep guard: scan require()/import in response files for unauthorized deps.
-    // Throws on first violation to fail fast before stage 3 (Jest) chokes on
-    // require('email-validator') etc.
-    validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'BE Agent');
+    // D64 (2026-05-15) inline retry: round retry 비용을 줄이기 위해 같은 round 안에서
+    // UNAUTHORIZED_DEPS 발생 시 fix hint를 user prompt에 append하고 LLM 재호출.
+    // 한 round 내 inline retry 1회 한정. inline retry로도 회복 못 하면 round retry로 escalate.
+    const MAX_INLINE_RETRIES = Number(process.env.BE_AGENT_INLINE_RETRIES || 1);
+    let llmOut;
+    let userPromptForCall = userPrompt;
+    let files, filesA, filesB;
+    let droppedProtected;
+    let droppedTests;
+    let autoTests;
+
+    for (let inlineRetry = 0; inlineRetry <= MAX_INLINE_RETRIES; inlineRetry++) {
+      llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPromptForCall, cache: 'system', max_tokens });
+
+      // D64 옵션 1: deterministic alias auto-fix (bcryptjs → bcrypt 등).
+      const fixed = autoFixDependencyAliases(llmOut.files || {});
+      if (fixed.replacements.length > 0) {
+        const summary = fixed.replacements.map((r) => `${r.from}→${r.to} in ${r.path}`).join('; ');
+        console.log(`[be:autofix] ${fixed.replacements.length} alias replacement(s): ${summary}`);
+      }
+      llmOut.files = fixed.files;
+
+      // Y: silent-drop protected files BEFORE validatePaths.
+      ({ files: filesA, dropped: droppedProtected } =
+        dropProtectedFiles(llmOut.files, PROTECTED_FILES, 'BE Agent'));
+      // Drop any agent-generated tests — system auto-generates them deterministically.
+      ({ files: filesB, dropped: droppedTests } =
+        dropAgentGeneratedTests(filesA, 'BE Agent'));
+      // Auto-generate smoke tests for new code files (deterministic, no LLM).
+      autoTests = generateSmokeTests(filesB);
+      files = { ...filesB, ...autoTests };
+
+      // Dep guard: throws on UNAUTHORIZED_DEPS. inline retry로 회복 시도.
+      try {
+        validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'BE Agent');
+        break;  // PASS — exit inline retry loop
+      } catch (e) {
+        if (e.code !== 'UNAUTHORIZED_DEPS' || inlineRetry >= MAX_INLINE_RETRIES) {
+          throw e;  // escalate to round retry
+        }
+        console.log(`[be:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] UNAUTHORIZED_DEPS — retrying with fix hint`);
+        userPromptForCall =
+          userPrompt +
+          '\n\n---\n\n## ⚠️ 직전 응답에 미허가 의존성 발견 — 즉시 다음 대체로 fix하라\n\n' +
+          e.message +
+          '\n\n위 안내대로 require/import 라인을 바꾸고 *동일 형식*의 JSON으로 다시 emit하라.';
+      }
+    }
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });
     applyFiles(files);

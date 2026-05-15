@@ -22,6 +22,7 @@ const path = require('path');
 const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
+const { autoFixDependencyAliases } = require('../lib/dep_autofix');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
@@ -242,21 +243,50 @@ async function run(params) {
     const max_tokens = 30000;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'fe', max_tokens });
-    const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
-    // Y: silent-drop protected files BEFORE validatePaths.
-    const { files: filesA, dropped: droppedProtected } =
-      dropProtectedFiles(llmOut.files || {}, PROTECTED_FILES, 'FE Agent');
-    // Drop any agent-generated tests — system auto-generates them deterministically.
-    const { files: filesB, dropped: droppedTests } =
-      dropAgentGeneratedTests(filesA, 'FE Agent');
-    // Auto-generate smoke tests for new code files (deterministic, no LLM).
-    const autoTests = generateSmokeTests(filesB);
-    const files = { ...filesB, ...autoTests };
 
-    // Dep guard: scan require()/import in response files for unauthorized deps.
-    // Throws on first violation to fail fast before stage 3 (Vitest) chokes on
-    // unresolved imports.
-    validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'FE Agent');
+    // D64 (2026-05-15) inline retry: 같은 round 안 UNAUTHORIZED_DEPS 자동 회복 시도.
+    const MAX_INLINE_RETRIES = Number(process.env.FE_AGENT_INLINE_RETRIES || 1);
+    let llmOut;
+    let userPromptForCall = userPrompt;
+    let files, filesA, filesB;
+    let droppedProtected;
+    let droppedTests;
+    let autoTests;
+
+    for (let inlineRetry = 0; inlineRetry <= MAX_INLINE_RETRIES; inlineRetry++) {
+      llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPromptForCall, cache: 'system', max_tokens });
+
+      // D64 옵션 1: alias auto-fix (FE는 보통 bcryptjs 등 사용 안 하지만 대비).
+      const fixed = autoFixDependencyAliases(llmOut.files || {});
+      if (fixed.replacements.length > 0) {
+        const summary = fixed.replacements.map((r) => `${r.from}→${r.to} in ${r.path}`).join('; ');
+        console.log(`[fe:autofix] ${fixed.replacements.length} alias replacement(s): ${summary}`);
+      }
+      llmOut.files = fixed.files;
+
+      // Y: silent-drop protected files BEFORE validatePaths.
+      ({ files: filesA, dropped: droppedProtected } =
+        dropProtectedFiles(llmOut.files, PROTECTED_FILES, 'FE Agent'));
+      ({ files: filesB, dropped: droppedTests } =
+        dropAgentGeneratedTests(filesA, 'FE Agent'));
+      autoTests = generateSmokeTests(filesB);
+      files = { ...filesB, ...autoTests };
+
+      try {
+        validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'FE Agent');
+        break;  // PASS — exit inline retry loop
+      } catch (e) {
+        if (e.code !== 'UNAUTHORIZED_DEPS' || inlineRetry >= MAX_INLINE_RETRIES) {
+          throw e;
+        }
+        console.log(`[fe:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] UNAUTHORIZED_DEPS — retrying with fix hint`);
+        userPromptForCall =
+          userPrompt +
+          '\n\n---\n\n## ⚠️ 직전 응답에 미허가 의존성 발견 — 즉시 다음 대체로 fix하라\n\n' +
+          e.message +
+          '\n\n위 안내대로 require/import 라인을 바꾸고 *동일 형식*의 JSON으로 다시 emit하라.';
+      }
+    }
 
     validatePaths(files, { mode, allowed_paths: params.allowed_paths });
     applyFiles(files);
