@@ -41,12 +41,17 @@ Orchestrator, Lint Agent, Migration Agent, ContractSync Agent, Deploy Agent, Pos
 
 ## 절대 규칙 (위반 금지)
 
-1. **폴더 격리** — BE Agent는 `BE/`만, FE Agent는 `FE/`만 수정. `validatePaths` 런타임 검증.
-2. **보호 파일** (`stack.config.json` `protectedConfigFiles`) — Agent는 `package.json`, `vite.config.js`, `index.html`, `.eslintrc.json` 등을 절대 작성 못함. `validatePaths`가 차단.
-3. **새 의존성 금지** — `allowedDeps`만 사용. 부족하면 `notes`에 사유만 적고 코드 만들지 말 것. 매니페스트 수정 금지.
-4. **Placeholder 보존** (rules/common.md §8) — bootstrap이 깐 `server.test.js`/`App.test.jsx`는 그대로 유지. 새 코드가 거기에 맞춰야 함.
-5. **dotenv override** — 모든 `dotenv.config()` 는 `{ override: true }`. (CLI inline override가 막히는 부작용 → 향후 변경 검토, [docs/ROADMAP.md](docs/ROADMAP.md))
-6. **Stage 3 (테스트) 실패 = 즉시 FAIL** — 재시도 없음. Stage 1/2 실패만 최대 3회 재시도. (VALIDATION_MODE=on일 때만 적용 — off면 Phase 4 자체가 안 돌아감)
+### Agent 산출물 검증 (자세히는 rules/* 참조 — Agent prompt에 자동 inject됨)
+
+1. **폴더 격리** — BE Agent는 `BE/`만, FE Agent는 `FE/`만. `validatePaths` 런타임 차단. [rules/common.md §7](rules/common.md)
+2. **보호 파일** — `stack.config.json`의 `protectedConfigFiles` 응답 포함 시 차단. [rules/common.md 보호 파일 섹션](rules/common.md)
+3. **새 의존성 금지** — `allowedDeps`만. 매니페스트 수정 X. [rules/common.md §9 + §9-bis](rules/common.md), [rules/be.md §5-bis](rules/be.md), [rules/fe.md §7-bis](rules/fe.md)
+4. **Placeholder 보존** — bootstrap이 깐 `server.test.js`/`App.test.jsx`는 disk에 그대로. 새 코드가 거기에 맞춰야. [rules/common.md §8](rules/common.md)
+
+### 시스템 정책 (rules에 없음 — Agent prompt와 무관)
+
+5. **dotenv override** — 모든 `dotenv.config()` 는 `{ override: true }`. (CLI inline override가 막히는 부작용 → [docs/ROADMAP.md](docs/ROADMAP.md))
+6. **Lint 재시도 정책 (D30=A)** — Stage 1·2·3 모두 retry 대상. 각 stage fail 시 `retry_count++`, MAX(3) 도달하면 FAIL. (VALIDATION_MODE=on일 때만 적용 — off면 Phase 4 자체가 안 돌아감)
 7. **파이프라인 자동 commit (`COMMIT_MODE`)** — `.env`의 `COMMIT_MODE`로 orchestrator의 자동 commit 여부 토글:
    - `COMMIT_MODE=auto` (기본) → verdict=PASS일 때 orchestrator가 `BE/`+`FE/`만 자동 commit. **push는 항상 사람이 수행**.
    - `COMMIT_MODE=manual` (또는 `auto`가 아닌 모든 값) → 자동 commit 안 함, 사람이 commit/push 모두 수행.
