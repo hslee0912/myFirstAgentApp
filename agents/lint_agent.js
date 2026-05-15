@@ -157,7 +157,11 @@ async function runStageCommandPerFile(stageCfg, cwd, onProgress) {
       try { await onProgress(i + 1, files.length, relF); } catch (_) { /* swallow */ }
     }
     console.log(`[lint_agent] ${label} ${i + 1}/${files.length} ${relF}`);
-    const r = runCommand([...stageCfg.command_prefix, f], cwd);
+    // D60 (2026-05-15): jest의 testPathPattern은 regex 해석 — Windows 절대경로의
+    // backslash가 regex special char로 인식되어 "0 matches"로 fail. relative path
+    // + forward slash로 통일 (eslint도 둘 다 호환, vitest도 동일).
+    const argPath = relF.replace(/\\/g, '/');
+    const r = runCommand([...stageCfg.command_prefix, argPath], cwd);
     const flag = r.timed_out ? ' [TIMED_OUT]' : '';
     out.push(`-- ${relF} (exit=${r.code})${flag}\n${truncate(r.stderr || r.stdout, 800)}`);
     perFile.push({ file: relF, pass: r.code === 0, code: r.code, timed_out: !!r.timed_out });
