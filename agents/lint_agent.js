@@ -35,7 +35,9 @@ function truncate(s, n = TRUNCATE) {
   return s.length > n ? s.slice(0, n) + `\n...[truncated ${s.length - n} chars]` : s;
 }
 
-function runCommand(command, cwd) {
+const STAGE_TIMEOUT_MS = Number(process.env.LINT_STAGE_TIMEOUT_MS || 5 * 60 * 1000);
+
+function runCommand(command, cwd, timeoutMs = STAGE_TIMEOUT_MS) {
   const [bin, ...args] = command;
   const r = spawnSync(bin, args, {
     cwd,
@@ -43,12 +45,17 @@ function runCommand(command, cwd) {
     encoding: 'utf8',
     env: process.env,
     windowsHide: true,
+    timeout: timeoutMs,
+    killSignal: 'SIGTERM',
   });
+  const timedOut = r.status === null && (r.signal === 'SIGTERM' || r.signal === 'SIGKILL');
+  const timeoutMsg = timedOut ? `\n[lint_agent] command timed out after ${timeoutMs}ms (killed)` : '';
   return {
     code: r.status === null ? -1 : r.status,
     stdout: r.stdout || '',
-    stderr: r.stderr || '',
+    stderr: (r.stderr || '') + timeoutMsg,
     error: r.error ? String(r.error) : null,
+    timed_out: timedOut,
   };
 }
 
