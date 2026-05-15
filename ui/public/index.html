@@ -1338,6 +1338,24 @@ function renderStates(states) {
     const sev = s.status === 'FAILED' ? 'sev-error'
               : s.status === 'SUCCESS' ? 'sev-ok'
               : 'sev-info';
+
+    // D58 (2026-05-15): RUNNING 상태의 per-file 진행 표시.
+    // lint_agent.js가 stage_logs.stage<N>_progress = { current, total, file }를
+    // 매 파일 후 partial update. stage 정상 종료 시 해당 키 제거.
+    // 따라서 FAIL/SUCCESS 외 상태에서만 의미 있는 정보.
+    let progressBlock = '';
+    if (s.status !== 'FAILED' && s.status !== 'SUCCESS') {
+      const sl = safeJson(s.stage_logs) || {};
+      const p1 = sl.stage1_progress;
+      const p3 = sl.stage3_progress;
+      const lines = [];
+      if (p1) lines.push(`<div>Stage 1 · <b>${p1.current}/${p1.total}</b> · <span class="dim">${esc(p1.file || '')}</span></div>`);
+      if (p3) lines.push(`<div>Stage 3 · <b>${p3.current}/${p3.total}</b> · <span class="dim">${esc(p3.file || '')}</span></div>`);
+      if (lines.length > 0) {
+        progressBlock = `<div style="padding:6px 10px;background:rgba(100,150,255,0.08);border-left:3px solid #69f;margin:2px 0;font-size:12px;">${lines.join('')}</div>`;
+      }
+    }
+
     let detail = '';
     if (s.status === 'FAILED') {
       const ls = classifyLintStage(s.failed_stage);
@@ -1366,6 +1384,7 @@ function renderStates(states) {
         <span class="target">retry ${s.retry_count}${s.failed_stage ? ' · ' + esc(s.failed_stage) : ''}</span>
         <span class="ts">${fmtTime(s.updated_at)}</span>
       </div>
+      ${progressBlock}
       ${detail ? `<details class="disclosure"><summary>Lint 상세</summary><div class="disclosure-body">${detail}</div></details>` : ''}`;
   });
   return `<h2 style="margin-top: 14px;">TASK_STATE (영역별)</h2><div class="timeline">${rows.join('')}</div>`;
@@ -1388,7 +1407,16 @@ async function loadDetail() {
       t: decision.final_result_text,
       u: decision.updated_at,
     },
-    s: (states || []).map((s) => [s.id, s.target, s.status, s.retry_count, s.failed_stage]),
+    s: (states || []).map((s) => {
+      // D58: stage<N>_progress 변화도 fingerprint에 포함 — per-file 진행 update 시 re-render trigger.
+      let p1 = '', p3 = '';
+      try {
+        const sl = JSON.parse(s.stage_logs || '{}') || {};
+        if (sl.stage1_progress) p1 = `${sl.stage1_progress.current}/${sl.stage1_progress.total}:${sl.stage1_progress.file}`;
+        if (sl.stage3_progress) p3 = `${sl.stage3_progress.current}/${sl.stage3_progress.total}:${sl.stage3_progress.file}`;
+      } catch (_) { /* swallow */ }
+      return [s.id, s.target, s.status, s.retry_count, s.failed_stage, p1, p3];
+    }),
     r: (runs || []).map((r) => [r.id, r.agent_name, r.target, r.status, r.ended_at]),
     re: resume && resume.eligible,
   });
