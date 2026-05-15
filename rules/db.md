@@ -119,9 +119,25 @@ CREATE INDEX IF NOT EXISTS idx_player_score ON game_results(player_id, score DES
 
 ## 6. SQL 작성 룰
 
-- `USE myfirstagentapp_db;` 문 **불필요** — orchestrator가 `database` 옵션으로 connection. 쓰면 syntax 노이즈만.
+- `USE myfirstagentapp_db;` 문 **❌ 절대 금지** — orchestrator가 `database` 옵션으로 이미 connection 됨. `.sql` 파일에 쓰면 위치에 따라 MySQL syntax error 발생.
+- **JavaScript / Node.js 문법 ❌ 절대 금지** — `'use strict';`, `require(...)`, `module.exports`, `import ...`, `export ...`, `// ...` (JS 라인 주석), backtick 템플릿 등은 **순수 SQL 파일**에 들어가면 MySQL이 즉시 syntax error로 reject. `.sql` 파일은 SQL DDL/DML 문장만 — Node 코드는 `BE/src/*.js`에만.
+  ```sql
+  -- ❌ 잘못된 예 (MySQL: syntax error near ''use strict';')
+  'use strict';
+  CREATE TABLE users (...);
+
+  -- ❌ 잘못된 예 (MySQL: syntax error near 'USE myfirstagentapp_db')
+  USE myfirstagentapp_db;
+  CREATE TABLE users (...);
+
+  -- ✅ 올바른 예
+  CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    ...
+  );
+  ```
 - 다중 statement는 `;`로 구분. mysql2의 `multipleStatements: true`로 connect됨.
-- 주석은 `--` (line) 또는 `/* ... */` (block) 모두 OK.
+- SQL 주석은 `--` (line) 또는 `/* ... */` (block) 만 사용. JS의 `//` 라인 주석 ❌.
 - 외래키(FK)는 `REFERENCES <table>(<col>)` 정상 작동. 단, 참조되는 테이블이 *먼저* 만들어져야 함 → migration 순서 신경 쓸 것.
 
 ## 7. 적용 후 비즈니스 코드에서 사용
