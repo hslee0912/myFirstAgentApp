@@ -1,5 +1,5 @@
 {
-  "_doc": "각 영역(FE/BE)의 기술 스택을 정의한다. 스택을 바꾸려면 여기와 lib/stack_templates/<area>/ 두 곳만 수정하면 됨. 자세한 절차는 README.md '스택 변경 체크리스트' 섹션 참조.",
+  "_doc": "각 영역(FE/BE)의 기술 스택을 정의한다. 스택을 바꾸려면 여기와 lib/stack_templates/<area>/ 두 곳만 수정하면 됨. 자세한 절차는 README.md '스택 변경 체크리스트' 섹션 참조. D57(2026-05-15): stage1/stage3에 command_per_file type 도입 — 한 파일씩 순차 실행 + lint_agent가 매 파일 후 stage_logs.progress 갱신.",
   "FE": {
     "displayName": "Vite + React 18 + Vitest + RTL (jsdom)",
     "templateDir": "lib/stack_templates/FE",
@@ -9,21 +9,28 @@
     },
     "lint": {
       "stage1": {
-        "type": "command",
-        "command": [
-          "npx", "--no-install", "eslint", ".", "--ext", ".js,.jsx",
-          "--ignore-pattern", "dist/",
-          "--ignore-pattern", "coverage/",
-          "--ignore-pattern", "build/"
-        ]
+        "type": "command_per_file",
+        "label": "FE eslint",
+        "command_prefix": ["npx", "--no-install", "eslint"],
+        "per_file_pattern": {
+          "rootDir": "src",
+          "include": [".js", ".jsx"],
+          "excludeDirs": ["dist", "coverage", "build", "node_modules"]
+        }
       },
       "stage2": {
         "type": "command",
         "command": ["npm", "run", "build", "--silent"]
       },
       "stage3": {
-        "type": "command",
-        "command": ["npx", "--no-install", "vitest", "run"]
+        "type": "command_per_file",
+        "label": "FE vitest",
+        "command_prefix": ["npx", "--no-install", "vitest", "run"],
+        "per_file_pattern": {
+          "rootDir": "src",
+          "include": [".test.jsx", ".test.js"],
+          "excludeDirs": ["dist", "coverage", "build", "node_modules"]
+        }
       }
     },
     "agent": {
@@ -76,12 +83,14 @@
     },
     "lint": {
       "stage1": {
-        "type": "command",
-        "command": [
-          "npx", "--no-install", "eslint", ".", "--ext", ".js",
-          "--ignore-pattern", "dist/",
-          "--ignore-pattern", "coverage/"
-        ]
+        "type": "command_per_file",
+        "label": "BE eslint",
+        "command_prefix": ["npx", "--no-install", "eslint"],
+        "per_file_pattern": {
+          "rootDir": "src",
+          "include": [".js"],
+          "excludeDirs": ["dist", "coverage", "node_modules"]
+        }
       },
       "stage2": {
         "type": "node_check_recursive",
@@ -90,8 +99,14 @@
         "exclude": [".test.js"]
       },
       "stage3": {
-        "type": "command",
-        "command": ["npx", "--no-install", "jest", "--runInBand", "--colors=false"]
+        "type": "command_per_file",
+        "label": "BE jest",
+        "command_prefix": ["npx", "--no-install", "jest", "--runInBand", "--colors=false"],
+        "per_file_pattern": {
+          "rootDir": "src",
+          "include": [".test.js"],
+          "excludeDirs": ["dist", "coverage", "node_modules"]
+        }
       }
     },
     "agent": {

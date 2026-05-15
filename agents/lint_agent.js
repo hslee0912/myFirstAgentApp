@@ -110,9 +110,98 @@ function runStageNodeCheckRecursive(stageCfg, cwd) {
   };
 }
 
-function runStage(stageCfg, cwd) {
+/**
+ * D57 (2026-05-15): per-file Lint 실행.
+ *
+ * 한 stage가 통째 디렉토리를 lint/test하면 한 파일의 syntax error에 모든 출력이
+ * 쏟아져 LLM이 fix할 우선순위를 못 잡음. 또 vitest의 한 파일이 무한 루프면 stage
+ * 전체가 hang. 이 함수는 per_file_pattern 매치 파일 목록을 만들고, 각 파일을
+ * 순차적으로 command_prefix와 합쳐 실행 + 매 파일 후 onProgress callback 호출.
+ *
+ * - per_file_pattern.rootDir: 검색 시작점 (cwd 기준 relative)
+ * - per_file_pattern.include: 포함할 확장자 (suffix 매치)
+ * - per_file_pattern.exclude: 제외할 suffix
+ * - per_file_pattern.excludeDirs: 제외할 디렉토리 이름
+ *
+ * onProgress(current, total, relFile) — UI 진행 표시용.
+ * 한 파일이라도 fail이면 stage fail. 모든 fail 파일 stderr/stdout은 truncate 누적.
+ */
+async function runStageCommandPerFile(stageCfg, cwd, onProgress) {
+  const pat = stageCfg.per_file_pattern || {};
+  const rootDir = path.join(cwd, pat.rootDir || 'src');
+  const include = pat.include || ['.js'];
+  const exclude = pat.exclude || [];
+  const excludeDirs = pat.excludeDirs || [];
+  const label = stageCfg.label || stageCfg.command_prefix.join(' ');
+
+  const files = collectFilesPerFile(rootDir, include, exclude, excludeDirs);
+  if (files.length === 0) {
+    return {
+      pass: true,
+      code: 0,
+      stdout: '(no matching files)',
+      stderr: '',
+      cmd: stageCfg.command_prefix.join(' ') + ' (no files)',
+      per_file_results: [],
+      file_count: 0,
+    };
+  }
+
+  const out = [];
+  const perFile = [];
+  let allPass = true;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const relF = path.relative(cwd, f);
+    if (onProgress) {
+      try { await onProgress(i + 1, files.length, relF); } catch (_) { /* swallow */ }
+    }
+    console.log(`[lint_agent] ${label} ${i + 1}/${files.length} ${relF}`);
+    const r = runCommand([...stageCfg.command_prefix, f], cwd);
+    const flag = r.timed_out ? ' [TIMED_OUT]' : '';
+    out.push(`-- ${relF} (exit=${r.code})${flag}\n${truncate(r.stderr || r.stdout, 800)}`);
+    perFile.push({ file: relF, pass: r.code === 0, code: r.code, timed_out: !!r.timed_out });
+    if (r.code !== 0) allPass = false;
+  }
+  return {
+    pass: allPass,
+    code: allPass ? 0 : 1,
+    stdout: truncate(out.join('\n\n')),
+    stderr: '',
+    cmd: stageCfg.command_prefix.join(' ') + ` (per-file, ${files.length} files)`,
+    per_file_results: perFile,
+    file_count: files.length,
+  };
+}
+
+function collectFilesPerFile(rootDir, include, exclude, excludeDirs) {
+  const out = [];
+  if (!fs.existsSync(rootDir)) return out;
+  const queue = [rootDir];
+  while (queue.length) {
+    const d = queue.pop();
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); }
+    catch (_) { continue; }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (!excludeDirs.includes(e.name)) queue.push(full);
+      } else if (
+        include.some((ext) => e.name.endsWith(ext)) &&
+        !exclude.some((suf) => e.name.endsWith(suf))
+      ) {
+        out.push(full);
+      }
+    }
+  }
+  return out.sort();
+}
+
+async function runStage(stageCfg, cwd, onProgress) {
   if (!stageCfg) return { pass: true, code: 0, stdout: '(stage skipped — no config)', stderr: '', cmd: '(skip)' };
   if (stageCfg.type === 'command') return runStageCommand(stageCfg, cwd);
+  if (stageCfg.type === 'command_per_file') return await runStageCommandPerFile(stageCfg, cwd, onProgress);
   if (stageCfg.type === 'node_check_recursive') return runStageNodeCheckRecursive(stageCfg, cwd);
   if (stageCfg.type === 'skip') {
     return { pass: true, code: 0, stdout: '(skip)', stderr: '', cmd: 'skip' };
@@ -239,7 +328,18 @@ async function run(p) {
       }
     }
 
-    stage_logs.stage1 = runStage(cfg.lint.stage1, cwd);
+    // D57 (2026-05-15): per-file 진행 표시 — Stage 1/3 (command_per_file) 진입 시
+    // 매 파일 후 stage_logs.stage<N>_progress = { current, total, file }를 DB에
+    // partial update. UI tasks polling이 이 필드로 진행률 보여줌. stage 끝나면
+    // _progress 키 제거하여 정리.
+    const makeOnProgress = (stageNum) => async (current, total, file) => {
+      stage_logs[`stage${stageNum}_progress`] = { current, total, file };
+      try { await logger.updateTaskState(state_id, { stage_logs }); }
+      catch (_) { /* progress update 실패는 fatal 아님 */ }
+    };
+
+    stage_logs.stage1 = await runStage(cfg.lint.stage1, cwd, makeOnProgress(1));
+    delete stage_logs.stage1_progress;
     if (!stage_logs.stage1.pass) {
       const fix = buildFixInstructions('STAGE1', stage_logs.stage1);
       await logger.updateTaskState(state_id, {
@@ -255,7 +355,7 @@ async function run(p) {
       return out;
     }
 
-    stage_logs.stage2 = runStage(cfg.lint.stage2, cwd);
+    stage_logs.stage2 = await runStage(cfg.lint.stage2, cwd);
     if (!stage_logs.stage2.pass) {
       const fix = buildFixInstructions('STAGE2', stage_logs.stage2);
       await logger.updateTaskState(state_id, {
@@ -271,7 +371,8 @@ async function run(p) {
       return out;
     }
 
-    stage_logs.stage3 = runStage(cfg.lint.stage3, cwd);
+    stage_logs.stage3 = await runStage(cfg.lint.stage3, cwd, makeOnProgress(3));
+    delete stage_logs.stage3_progress;
     if (!stage_logs.stage3.pass) {
       // D30=A: Stage 3도 retry 대상. 이전엔 즉시 FAIL이었으나 LLM이 흔한 안티
       // 패턴(조건부 null 반환 등)으로 자주 실패했고, vitest 출력 그대로 fix
