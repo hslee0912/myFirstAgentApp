@@ -237,7 +237,9 @@ async function run(params) {
     }
 
     // S1: max_tokens explicit at the call site for tunability + visibility.
-    const max_tokens = 8192;
+    // D55 (2026-05-15): Sonnet 4.5 (cap 64K)에서 30000으로 늘려 큰 FE 산출물도
+    // 한 번에 받음. 게임 5 페이지 + canvas 같은 큰 응답도 continuation 1~2회로 마무리.
+    const max_tokens = 30000;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'fe', max_tokens });
     const llmOut = await callJSON({ agent: 'fe', system: SYSTEM_PROMPT, user: userPrompt, cache: 'system', max_tokens });
