@@ -25,7 +25,47 @@ export default signupHandler;
 ## 3. 진입점 — `BE/src/server.js`
 
 - bootstrap이 깔아둔 `server.js` placeholder가 있으면 **그 응답 형식·동작을 보존**하면서 비즈니스 로직 추가.
-- `GET /health` 엔드포인트는 placeholder 테스트가 기대하는 형식(`{ success: true, data: { status: 'ok' } }`) 그대로 유지.
+
+### 3-α. ⚠️ `GET /health` endpoint — **반드시 정의** (placeholder smoke test가 검증)
+
+`lib/stack_templates/BE/src/server.test.js`(placeholder, 절대 수정 불가)가 다음을 검증한다:
+
+```js
+const res = await request(app).get('/health');
+expect(res.status).toBe(200);
+expect(res.body.success).toBe(true);
+```
+
+즉 **server.js는 항상 다음 3가지를 만족**해야 한다 (하나라도 누락하면 Stage 3 jest 즉시 FAIL):
+
+1. `app.get('/health', ...)` 라우트 정의
+2. `res.status(200)` + `res.json({ success: true, data: { status: 'ok' } })` 응답
+3. `module.exports = app` (supertest가 require해서 호출)
+
+응답에 `BE/src/server.js`를 포함시킬 거면 반드시 다음 골격을 보존하라 (다른 비즈니스 라우트는 그 위에 추가):
+
+```js
+'use strict';
+const express = require('express');
+const app = express();
+app.use(express.json());
+
+// ⚠️ 필수 — placeholder smoke test 통과를 위해
+app.get('/health', (_req, res) => {
+  res.status(200).json({ success: true, data: { status: 'ok' } });
+});
+
+// ... 비즈니스 routes (app.use('/api/...', ...)) 여기에 추가 ...
+
+if (require.main === module) {
+  const port = process.env.BE_PORT || 3001;
+  app.listen(port, () => console.log(`[BE] listening on ${port}`));
+}
+
+module.exports = app;   // jest supertest가 require해 사용
+```
+
+**경험적 사고 패턴**: LLM이 server.js를 통째 새로 쓰면서 `/health`를 자주 누락한다. *응답에 server.js를 넣을 거면* 위 골격을 그대로 유지하고 *비즈니스 라우트만 추가*하는 게 정상 경로. 혹은 server.js를 아예 응답에 넣지 않고 placeholder 그대로 두면서 routes만 새로 emit하는 것도 OK (bootstrap idempotent라 placeholder 보존됨).
 
 ### 3-zero. 컨테이너 sanity — *반드시 지킬 4가지* (위반 시 Lint Stage 1 즉시 FAIL, D45)
 
