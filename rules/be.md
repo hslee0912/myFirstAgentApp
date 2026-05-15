@@ -2,6 +2,17 @@
 
 이 문서는 BE Agent **전용** 규칙입니다. 공통 규칙은 `rules/common.md` 참조 — 두 문서를 합쳐 BE Agent의 system prompt에 주입됩니다.
 
+## ⚠️ BE 응답 emit 전 자가 체크 (필독 — BE에서 자주 어기는 4개)
+
+응답 JSON 직렬화 직전 마지막 확인. 하나라도 어기면 round ERROR 또는 STAGE 3 FAIL.
+
+1. **🚫 `require('bcrypt')` 정확 철자** — *NOT* `require('bcryptjs')`. `bcryptjs`는 별도 패키지로 allowedDeps에 없다. 회원가입/로그인 기능 만들 때 *가장 흔한 위반*. `const bcrypt = require('bcrypt');` 한 줄 그대로 사용. §5-bis 참조.
+2. **🩺 `GET /health` endpoint 반드시 정의** — `app.get('/health', ...)` + `res.json({ success: true, data: { status: 'ok' } })` + `module.exports = app`. 누락 시 placeholder smoke test fail. §3-α 참조.
+3. **🔗 contract endpoint 빠짐 없이 mount** — `shared/api_contract.json`의 *모든* endpoint를 `server.js` + `routes/*.js`에 mount. 한 개라도 빠지면 Phase 2.7 ContractSync FAIL. §3-bis 참조.
+4. **📦 모든 비즈니스 함수 `module.exports`에 포함** — `auth_service.js`에 `signup`, `login` 정의했으면 `module.exports = { signup, login };` 둘 다. 누락 시 smoke test가 `typeof undefined` fail. §7-ter 참조.
+
+---
+
 ## 1. 파일명 (BE)
 
 - BE 파일명: `snake_case` (예: `user_service.js`, `auth_router.js`, `db_helper.js`)
@@ -157,101 +168,74 @@ router.<method>('<subpath>', handler);       // subpath from contract
 - 평문 비교(`if (password === stored)`) 절대 금지.
 - **`bcrypt` 패키지만 사용 — `bcryptjs`는 NOT `bcrypt`** (이름은 비슷하지만 별도 패키지로, `allowedDeps`에 없음). `require('bcryptjs')` 절대 금지. `validateAllowedDeps` 가드가 즉시 ERROR로 잡음.
 
-## 5-bis. 입력 검증 — allowedDeps만 사용 (위반 시 즉시 ERROR)
+## 5-bis. 🚫 BE allowedDeps (위반 시 즉시 ERROR) — common.md §9-bis 참조
 
-- 이메일 검증: **regex로 직접** 처리. `/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)` 정도면 충분.
-- 비밀번호 길이: `password.length >= 8` 같은 단순 검사.
-- **`require('email-validator')`, `require('joi')`, `require('zod')`, `require('validator')` 절대 금지** — 응답 시점에 `validateAllowedDeps` 가드가 잡아 라운드 ERROR.
-- 외부 HTTP 호출: Node.js builtin `https`/`http`, 또는 Node 18+ global `fetch`만. `axios` 등 금지.
-- UUID: `crypto.randomUUID()` (Node builtin) 사용. `uuid` 패키지 금지.
-- JWT/세션: 본 PoC 스코프에선 사용 안 함. 필요하면 `notes`에 적고 코드는 만들지 말 것.
+> **일반 금지 패키지 표 + self-check 절차는 `rules/common.md` §9-bis 참조.** 이 절은 *BE 한정* 정보만.
+
+### BE allowedDeps (정확 7개)
+
+```
+express, mysql2, bcrypt, cors, dotenv, jest, supertest
+```
+
+→ 이 7개 + 상대경로 + Node.js builtin 외엔 *어떤 require/import도 emit 금지*.
+
+### ⚠️ `bcrypt` vs `bcryptjs` — 가장 흔한 BE 위반
+
+- **`require('bcrypt')`** ← 정확한 철자. allowedDeps에 있음.
+- `require('bcryptjs')` ← **별도 패키지**. allowedDeps에 *없음*. 즉시 `UNAUTHORIZED_DEPS` ERROR.
+- 사용자 prompt에 "회원가입" 있으면 자동 완성 IDE 패턴 따라 `bcryptjs` 시도 빈번 — *반드시* `bcrypt` 정확 입력.
+
+### 부수
+
+- 비밀번호 길이: `password.length >= 8` 단순 검사.
+- JWT/세션: PoC 스코프 밖 — `notes`에만.
+- HTTP 호출은 builtin `https`/`http` 또는 global `fetch`. UUID는 `crypto.randomUUID()`.
 
 ## 6. 에러 핸들링
 
 - try/catch로 잡고, 5xx로 응답할 때는 `{ success: false, error: '...' }` 형식 유지.
 - 클라이언트 에러(4xx)는 구체적 메시지, 서버 에러(5xx)는 일반화된 메시지 (스택 트레이스 노출 금지).
 
-## 7. 테스트 (BE) — 시스템이 자동 생성
+## 7. 테스트 (BE) — common.md §5 참조 + BE 한정 룰
 
-- **단위 테스트는 시스템(`lib/test_codegen.js`)이 결정론적으로 자동 생성**한다. Agent는 비즈니스 코드만 emit.
-- 응답에 `*.test.js` 파일을 포함하면 `dropAgentGeneratedTests`가 silent drop. disk에 작성되지 않으며 출력 토큰만 낭비됨.
-- 시스템이 emit하는 BE smoke test 형태 (참고용, 실제 결정은 `lib/test_codegen.js`):
-  ```js
-  const moduleX = require('./moduleX');
-  describe('moduleX.js (auto-generated smoke test)', () => {
-    it('exposes its declared exports', () => {
-      expect(typeof exportedFn).toBe('function');
-    });
-  });
-  ```
-- 도구·환경: 시스템 생성 test도 **Jest + Supertest** 가정의 환경에서 실행 (`lib/stack.config.json` BE 블록의 `lint.stage3` = `jest --runInBand`). `BE/package.json`에 `jest`/`supertest` dep는 그대로 유지 (미래 확장 대비).
+시스템 자동 생성 / dropAgentGeneratedTests / placeholder 보존 등 일반 룰은 `rules/common.md` §5·§8 참조. 환경은 **Jest + Supertest** (stack.config의 `lint.stage3` = `jest --runInBand`).
 
-### 7-bis. Stage 3 smoke test 친화적 export (D30=A)
+### 7-bis. Stage 3 친화적 export (D30=A)
 
-시스템 자동 생성 test는 `typeof exportedFn === 'function'`을 검증한다. 모듈이 require될 때 *throw하지 않고* 비즈니스 함수를 export해야 한다.
+시스템 smoke test는 `typeof exportedFn === 'function'`을 검증한다. 모듈이 require될 때 *throw하지 않고* 함수를 export해야 한다.
 
-흔한 실패 패턴 — 모듈 top-level에서 환경변수 누락 시 throw:
 ```js
-// 나쁨 — DB_PASSWORD 빈 값이면 module load 시점에 throw
+// ❌ 나쁨 — top-level throw로 require 자체가 실패
 if (!process.env.DB_PASSWORD) throw new Error('DB_PASSWORD missing');
-const pool = mysql.createPool({...});
 module.exports = { signupHandler };
-```
 
-```js
-// 좋음 — pool은 lazy, env 검증은 핸들러 호출 시점에
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  password: process.env.DB_PASSWORD || '',
-  // ...
-});
+// ✅ 좋음 — env 검증은 핸들러 호출 시점에, pool은 lazy
+const pool = mysql.createPool({ password: process.env.DB_PASSWORD || '', ... });
 async function signupHandler(req, res) {
-  if (!process.env.DB_PASSWORD) {
-    return res.status(500).json({ success: false, error: '...' });
-  }
+  if (!process.env.DB_PASSWORD) return res.status(500).json({ success: false, error: '...' });
   // ...
 }
 module.exports = { signupHandler };
 ```
 
-Stage 3 실패 시 시스템이 `fix_instructions`로 jest 출력 전달 + LLM에게 최대 `MAX_RETRIES`(3)회 재시도 요청. 첫 시도부터 룰을 따르는 게 정상 경로.
-- bootstrap이 깐 placeholder test (예: `server.test.js`)는 disk에 그대로 보존된다 — 시스템 자동 생성도 placeholder는 덮어쓰지 않음 (`isTestFile()` skip).
-- **Agent의 책임**: placeholder test가 통과되도록 비즈니스 코드를 작성. test 코드 작성은 Agent의 책임이 아님.
+### 7-ter. 모든 비즈니스 함수를 export (smoke test가 어떤 함수를 검증할지 모름)
 
-### 7-ter. 모듈에서 비즈니스 함수를 *반드시* export (Stage 3 BE측 흔한 실패)
+함수를 정의했지만 `module.exports`에 포함시키지 않으면 (export 안 함), smoke test의 `typeof mod.fn === 'function'`이 `undefined`로 fail.
 
-시스템 smoke test는 `const mod = require('./auth_service'); expect(typeof mod.signup).toBe('function');`처럼 *export된 함수의 타입*을 검증한다. 함수가 export 안 되면 `typeof undefined === 'undefined'` → 실패.
-
-**나쁨** — 함수 정의는 했지만 export 안 함:
 ```js
-// auth_service.js
-async function signup(email, password) { ... }
-async function login(email, password) { ... }
-// (module.exports가 없음 → mod = {} 가 됨)
-```
+// ❌ 나쁨 — 함수 정의는 했지만 export 안 함 → mod = {} 가 됨
+async function signup() { ... }
+async function login() { ... }
 
-**좋음** — 모든 비즈니스 함수를 명시적으로 export:
-```js
-// auth_service.js
-async function signup(email, password) { ... }
-async function login(email, password) { ... }
-
+// ✅ 좋음 — 한 파일의 모든 함수를 module.exports에 포함
 module.exports = { signup, login };
 ```
 
-핵심 룰:
-- BE는 CommonJS. `module.exports = { fnA, fnB, ... }` 패턴.
-- 한 파일에 여러 함수가 있으면 *모두* exports에 포함 (smoke test가 어떤 걸 검증할지 모르므로).
-- ES Modules 문법(`export default`, `export function`)은 BE에서 *금지* — `rules/be.md` §2 참조.
+ES Modules 문법(`export default`)은 BE에서 금지 (§2 참조).
 
-## 8. 보호 파일 (BE)
+## 8. 보호 파일 (BE) — common.md 보호 파일 섹션 참조
 
-정확한 list는 `lib/stack.config.json`의 `BE.protectedConfigFiles`에서 매 호출마다 자동 주입됨. 현재 값:
+BE 정확한 list (`BE.protectedConfigFiles`)는 매 호출마다 system prompt에 자동 주입됨. 행동 룰(silent drop / validatePaths ERROR)은 `rules/common.md` 보호 파일 섹션 참조.
 
-- 의존성 매니페스트: `BE/package.json`, `BE/package-lock.json`
-- Lint 설정: `BE/.eslintrc.json`
-- Docker 설정: `BE/Dockerfile`, `BE/.dockerignore`
-
-(Jest 설정은 `BE/package.json`의 `"jest"` key에 인라인 — 별도 `jest.config.*` 파일은 없음.)
-
-**응답에 절대 포함하지 말 것**. 응답에 들어가면 1차로 `dropProtectedFiles`가 silent drop, 그래도 새 나간 케이스는 `Orchestrator.validatePaths`가 throw해 라운드 전체가 ERROR. 자세한 행동 규칙은 `rules/common.md` §9 참조.
+비고: Jest 설정은 `BE/package.json`의 `"jest"` key 인라인 — 별도 `jest.config.*` 파일은 없음.

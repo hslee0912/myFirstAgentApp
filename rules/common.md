@@ -2,6 +2,16 @@
 
 이 문서는 BE Agent와 FE Agent **모두** 매 LLM 호출 시 반드시 읽고 따라야 할 공통 규칙입니다. 영역 전용 규칙은 각각 `rules/be.md`, `rules/fe.md`에 있습니다.
 
+## ⚠️ 응답 emit 전 자가 체크 (필독 — 가장 흔한 즉시-ERROR 3개)
+
+응답을 JSON으로 직렬화하기 *직전*, 다음 3개 항목을 마지막으로 확인하라. 하나라도 어기면 그 라운드 통째 ERROR로 끝남 (`UNAUTHORIZED_DEPS` / `PATH_NOT_ALLOWED` / protected file).
+
+1. **🚫 `require('bcryptjs')` / `import 'bcryptjs'` 한 줄도 없는지** — `bcryptjs`는 *별도 패키지*. allowedDeps엔 **`bcrypt`만** 있다. BE는 비밀번호 해싱 시 *반드시* `require('bcrypt')` 정확 철자. FE는 해싱 자체 금지 (`rules/fe.md §7-bis`). 자동 완성 IDE 패턴 따라 무의식적으로 `bcryptjs` 쓰는 게 *가장 흔한 사고*. 자세히는 §9-bis 함정 표 참조.
+2. **🗂️ 폴더 격리** — BE Agent의 응답은 `BE/` 안만, FE Agent의 응답은 `FE/` 안만. `validatePaths` 가드가 즉시 차단. `shared/api_contract.json` 등은 *읽기 전용* (`rules/common.md §7`).
+3. **📦 protected 파일은 응답 keys에 절대 X** — `package.json`, `vite.config.js`, `index.html`, `.eslintrc.json`, `Dockerfile` 등. 매 호출마다 system prompt에 정확한 list가 자동 주입됨. (`rules/common.md` 보호 파일 섹션).
+
+---
+
 ## 1. 명명 규칙 (공통)
 
 - 변수/함수: `camelCase`
@@ -81,17 +91,38 @@ async function isEmailTaken(email) { ... }
 - "다른 라이브러리가 더 좋다"는 판단으로 **새 의존성을 추가하거나 매니페스트를 수정하지 말 것**. 필요한 경우 응답의 `notes`에 사유를 기록만 하고, 패키지 매니페스트는 절대 건드리지 말 것.
 - bootstrap이 정한 모듈 시스템(시스템 프롬프트의 `moduleSystem` 항목)을 임의로 바꾸지 말 것. 스택을 바꾸는 결정은 사람의 작업이며, 그 절차는 `README.md`의 "스택 변경 체크리스트"에 따라 진행된다.
 
-### 9-bis. allowedDeps 위반 가드 (결정론, 매 응답 검증)
+### 9-bis. 🚫 allowedDeps 위반 = 즉시 ERROR (retry 불가, 가장 흔한 사고)
 
-- 응답의 모든 `.js` / `.jsx` 파일은 `require()` / `import` 정적 분석 대상이다. 외부 모듈 (상대경로 `./`/`../` 아니고 Node.js builtin 아닌 것) 중 `allowedDeps`에 없는 것이 발견되면 **즉시 `UNAUTHORIZED_DEPS` 오류로 라운드 ERROR 종료**.
-- 흔한 위반 사례 (절대 시도하지 말 것):
-  - `require('email-validator')`, `require('joi')`, `require('zod')`, `require('validator')` — 이메일/입력 검증은 직접 regex 또는 단순 string 검사로 처리하라. 모든 검증 라이브러리 금지.
-  - `require('axios')`, `require('node-fetch')` — BE는 외부 HTTP 호출 시 Node.js builtin `https`/`http` 또는 `fetch` (Node 18+ global) 사용. FE는 global `fetch`만.
-  - `require('jsonwebtoken')`, `require('uuid')` — `crypto.randomUUID()` (Node builtin)으로 충분.
-  - `require('lodash')`, `require('ramda')`, `require('moment')`, `require('date-fns')` — 표준 라이브러리/직접 구현으로 처리.
-  - `import 'styled-components'`, `import '@emotion/react'` — FE는 인라인 style 또는 plain CSS만.
-  - **`require('bcryptjs')` — NOT `bcrypt`**. 이름은 비슷하지만 별도 패키지. BE allowedDeps엔 `bcrypt`만 있음. **`bcrypt`만 사용**.
-- 이 가드는 *retry 없는 즉시 ERROR* 이다 (validatePaths와 동일). prompt 단계에서 룰을 따르는 게 정상 경로.
+> ⚠️ **이 섹션은 가장 자주 위반되는 룰이다.** `require()` / `import` 한 줄 잘못 쓰면 그 round 통째 ERROR로 끝남 — Lint/Migration까지 안 가고 즉시 종료. **매 응답 emit 전 모든 import 라인을 한 번 더 검토할 것.**
+
+응답의 모든 `.js` / `.jsx` 파일은 `require()` / `import` 정적 분석 대상이다. 외부 모듈 (상대경로 `./`/`../` 아니고 Node.js builtin 아닌 것) 중 `allowedDeps`에 없는 것이 발견되면 **즉시 `UNAUTHORIZED_DEPS` 오류로 라운드 ERROR 종료** (fix_instructions로 다음 라운드에 회복 시도하나, 처음부터 안 쓰는 게 정상 경로).
+
+#### 🚫 절대 금지 패키지 — 대체 방안 표
+
+| ❌ 금지 패키지 | 시도 동기 | ✅ 대체 |
+|---|---|---|
+| **`bcryptjs`** (NOT `bcrypt`!) | bcrypt와 이름 비슷해 무의식적으로 선택 | **반드시 `bcrypt`** — allowedDeps의 정확한 이름 |
+| `email-validator`, `joi`, `zod`, `validator` | 입력 검증 라이브러리 | regex 직접 (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`) 또는 `string.length` |
+| `axios`, `node-fetch` | HTTP 클라이언트 | Node 18+ global `fetch` 또는 builtin `https`/`http` |
+| `jsonwebtoken` | 토큰 발급 | 본 PoC 스코프 밖. `notes`에만 기록 |
+| `uuid` | UUID 생성 | builtin `crypto.randomUUID()` |
+| `lodash`, `ramda`, `moment`, `date-fns` | 유틸/날짜 | 표준 라이브러리 직접 (`Date`, `Array.prototype.*`) |
+| `styled-components`, `@emotion/react` | FE 스타일 | 인라인 style 또는 plain CSS |
+| `cors` 외 등록 안 된 미들웨어 | 학습 데이터 패턴 | `allowedDeps`에 *명시된 것*만 사용. `cors`는 BE allowedDeps에 있음 — 확인 후 사용 |
+
+#### 위반 빈도가 가장 높은 함정
+
+1. **`bcryptjs`** ← 가장 흔한 위반. 사용자 prompt에 "회원가입" 있으면 LLM이 거의 100% 시도. **반드시 `bcrypt` (정확한 철자)**.
+2. **`email-validator`** ← 이메일 입력 검증 시 두 번째로 흔함.
+
+#### 응답 emit 전 self-check (필수)
+
+응답의 모든 파일에서 `require('...')` / `import ... from '...'` 라인을 *직접 손으로 훑고*, 외부 모듈이 다음 중 하나인지 확인:
+- 상대경로 (`./`, `../`)
+- Node.js builtin (`fs`, `path`, `crypto`, `http`, `https`, `url` 등)
+- `allowedDeps` 리스트의 *정확한 이름*
+
+위 셋 중 하나가 아니면 **그 라인을 emit하지 말 것**. *retry로 풀리는 게 정상이 아니다 — 처음부터 안 쓰는 게 정상 경로.*
 
 ### 보호 파일 — 절대 수정·생성·참조 금지
 

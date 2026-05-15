@@ -2,6 +2,17 @@
 
 이 문서는 FE Agent **전용** 규칙입니다. 공통 규칙은 `rules/common.md` 참조 — 두 문서를 합쳐 FE Agent의 system prompt에 주입됩니다.
 
+## ⚠️ FE 응답 emit 전 자가 체크 (필독 — FE에서 자주 어기는 4개)
+
+응답 JSON 직렬화 직전 마지막 확인. 하나라도 어기면 round ERROR 또는 STAGE 3 FAIL.
+
+1. **🚫 FE에서 비밀번호 해싱 시도 금지** — `bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API 사용 *모두* 금지. 평문 그대로 fetch body에 담아 BE로 전송. BE가 bcrypt로 해시 (`rules/be.md §5`). FE 사전 해시는 *해시값=비밀번호* 안티패턴. §7-bis 참조.
+2. **🧱 `return null` 절대 금지** — props 없이 `render(<Component />)` 호출되어 *non-null DOM 노드* 반환해야 함. `Modal`/`Toast`/`Drawer` 컴포넌트의 `if (!isOpen) return null` 패턴 매우 흔함. 차라리 `<div hidden />` 또는 `<div style={{display:'none'}} />`. §4-bis 참조.
+3. **🎁 prop default 값 반드시** — `function UserBadge({ user })` → `user.name` 접근 시 throw. `{ user = { name: '' } }` 또는 optional chaining `user?.name`. §4-ter 참조.
+4. **🚫 외부 라이브러리 — allowedDeps만** — `react-router-dom`, `react-hook-form`, `formik`, `axios`, `react-icons`, `styled-components`, `@emotion/*`, `tailwindcss`, `lodash`, `validator`, `joi`, `zod` 등 *모두 금지*. 직접 구현. `rules/common.md §9-bis` 함정 표 참조.
+
+---
+
 ## 1. 파일명 (FE)
 
 - React 컴포넌트: `PascalCase` (예: `SignupForm.jsx`, `LoginForm.jsx`, `UserProfile.jsx`)
@@ -205,60 +216,34 @@ function GameCanvas({ width = 1000, height = 750 }) {
   // → BE의 mount path는 base_url 포함. base_url 빼면 404.
   ```
 
-## 6. 테스트 (FE) — 시스템이 자동 생성
+## 6. 테스트 (FE) — common.md §5 참조 + FE 한정 룰
 
-- **단위 테스트는 시스템(`lib/test_codegen.js`)이 결정론적으로 자동 생성**한다. Agent는 비즈니스 코드만 emit.
-- 응답에 `*.test.{js,jsx}` 파일을 포함하면 `dropAgentGeneratedTests`가 silent drop. disk에 작성되지 않으며 출력 토큰만 낭비됨.
-- 시스템이 emit하는 FE smoke test 형태 (참고용, 실제 결정은 `lib/test_codegen.js`):
-  ```jsx
-  import { describe, it, expect } from 'vitest';
-  import { render } from '@testing-library/react';
-  import SignupForm from './SignupForm';
+시스템 자동 생성 / dropAgentGeneratedTests / placeholder 보존 등 일반 룰은 `rules/common.md` §5·§8 참조. 환경은 **Vitest + React Testing Library + jsdom** (stack.config의 `lint.stage3` = `vitest run`).
 
-  describe('SignupForm (auto-generated smoke test)', () => {
-    it('renders without crashing and produces non-empty output', () => {
-      const { container } = render(<SignupForm />);
-      expect(container).toBeTruthy();
-      expect(container.firstChild).not.toBeNull();
-    });
-  });
-  ```
-- 도구·환경: 시스템 생성 test도 **Vitest + React Testing Library + jsdom** 가정의 환경에서 실행 (`lib/stack.config.json` FE 블록의 `lint.stage3` = `vitest run`). `FE/package.json`에 `vitest`/`@testing-library/*` dep는 그대로 유지.
-- bootstrap이 깐 placeholder test (예: `App.test.jsx`)는 disk에 그대로 보존된다 — 시스템 자동 생성도 placeholder는 덮어쓰지 않음 (`isTestFile()` skip).
-- **Agent의 책임**:
-  1. placeholder test가 통과되도록 비즈니스 코드를 작성.
-  2. 새 컴포넌트는 *smoke test 친화적*으로 — render만 시켜도 throw하지 않게 (필수 prop은 default value 또는 optional 처리).
-  3. 깊은 동작 test는 향후 phase에서 추가 예정. 현재는 smoke 수준만 시스템이 보장.
+FE smoke test 형태 (참고용):
+```jsx
+const { container } = render(<SignupForm />);
+expect(container.firstChild).not.toBeNull();   // ← 핵심: non-null DOM
+```
+
+**Agent의 책임**: 새 컴포넌트는 *render(<X />)만 해도 throw 안 나고 non-null DOM 반환*해야 함 (§4-bis / 4-ter 참조).
 
 ## 7. 스타일링
 
-- 스택에 CSS-in-JS 라이브러리는 없음. 인라인 style 또는 `<style>` 태그 또는 별도 `.css` 파일 import 사용.
-- Tailwind 등 외부 의존성 도입 금지.
-- `styled-components`, `@emotion/*`, `tailwindcss`, `clsx`, `classnames` 등 **모두 `validateAllowedDeps` 가드가 즉시 ERROR**.
+- CSS-in-JS 라이브러리 없음. 인라인 style / `<style>` 태그 / 별도 `.css` import만.
+- `styled-components`, `@emotion/*`, `tailwindcss`, `clsx`, `classnames` 등 모두 `validateAllowedDeps` ERROR.
 
-## 7-bis. 흔한 위반 (절대 시도하지 말 것)
+## 7-bis. FE 한정 흔한 위반 (common.md §9-bis 참조 + FE 특이)
 
-- 검증 라이브러리: `validator`, `yup`, `zod`, `joi` — regex 또는 직접 검사로 처리.
-- HTTP: `axios`, `node-fetch` — 항상 global `fetch`.
-- 라우팅: `react-router-dom` 등 — `allowedDeps`에 없으므로 단일 페이지 또는 조건부 렌더링으로 처리.
-- 폼 라이브러리: `react-hook-form`, `formik` — `useState`로 직접 controlled form.
-- 아이콘: `react-icons`, `@mui/icons-material` — SVG 인라인 또는 텍스트로.
-- **보안·해싱 라이브러리: `bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API (PBKDF2/SubtleCrypto 등) — *FE에서 비밀번호 해싱 시도 자체가 안티패턴*.**
-  - 비밀번호는 **평문 그대로 fetch body에 담아 BE로 전송**. HTTPS가 전송 구간 암호화 담당.
-  - BE가 bcrypt로 해시해 DB에 저장 (rules/be.md §5 참조).
-  - FE에서 미리 해시하면 *해시값이 곧 비밀번호*가 되어 보안 효과 없음 + DB는 *해시의 해시*만 갖게 됨 (이중 해시 안티패턴).
-- 위반 시 응답 시점에 라운드 ERROR 종료.
+일반 금지 패키지 표는 `rules/common.md` §9-bis 참조. FE 한정 특이:
 
-## 8. 보호 파일 (FE)
+- 라우팅 `react-router-dom` → 단일 페이지 또는 조건부 렌더링으로 처리.
+- 폼 `react-hook-form`, `formik` → `useState`로 직접 controlled form.
+- 아이콘 `react-icons`, `@mui/icons-material` → SVG 인라인 또는 텍스트.
+- **🚫 FE에서 비밀번호 해싱 시도 금지** (`bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API). 평문 그대로 fetch body로 BE에 전송 (HTTPS가 전송 구간 담당). BE가 bcrypt로 해시 (`rules/be.md §5`). FE 사전 해시는 *해시값=비밀번호* 안티패턴 + DB가 *해시의 해시* 보관.
 
-정확한 list는 `lib/stack.config.json`의 `FE.protectedConfigFiles`에서 매 호출마다 자동 주입됨. 현재 값:
+## 8. 보호 파일 (FE) — common.md 보호 파일 섹션 참조
 
-- 의존성 매니페스트: `FE/package.json`, `FE/package-lock.json`
-- Build 설정: `FE/vite.config.js`
-- 진입 HTML: `FE/index.html`
-- Lint 설정: `FE/.eslintrc.json`
-- Docker 설정: `FE/Dockerfile`, `FE/.dockerignore`
+FE 정확한 list (`FE.protectedConfigFiles`)는 매 호출마다 system prompt에 자동 주입됨. 행동 룰(silent drop / validatePaths ERROR)은 `rules/common.md` 보호 파일 섹션 참조.
 
-(`setupTests.js` 같은 별도 Vitest 환경 파일은 현재 스택에 없음. Vitest 설정은 `FE/vite.config.js` 또는 `FE/package.json` 내 인라인.)
-
-**응답에 절대 포함하지 말 것**. 응답에 들어가면 1차로 `dropProtectedFiles`가 silent drop, 그래도 새 나간 케이스는 `Orchestrator.validatePaths`가 throw해 라운드 전체가 ERROR. 자세한 행동 규칙은 `rules/common.md` §9 참조.
+비고: Vitest 설정은 `FE/vite.config.js` 또는 `FE/package.json` 인라인.
