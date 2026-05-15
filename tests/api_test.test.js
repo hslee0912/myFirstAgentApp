@@ -18,6 +18,7 @@ const {
   exampleBodyFromSchema,
   endpointChecklist,
   substitutePathParams,
+  buildFetchRequest,
 } = require('../lib/api_test');
 
 // ─────────── normalizeContract: canonical format passes through ───────────
@@ -481,4 +482,149 @@ test('D49: 비슷한 이름 param (:user vs :user_id) 정확히 매칭', () => {
     },
   });
   assert.equal(r, '/u/alice/p/99');
+});
+
+// ─────────── D51 (2026-05-15): GET → query string 자동 변환 ───────────
+
+test('★ D51: GET endpoint의 request.schema → query string (사용자 보고 사고 정확 재현)', () => {
+  // cycle 2 사고: GET /api/v1/result/best 가 player_id 없이 fetch → BE 400
+  const r = buildFetchRequest({
+    path: '/api/v1/result/best',
+    method: 'GET',
+    request: {
+      schema: {
+        type: 'object',
+        properties: {
+          player_id: { type: 'integer', example: 1 },
+        },
+      },
+    },
+  }, 'http://localhost:3001');
+  assert.equal(r.url, 'http://localhost:3001/api/v1/result/best?player_id=1');
+  assert.deepEqual(r.queryParams, { player_id: '1' });
+  assert.equal(r.requestBody, null);   // GET이라 body 없음
+  assert.equal(r.init.body, undefined);
+});
+
+test('D51: GET endpoint + 여러 query param', () => {
+  const r = buildFetchRequest({
+    path: '/api/search',
+    method: 'GET',
+    request: {
+      schema: {
+        type: 'object',
+        properties: {
+          q: { example: 'hello' },
+          limit: { example: 20 },
+        },
+      },
+    },
+  }, 'http://x');
+  // URLSearchParams 순서 보장됨 (Object.entries 순서)
+  assert.match(r.url, /\?q=hello&limit=20/);
+  assert.deepEqual(r.queryParams, { q: 'hello', limit: '20' });
+});
+
+test('D51: GET endpoint + request.schema 없음 → query 안 붙임', () => {
+  const r = buildFetchRequest({
+    path: '/api/health',
+    method: 'GET',
+  }, 'http://x');
+  assert.equal(r.url, 'http://x/api/health');
+  assert.equal(r.queryParams, null);
+});
+
+test('D51: GET endpoint + properties의 object/array 값은 query string skip', () => {
+  const r = buildFetchRequest({
+    path: '/api/x',
+    method: 'GET',
+    request: {
+      schema: {
+        type: 'object',
+        properties: {
+          id: { example: 1 },
+          nested: { type: 'object', properties: { foo: { example: 'bar' } } },  // 객체
+        },
+      },
+    },
+  }, 'http://x');
+  // nested는 query string 부적합이라 skip — id만 들어감
+  assert.equal(r.url, 'http://x/api/x?id=1');
+  assert.deepEqual(r.queryParams, { id: '1' });
+});
+
+test('D51: POST endpoint → body 사용 (query 변환 안 함)', () => {
+  const r = buildFetchRequest({
+    path: '/api/users',
+    method: 'POST',
+    request: {
+      schema: {
+        type: 'object',
+        properties: {
+          email: { example: 'a@b.com' },
+          password: { example: 'pw123456' },
+        },
+      },
+    },
+  }, 'http://x');
+  assert.equal(r.url, 'http://x/api/users');  // query 없음
+  assert.equal(r.queryParams, null);
+  assert.deepEqual(r.requestBody, { email: 'a@b.com', password: 'pw123456' });
+  assert.match(r.init.body, /a@b\.com/);
+});
+
+test('D51: GET + path param + query param 함께', () => {
+  const r = buildFetchRequest({
+    path: '/api/users/:user_id/posts',
+    method: 'GET',
+    path_params: { user_id: { example: 42 } },
+    request: {
+      schema: {
+        type: 'object',
+        properties: { limit: { example: 10 } },
+      },
+    },
+  }, 'http://x');
+  assert.equal(r.url, 'http://x/api/users/42/posts?limit=10');
+});
+
+test('D51: GET + URL에 이미 ? 있는 경우 & 사용', () => {
+  // path가 이미 ?로 끝나면 & 사용 (드물지만 안전성)
+  const r = buildFetchRequest({
+    path: '/api/x?fixed=yes',
+    method: 'GET',
+    request: { schema: { type: 'object', properties: { id: { example: 1 } } } },
+  }, 'http://x');
+  assert.match(r.url, /\?fixed=yes&id=1/);
+});
+
+test('D51: HEAD도 GET과 동일하게 query string 변환', () => {
+  const r = buildFetchRequest({
+    path: '/api/x',
+    method: 'HEAD',
+    request: { schema: { type: 'object', properties: { id: { example: 9 } } } },
+  }, 'http://x');
+  assert.match(r.url, /\?id=9/);
+  assert.equal(r.requestBody, null);
+});
+
+test('D51: example=null 또는 undefined인 properties는 skip', () => {
+  const r = buildFetchRequest({
+    path: '/api/x',
+    method: 'GET',
+    request: {
+      schema: {
+        type: 'object',
+        properties: {
+          a: { example: 1 },
+          b: { example: null },
+          c: { /* no example */ },
+        },
+      },
+    },
+  }, 'http://x');
+  // a만 들어감 (exampleBodyFromSchema가 example 있는 것만 포함)
+  assert.match(r.url, /\?a=1/);
+  assert.doesNotMatch(r.url, /b=/);
+  assert.doesNotMatch(r.url, /c=/);
 });
