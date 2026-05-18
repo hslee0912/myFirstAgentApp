@@ -245,10 +245,42 @@ renderCtx.fillRect(0, 0, w, h);
 
 ## 9. 적(Enemy) 명세
 
-### 9-1. 종류
+### 9-1. 종류 + 스테이지별 등장 (필수 — 시각적 난이도 곡선)
+
 - **총 4종**. 각 적은 **무기 4종 중 하나와 1:1로 매핑**되어 자기 무기를 들고 등장.
-- 스폰 시 4종 중 하나가 무작위 선택.
-- **적 색깔 = 그 적이 장비한 무기 색깔**. 모든 적은 반드시 위 표의 4색 중 한 가지를 갖는다.
+- **적 색깔 = 그 적이 장비한 무기 색깔**. 모든 적은 반드시 §7 표의 4색 중 한 가지를 갖는다.
+
+**스테이지별 spawn pool** (반드시 이 표 그대로 — LLM 임의 추가 금지):
+
+| Stage | 등장 적 종류 (pool) | 새로 추가된 적 |
+|---|---|---|
+| 1 | `holy_sword` 만 | (성검 적) |
+| 2 | `holy_sword`, `thunder_lance` | + 번개 적 |
+| 3 | `holy_sword`, `thunder_lance`, `fire_magic` | + 불꽃 적 |
+| 4 | `holy_sword`, `thunder_lance`, `fire_magic`, `holy_light` | + 성광 적 |
+| 5 | 4종 모두 (1~4와 동일 pool, 무작위) | (무작위) |
+
+**권장 구현**:
+```js
+const ENEMY_POOLS = {
+  1: ['holy_sword'],
+  2: ['holy_sword', 'thunder_lance'],
+  3: ['holy_sword', 'thunder_lance', 'fire_magic'],
+  4: ['holy_sword', 'thunder_lance', 'fire_magic', 'holy_light'],
+  5: ['holy_sword', 'thunder_lance', 'fire_magic', 'holy_light'],
+};
+
+function spawnEnemy(currentStage) {
+  const pool = ENEMY_POOLS[currentStage] || ENEMY_POOLS[1];
+  const weaponId = pool[Math.floor(Math.random() * pool.length)];
+  // ... enemy 생성 ...
+}
+```
+
+**핵심 룰**:
+- spawn pool은 *항상 현재 stage 기준*으로 매 스폰마다 갱신. stage 전환 직후 다음 spawn부터 새 pool 적용.
+- pool에 없는 적 종류는 *절대 등장 금지*. 예: Stage 1에서 `thunder_lance` 적 등장 = 명세 위반.
+- Stage 5는 4종 무작위 — `holy_light`(성광)가 가장 강하므로 자연스럽게 난이도 ↑.
 
 ### 9-2. 이동 패턴 (스폰 시 아래 3종 중 1개를 무작위 부여)
 1. **직선 하강**: 화면 상단에서 일정 속도로 아래로 내려옴.
