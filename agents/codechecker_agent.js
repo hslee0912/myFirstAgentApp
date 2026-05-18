@@ -158,7 +158,8 @@ async function run({ task_id, user_request }) {
   try {
     const userPrompt = buildUserPrompt(user_request);
     // S1: max_tokens explicit at the call site for tunability + visibility.
-    const max_tokens = 8192;
+    // D69 (2026-05-18): Sonnet 4.5 30000 — router_details + test_scenarios 출력 양 큼.
+    const max_tokens = 30000;
     // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
     assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'codechecker', max_tokens });
     const llmOut = await callJSON({

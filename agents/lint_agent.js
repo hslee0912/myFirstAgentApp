@@ -261,6 +261,29 @@ function buildFixInstructions(stage, log) {
  * @param {number} p.state_id
  * @param {number} p.current_retry_count
  */
+/**
+ * D71 (2026-05-18): Lint stage fail 시 stage_logs를 disk에 영구 저장.
+ * 기존 흐름은 round 1/2 fail이 round 3 PASS 시점에 stage_logs 덮어쓰여 분석 불가.
+ * file: big_cycle_logs/lint_errors/<task_id>__<target>__round<N>__<stage>.json
+ */
+function saveLintFailLog(task_id, target, retry_count, stage_logs, failed_stage) {
+  try {
+    const dir = path.join(ROOT, 'big_cycle_logs', 'lint_errors');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const round = (retry_count || 0) + 1;
+    const stage = (failed_stage || 'UNKNOWN').toLowerCase();
+    const filename = `${task_id}__${target}__round${round}__${stage}.json`;
+    fs.writeFileSync(path.join(dir, filename), JSON.stringify({
+      task_id, target, round, failed_stage,
+      saved_at: new Date().toISOString(),
+      stage_logs,
+    }, null, 2));
+    console.log(`[lint_agent] saved fail log → big_cycle_logs/lint_errors/${filename}`);
+  } catch (e) {
+    console.warn(`[lint_agent] saveLintFailLog skipped: ${e.message}`);
+  }
+}
+
 async function run(p) {
   const { task_id, target, state_id, current_retry_count } = p;
   const cfg = stack.get(target);
@@ -299,6 +322,7 @@ async function run(p) {
           stage_logs,
           result_text: null,
         });
+        saveLintFailLog(task_id, target, current_retry_count || 0, stage_logs, 'STAGE1_container_sanity');
         const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE1' };
         await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
         return out;
@@ -326,6 +350,7 @@ async function run(p) {
           stage_logs,
           result_text: null,
         });
+        saveLintFailLog(task_id, target, current_retry_count || 0, stage_logs, 'STAGE1_migration_sanity');
         const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE1' };
         await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
         return out;
@@ -354,6 +379,7 @@ async function run(p) {
         stage_logs,
         result_text: null,
       });
+      saveLintFailLog(task_id, target, current_retry_count || 0, stage_logs, 'STAGE1');
       const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE1' };
       await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
       return out;
@@ -370,6 +396,7 @@ async function run(p) {
         stage_logs,
         result_text: null,
       });
+      saveLintFailLog(task_id, target, current_retry_count || 0, stage_logs, 'STAGE2');
       const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE2' };
       await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
       return out;
@@ -391,6 +418,7 @@ async function run(p) {
         stage_logs,
         result_text: null,
       });
+      saveLintFailLog(task_id, target, current_retry_count || 0, stage_logs, 'STAGE3');
       const out = { stage_logs, verdict: 'FAILED', failed_stage: 'STAGE3' };
       await logger.endRun(run_id, { status: 'SUCCESS', output_json: out });
       return out;
