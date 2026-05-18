@@ -202,10 +202,81 @@ function collectFilesPerFile(rootDir, include, exclude, excludeDirs) {
   return out.sort();
 }
 
+/**
+ * D85 (2026-05-18): batch + JSON parse + per-file fallback.
+ *
+ * 한 번에 전체 src/를 호출 (eslint --format=json / vitest --reporter=json).
+ *   - stdout JSON parse 성공 + 모든 파일 PASS → 즉시 PASS 반환 (가장 흔한 경로)
+ *   - JSON parse 실패 또는 부분 FAIL → command_per_file fallback (정확 식별)
+ *
+ * 절감: 매 파일마다 다시 spawn (cold-start 2~5s)하던 overhead 제거.
+ * - BE eslint 7파일: ~21s → 1.5s
+ * - FE eslint 18파일: ~54s → 2s
+ * - FE vitest 6~8파일: ~36~48s → 3.5s
+ *
+ * stageCfg 추가 필드:
+ *   - batch_args: string[]  — command_prefix 뒤에 붙는 batch 인자 (예: ['src/', '--format=json'])
+ *   - batch_parser: 'eslint' | 'vitest' | 'jest'  — stdout JSON 형식
+ *   - per_file_pattern: 기존 그대로 (fallback 용)
+ */
+async function runStageCommandBatch(stageCfg, cwd, onProgress) {
+  const label = stageCfg.label || stageCfg.command_prefix.join(' ');
+  const batchArgs = stageCfg.batch_args || [];
+  const parser = stageCfg.batch_parser || 'eslint';
+  console.log(`[lint_agent] ${label} (batch)`);
+  if (onProgress) {
+    try { await onProgress(0, 1, '(batch)'); } catch (_) { /* swallow */ }
+  }
+
+  const cmd = [...stageCfg.command_prefix, ...batchArgs];
+  const r = runCommand(cmd, cwd);
+
+  let parsedPass = null;
+  let failedFiles = [];
+  if (!r.timed_out && r.stdout) {
+    try {
+      const j = JSON.parse(r.stdout);
+      if (parser === 'eslint' && Array.isArray(j)) {
+        for (const f of j) {
+          if ((f.errorCount || 0) > 0) failedFiles.push({ file: f.filePath, errors: f.errorCount });
+        }
+        parsedPass = failedFiles.length === 0;
+      } else if (parser === 'vitest' && j.testResults) {
+        for (const t of j.testResults) {
+          if (t.status === 'failed') failedFiles.push({ file: t.name, errors: 1 });
+        }
+        parsedPass = failedFiles.length === 0;
+      }
+    } catch (_) {
+      parsedPass = null;
+    }
+  }
+
+  if (parsedPass === true && r.code === 0) {
+    if (onProgress) {
+      try { await onProgress(1, 1, '(batch PASS)'); } catch (_) { /* swallow */ }
+    }
+    return {
+      pass: true,
+      code: 0,
+      stdout: `(batch PASS — JSON-parsed, ${batchArgs.join(' ')})`,
+      stderr: '',
+      cmd: cmd.join(' '),
+      per_file_results: [],
+      file_count: 0,
+    };
+  }
+
+  // batch FAIL 또는 JSON parse 실패 → per-file fallback (정확한 fail 식별).
+  console.log(`[lint_agent] ${label} batch FAIL or unparsed — falling back to per-file (D85)`);
+  return await runStageCommandPerFile(stageCfg, cwd, onProgress);
+}
+
 async function runStage(stageCfg, cwd, onProgress) {
   if (!stageCfg) return { pass: true, code: 0, stdout: '(stage skipped — no config)', stderr: '', cmd: '(skip)' };
   if (stageCfg.type === 'command') return runStageCommand(stageCfg, cwd);
   if (stageCfg.type === 'command_per_file') return await runStageCommandPerFile(stageCfg, cwd, onProgress);
+  if (stageCfg.type === 'command_batch') return await runStageCommandBatch(stageCfg, cwd, onProgress);
   if (stageCfg.type === 'node_check_recursive') return runStageNodeCheckRecursive(stageCfg, cwd);
   if (stageCfg.type === 'skip') {
     return { pass: true, code: 0, stdout: '(skip)', stderr: '', cmd: 'skip' };

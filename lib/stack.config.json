@@ -9,9 +9,11 @@
     },
     "lint": {
       "stage1": {
-        "type": "command_per_file",
+        "type": "command_batch",
         "label": "FE eslint",
         "command_prefix": ["npx", "--no-install", "eslint"],
+        "batch_args": ["src/", "--ext", ".js,.jsx", "--format=json"],
+        "batch_parser": "eslint",
         "per_file_pattern": {
           "rootDir": "src",
           "include": [".js", ".jsx"],
@@ -23,9 +25,11 @@
         "command": ["npm", "run", "build", "--silent"]
       },
       "stage3": {
-        "type": "command_per_file",
+        "type": "command_batch",
         "label": "FE vitest",
         "command_prefix": ["npx", "--no-install", "vitest", "run"],
+        "batch_args": ["--reporter=json"],
+        "batch_parser": "vitest",
         "per_file_pattern": {
           "rootDir": "src",
           "include": [".test.jsx", ".test.js"],
@@ -83,9 +87,11 @@
     },
     "lint": {
       "stage1": {
-        "type": "command_per_file",
+        "type": "command_batch",
         "label": "BE eslint",
         "command_prefix": ["npx", "--no-install", "eslint"],
+        "batch_args": ["src/", "--ext", ".js", "--format=json"],
+        "batch_parser": "eslint",
         "per_file_pattern": {
           "rootDir": "src",
           "include": [".js"],
