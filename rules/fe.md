@@ -109,6 +109,54 @@ function UserBadge({ user }) {
 - 객체/배열 prop은 default `{}` / `[]` 또는 optional chaining(`?.`).
 - 함수 prop(예: `onClick`)도 *호출 안 해도 안전*해야 하지만, *호출 시*엔 default가 없으면 throw → `onClick = () => {}`처럼 noop default.
 
+### 4-ter-α. ⚠️ **inline default가 useEffect dep에 들어가면 무한 setState 루프** (D78, vitest 5min hang 사고)
+
+함수/객체/배열 prop default를 *컴포넌트 시그니처 안*에서 inline으로 적으면 *매 render마다 새 reference* 가 생성된다. 이 prop을 useEffect dep array에 넣으면 *매 render마다 dep 변화 인식 → cleanup → re-run → 만약 effect 안에서 setState 호출하면 → re-render → 무한 루프*.
+
+**❌ 나쁨** (smoke test에서 vitest 5분 timeout, 사용자 사고 보고):
+```jsx
+function GamePage({ onNavigate = () => {}, gameData = { weapon: 'holy_sword' } }) {
+  const [ui, setUi] = useState({});
+  useEffect(() => {
+    // ... gameLoop 또는 setUi 호출 ...
+    setUi(...);
+  }, [onNavigate]);   // ← onNavigate가 매 render마다 새 reference → 무한 cleanup/re-run
+}
+```
+
+매 render마다 `onNavigate`/`gameData`가 새로 평가되어 *참조 동일성* 깨짐 → useEffect dep diff가 항상 변화 인식 → setState → re-render → 반복. **smoke test render(<GamePage />)가 무한 루프로 vitest 5분 timeout**.
+
+**✅ 좋음 — 패턴 1**: 모듈 상수로 default 분리 (가장 안전):
+```jsx
+const NOOP = () => {};
+const DEFAULT_GAME_DATA = { weapon: 'holy_sword' };
+function GamePage({ onNavigate = NOOP, gameData = DEFAULT_GAME_DATA }) {
+  // onNavigate/gameData 둘 다 *모듈 상수 reference* → 매 render마다 동일.
+  useEffect(() => { /* ... */ }, [onNavigate]);   // OK
+}
+```
+
+**✅ 좋음 — 패턴 2**: dep array에서 unstable prop 제외 + useRef로 최신값 보관:
+```jsx
+function GamePage({ onNavigate = () => {} }) {
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
+  useEffect(() => {
+    // onNavigateRef.current() 호출
+  }, []);   // ← dep []
+}
+```
+
+**✅ 좋음 — 패턴 3**: dep array 자체 빈 (`[]`) — mount once. 대부분의 game-loop / event-listener 패턴에 적합:
+```jsx
+useEffect(() => {
+  window.addEventListener('keydown', handler);
+  return () => window.removeEventListener('keydown', handler);
+}, []);   // mount once
+```
+
+**검출 단서**: 컴포넌트 시그니처에 `= () =>`, `= [...]`, `= {...}` inline default가 있고 그 prop이 useEffect dep array에 등장 → 위 3가지 패턴 중 하나로 *반드시* 교체. smoke test가 render만 호출해도 hang.
+
 ### 4-quater. import 경로 오타 / missing default export
 
 모듈 로드 단계에서 throw → smoke test가 컴포넌트 자체를 require하지 못해 실패한다. eslint Stage 1이 *상당 부분* 잡아주지만 default export 누락 같은 케이스는 stage 3까지 가서 깨질 수 있음.
