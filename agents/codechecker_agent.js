@@ -111,6 +111,12 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
   형식: \`[{ name, request_body|request_query, expect_status, expect_response_subset }]\`. PostTest가 각 시나리오 모두 실행해 BE 실제 동작 (validation/edge case/error) 검증.
   권장 패턴: POST → valid_input(201), missing_field(400), duplicate(409); GET → valid_query(200), missing_query(400), empty_result(200, default 응답); 인증 → valid_credentials(200), invalid_credentials(401).
   미정의 시 기존 동작(request.example로 positive case 1번)만 검증 — 약함.
+  ⚠️ **D69 시나리오 작성 룰** (어기면 시나리오 일제히 fail):
+    1. **동적 값(auto-increment id, INSERT 후 생성된 timestamp 등) hardcode 금지** — \`expect_response_subset\`에 \`{id: 2}\`처럼 정확한 숫자를 박으면 다음 cycle에서 다른 id가 나와 fail. 동적 값은 \`expect_response_subset\`에서 *생략*하거나 *type만 검증*하라(예: schema에 \`type: integer\`로 위임).
+    2. **시드 의존 시나리오는 사용자 정의 시드만 참조** — 명세서의 \`4-3. 시드 데이터\`에 명시된 값(예: \`demo_user\` / score 500)만 사용. 임의의 username/score를 시드라고 가정하지 말 것.
+    3. **type 정확성** — \`expect_response_subset\`의 값 타입이 실제 응답 타입과 정확히 일치해야 함 (\`success: true\`는 boolean, \`exists: true\`는 boolean, id는 integer).
+    4. **시나리오 간 체이닝 의존 금지** — signup 시나리오가 만든 user를 login 시나리오가 그대로 쓰는 식의 순서 의존 X. 각 시나리오는 독립적으로 PASS 가능해야 함 (시드 사용자나 명시적 setup만 의존).
+    5. **subset 검증이 안전한 default** — \`expect_response_subset\`은 *부분 일치*(deep subset)로 검증. 가변 필드를 굳이 명시하지 말고, *확실히 안정된 필드만* 적어라 (예: \`{success: true, data: {username: 'demo_user'}}\` 정도. \`data.id\`는 빼라).
 - base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {

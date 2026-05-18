@@ -192,6 +192,33 @@ express, mysql2, bcrypt, cors, dotenv, jest, supertest
 - JWT/세션: PoC 스코프 밖 — `notes`에만.
 - HTTP 호출은 builtin `https`/`http` 또는 global `fetch`. UUID는 `crypto.randomUUID()`.
 
+## 5-ter. ⚠️ 시드 데이터 정합성 — *명세서의 시드가 모든 validation을 통과해야 함* (PostTest 연쇄 fail 방지)
+
+> 명세서의 `4-3. 시드 데이터` 가 `INSERT IGNORE`로 들어가도, **signup/login/auth-check 핸들러의 validation regex와 충돌**하면 PostTest의 `duplicate_username` / `valid_credentials` / `valid_query_exists` 시나리오가 일제히 400/401 fail. 시드는 *런타임 검사를 우회해 INSERT*되지만 그 시드를 *대상으로 호출하는 모든 endpoint*는 똑같은 validation을 거친다.
+
+**자가 점검 (migration + service 작성 후, 응답 emit 전):**
+
+1. **username regex가 시드 username을 통과하는가** — 시드 `demo_user`는 underscore 포함 → regex는 반드시 `[a-zA-Z0-9_]{4,16}` (underscore 누락 시 duplicate 시나리오가 409 대신 400 으로 fail).
+2. **password_hash가 *시드 평문 password*의 실제 bcrypt 해시인가** — 임의의 60자 문자열로 채우면 `bcrypt.compare('Pass1234', hash)` → false → login valid_credentials 시나리오가 401 fail.
+3. migration의 `INSERT IGNORE` 값은 *signup endpoint를 통과 가능한 형태*여야 한다 — signup → DB가 아니라 *signup 후 다시 그 username을 endpoint로 조회/로그인하는 시나리오*가 PostTest에 있기 때문.
+
+```sql
+-- ✅ 시드 정합성 OK
+INSERT IGNORE INTO player_users (username, password_hash, player_name)
+VALUES ('demo_user', '$2b$10$<Pass1234의 실제 bcrypt 해시 60자>', '데모용사');
+-- + auth_service의 username regex = /^[a-zA-Z0-9_]{4,16}$/
+
+-- ❌ 정합성 깨짐 — username regex 충돌
+INSERT IGNORE ... VALUES ('demo_user', ...);
+-- + regex = /^[a-zA-Z0-9]{4,16}$/  ← underscore 누락 → PostTest fail
+```
+
+권장 hash 생성 명령(터미널, 결과 그대로 SQL에 paste):
+
+```
+node -e "console.log(require('bcrypt').hashSync('Pass1234', 10))"
+```
+
 ## 6. 에러 핸들링
 
 - try/catch로 잡고, 5xx로 응답할 때는 `{ success: false, error: '...' }` 형식 유지.
