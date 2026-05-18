@@ -3,61 +3,46 @@
 ## 1. 프로젝트 개요
 
 - 마성전설(Knightmare) 오마주 판타지 종스크롤 슈팅 게임
-- Demo는 React로 제작, **인게임 로직만 추후 Phaser.js로 리팩토링** 예정 (이번 단계에서는 React Canvas로 구현)
+- React로 제작 (인게임은 React Canvas). 추후 Phaser.js 리팩토링 예정 — 이번 단계는 React로 동작만.
 
 ---
 
 ## 2. 폴더 구조
 
 ```
-myFirstAgentApp/
-├── .env                       # DB 접속 정보 등 환경변수
-├── package.json
-├── BE/
-│   └── src/
-│       ├── server.js          # Express 서버 (GET /health placeholder는 그대로 유지)
-│       ├── db.js              # MySQL 연결 (pool)
-│       └── routes/
-│             ├── auth_routes.js   # POST /signup, GET /check, POST /login
-│             └── result_routes.js # POST /result, GET /best
-└── FE/
-    └── src/
-        ├── App.jsx
-        ├── pages/
-        │   ├── LoginPage.jsx       # ID / PW 입력, MemberShipPage 이동 버튼
-        │   ├── MemberShipPage.jsx  # 회원가입 (ID 중복확인 / PW + Confirm PW / Player name 한글 허용)
-        │   ├── SelectPage.jsx      # 무기 4종 선택
-        │   ├── GamePage.jsx        # 종스크롤 인게임 (React Canvas)
-        │   └── ResultPage.jsx      # 점수 + 분석 결과
-        └── components/
+BE/src/
+  ├ server.js          # Express (GET /health placeholder 유지)
+  ├ db.js              # MySQL pool
+  └ routes/, services/ # 자유 구성
+FE/src/
+  ├ App.jsx, main.jsx
+  ├ pages/             # LoginPage / MemberShipPage / SelectPage / GamePage / ResultPage
+  └ components/        # 필요 시
 ```
 
-> LoginPage, MemberShipPage, SelectPage, GamePage, ResultPage는 슈팅 게임 분위기에 맞게 화려하게 꾸밀 것.
-> **회원가입 / 로그인 / 중복확인 / 결과 저장 / 최고점수 조회**는 반드시 API 단위 호출 테스트(Postman 또는 curl)로 정상 동작 확인.
+> 화면은 슈팅 게임 분위기에 맞게 화려하게. **회원가입/로그인/중복확인/결과저장/최고점수**는 PostTest 자동 검증으로 통과해야 함.
 
 ---
 
-## 3. 환경 변수 (.env)
+## 3. 환경 변수 (.env, 이미 설정됨)
 
-이미 설정된 키 그대로 사용. 본 PoC에서 BE 코드가 참조하는 키:
-
-- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-- `BE_PORT` (Express 포트 — placeholder가 `process.env.BE_PORT || 3001` 으로 잡음. 다른 변수명 만들지 말 것)
-- ⚠️ `JWT_SECRET`은 본 PoC에서 *사용 안 함*. 로그인 응답엔 토큰 대신 `player_id` / `username` / `player_name`만 포함. (외부 jsonwebtoken 패키지가 `allowedDeps`에 없어 사용 불가)
+`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `BE_PORT` (placeholder가 `process.env.BE_PORT || 3001` 사용 — 변수명 유지).
+⚠️ `JWT_SECRET`은 본 PoC *사용 안 함*. 로그인 응답엔 토큰 대신 `player_id` / `username` / `player_name`만.
 
 ---
 
-## 4. MySQL 스키마 (테이블 2개 + migration 자동 적용)
+## 4. MySQL 스키마 (테이블 2개 + 시드)
 
-> `BE/db/migrations/<UTC ts>_<name>.sql` 1~2개 파일로 emit. orchestrator Phase 2.5가 자동 적용. **DB charset/collation은 `utf8mb4` / `utf8mb4_unicode_ci`** — 한글 player_name 저장을 위해 명시.
+> `BE/db/migrations/<UTC ts>_<name>.sql` emit. orchestrator Phase 2.5가 자동 적용. **charset/collation은 `utf8mb4` / `utf8mb4_unicode_ci`** (한글 player_name).
+> `CREATE INDEX IF NOT EXISTS`는 MySQL 미지원 — INDEX는 `CREATE TABLE` 안에 선언.
 
 ### 4-1. `player_users`
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
 | id | BIGINT PK AUTO_INCREMENT | |
-| username | VARCHAR(32) UNIQUE NOT NULL | 영문/숫자, 4~16자 |
-| password_hash | CHAR(60) NOT NULL | bcrypt 해시 (rounds=10, 정확히 60자) |
-| player_name | VARCHAR(60) NOT NULL | **한글 허용**, 2~12자 (UTF-8 기준) |
+| username | VARCHAR(32) UNIQUE NOT NULL | 영문/숫자/언더스코어, 4~16자 |
+| password_hash | CHAR(60) NOT NULL | bcrypt rounds=10 (60자) |
+| player_name | VARCHAR(60) NOT NULL | 한글 허용, 2~12자 |
 | created_at | DATETIME DEFAULT CURRENT_TIMESTAMP | |
 
 ### 4-2. `game_results`
@@ -66,322 +51,238 @@ myFirstAgentApp/
 | id | BIGINT PK AUTO_INCREMENT | |
 | player_id | BIGINT NOT NULL | FK → player_users(id) |
 | stage | TINYINT NOT NULL | 1~5 |
-| score | INT NOT NULL | 최종 점수 |
+| score | INT NOT NULL | |
 | weapon_used | VARCHAR(32) NOT NULL | holy_sword / fire_magic / thunder_lance / holy_light |
-| play_duration | INT NOT NULL | **플레이 지속 시간(초)** |
-| pattern_seed | VARCHAR(64) | 적 스폰 패턴 시드 |
+| play_duration | INT NOT NULL | 초 |
+| pattern_seed | VARCHAR(64) | nullable |
 | is_best | TINYINT(1) DEFAULT 0 | 개인 최고 점수 여부 |
-| play_time | DATETIME NOT NULL | **게임 종료 시각**. ⚠️ MySQL DATETIME은 `'YYYY-MM-DD HH:MM:SS'` 형식만 받음. FE에서 ISO 8601(`new Date().toISOString()` → `'YYYY-MM-DDTHH:MM:SS.sssZ'`)을 보낼 수 있으므로 **BE 코드가 입력 받자마자 `new Date(s).toISOString().slice(0,19).replace('T',' ')` 로 변환**. 변환 안 하면 `ER_TRUNCATED_WRONG_VALUE` 500 발생. |
-| INDEX | (player_id, score DESC) | best_score 조회 최적화 |
+| play_time | DATETIME NOT NULL | ⚠️ MySQL `'YYYY-MM-DD HH:MM:SS'` 형식만. FE가 ISO 8601 보내면 BE에서 `new Date(s).toISOString().slice(0,19).replace('T',' ')`로 변환 (안 하면 500). |
+| INDEX | (player_id, score DESC) | |
 
-> ⚠️ `CREATE INDEX IF NOT EXISTS` MySQL 미지원 — INDEX는 `CREATE TABLE` 안에 같이 선언할 것.
+### 4-3. 시드 (INSERT IGNORE 1건씩)
 
-### 4-3. 시드 데이터
-- migration에 `INSERT IGNORE`로 시드 1건씩 추가:
-  - `player_users`: `(username='demo_user', password_hash='$2b$10$fmKqy9chmRPcdIq6nEbRoeP7bNX7CPQmZ7felu0VOleDBqeUO96Aq', player_name='데모용사')` — **이 60자 hash 문자열을 SQL에 *그대로* 박을 것** (`bcrypt.compareSync('Pass1234', hash) === true` 검증 완료된 실제 hash). LLM이 다른 hash 문자열로 교체하거나 placeholder처럼 보여 자체 생성 시 PostTest valid_credentials 시나리오가 401 fail.
-  - `game_results`: `(player_id=1, stage=1, score=500, weapon_used='holy_sword', play_duration=120, pattern_seed='seed_001', is_best=1, play_time=NOW())`
+- `player_users`: `(username='demo_user', password_hash='$2b$10$fmKqy9chmRPcdIq6nEbRoeP7bNX7CPQmZ7felu0VOleDBqeUO96Aq', player_name='데모용사')`
+- `game_results`: `(player_id=1, stage=1, score=500, weapon_used='holy_sword', play_duration=120, pattern_seed='seed_001', is_best=1, play_time=NOW())`
 
-> ⚠️ **시드 정합성 (PostTest fail 방지)** — 시드 row가 BE 핸들러의 validation을 *전부* 통과해야 함:
-> - `username='demo_user'`는 underscore 포함 → username 정규식이 `[a-zA-Z0-9_]{4,16}`여야 통과 (§5-5-1 #2 참조)
-> - `password_hash`는 위 표의 정확한 60자 문자열 그대로 — `bcrypt.compareSync('Pass1234', hash) === true` 검증 완료. *예시 같아 보이지만 placeholder 아님, 실제 사용할 hash임.* LLM이 무의식적으로 `$2b$10$N9qo8...` 같은 *예시처럼 보이는 학습 데이터 hash*를 적으면 PostTest login 시나리오가 401 fail.
+> ⚠️ **시드 정합성 (PostTest fail 방지)** — 시드 row는 BE 핸들러 validation을 *전부* 통과해야 함:
+> - username regex가 underscore 허용해야 시드 `demo_user` 통과 (§5-5-1 #2).
+> - `password_hash`는 위 60자 hash *그대로* 박을 것 — `bcrypt.compareSync('Pass1234', hash) === true` 검증 완료된 실제 hash. 예시처럼 보여 placeholder로 오인하고 다른 hash로 교체 시 login valid_credentials 시나리오 401 fail.
 
 ---
 
 ## 5. 회원가입 / 로그인 규칙
 
-### 5-1. 회원가입 입력 필드 (MemberShipPage.jsx)
+### 5-1. 입력 필드 (MemberShipPage.jsx)
 
 | 필드 | FE 검증 (실시간) | BE 재검증 |
 |---|---|---|
-| ID (`username`) | 영문/숫자/언더스코어(`_`) 4~16자, **GET /auth/check API로 중복 확인 필수** | 정규식 + UNIQUE constraint |
-| Password | 8자 이상, 영문+숫자 조합 | 동일 정규식 |
-| **Confirm Password** | Password와 **완전 일치**해야 가입 버튼 활성화 | (FE only, BE는 password만 받음) |
-| Player Name | **한글/영문/숫자 허용**, 2~12자 (UTF-8) | 길이 + 정규식 |
+| ID (`username`) | 영문/숫자/언더스코어 4~16자, **/auth/check로 중복 확인 필수** | 정규식 + UNIQUE |
+| Password | 8자 이상, 영문+숫자 혼합 | 동일 정규식 |
+| Confirm Password | Password와 완전 일치해야 가입 버튼 활성 | (FE only) |
+| Player Name | 한글/영문/숫자, 2~12자 | 길이 검증 |
 
-> ⚠️ **시드 정합성** — `4-3. 시드 데이터`의 시드 username `demo_user`는 underscore(`_`)를 포함하므로 username 정규식은 반드시 underscore를 허용해야 함 (`/^[a-zA-Z0-9_]{4,16}$/`). underscore 누락 시 PostTest의 `duplicate_username`/`auth/check`/`login` 시나리오가 모두 400 / 401로 연쇄 fail.
+### 5-2. 가입 버튼 활성 조건 (FE, AND)
+1. 모든 필드 클라이언트 검증 PASS
+2. Confirm Password = Password
+3. **`/auth/check` 응답 `exists:false`로 중복확인 통과**
 
-### 5-2. 가입 버튼 활성 조건 (FE)
-
-가입 버튼은 다음 *모든* 조건이 충족될 때만 enabled:
-1. 모든 입력 필드의 클라이언트 검증 PASS
-2. 비밀번호 확인이 비밀번호와 일치
-3. **ID 중복확인이 통과** (`/auth/check` 응답에서 `exists: false` 확인)
-
-ID 입력이 변경되면 *중복확인 상태를 reset* — 다시 중복확인 버튼을 눌러야 가입 가능.
+ID 입력이 바뀌면 *중복확인 상태 reset* — 다시 누르기 전까진 가입 비활성.
 
 ### 5-3. 보안
-- 비밀번호는 평문 저장 금지. **`bcrypt`** (정확한 철자, NOT `bcryptjs`) `bcrypt.hash(plain, 10)` 으로 해시 후 `password_hash`에 저장.
-- 로그인 성공 시 본 PoC에서는 토큰 발급 *생략*. 응답에 `player_id` / `username` / `player_name`만 포함하면 FE가 그것을 sessionStorage/state에 보관.
 
-### 5-4. 정상 동작 확인
-`POST /auth/signup`, `GET /auth/check`, `POST /auth/login`을 curl로 호출하여 정상 응답 직접 확인할 것.
+- 평문 저장 금지. **`bcrypt`** (정확한 철자, `bcryptjs` 아님) `bcrypt.hash(password, 10)` 으로 해시.
+- 로그인 응답에 토큰 X. `player_id` / `username` / `player_name`만 — FE가 sessionStorage/state에 보관.
 
-### 5-5. 📋 BE API Endpoint 목록 — **contract와 정확히 일치 (D66 가드 적용)**
-
-> ⚠️ FE Agent는 **이 목록에 있는 endpoint만** fetch 가능. 다른 path를 자체 발명해서 fetch하면 `FE_CONTRACT_DRIFT` 가드가 즉시 ERROR. BE Agent는 이 목록의 모든 endpoint를 빠짐없이 mount해야 ContractSync PASS.
-
-#### Endpoint 인덱스
+### 5-4. BE Endpoint 5종 — contract와 정확히 일치 (D66 가드)
 
 | # | Endpoint | Method | 핵심 |
 |---|---|---|---|
 | 1 | `/api/v1/auth/signup` | POST | 회원가입 + 중복 체크 + bcrypt 해시 |
-| 2 | `/api/v1/auth/check` | GET | username 중복 여부만 |
+| 2 | `/api/v1/auth/check` | GET | username 중복 여부 |
 | 3 | `/api/v1/auth/login` | POST | bcrypt.compare + 세션 정보 응답 |
-| 4 | `/api/v1/game/result` | POST | 게임 결과 저장 + is_best 계산 |
-| 5 | `/api/v1/game/best` | GET | 개인 최고점수 조회 + 이력 없으면 default |
+| 4 | `/api/v1/game/result` | POST | 결과 저장 + is_best 계산 |
+| 5 | `/api/v1/game/best` | GET | 개인 최고 + 이력 없으면 default |
 
-#### 5-5-1. `POST /api/v1/auth/signup` — 처리 흐름 (반드시 이 순서)
+> ⚠️ FE는 이 목록의 path만 fetch. 다른 path 발명 시 `FE_CONTRACT_DRIFT` ERROR. BE는 5개 모두 mount해야 ContractSync PASS.
 
-1. body 파싱: `{username, password, player_name}` — 누락 시 `400 {success:false, error:"Missing required fields"}`
-2. username 정규식 `/^[a-zA-Z0-9_]{4,16}$/` 검증 (영문/숫자/언더스코어, 시드 `demo_user`가 통과해야 함) — 실패 시 `400 {error:"Invalid username format"}`
-3. password 정규식 `8자 이상 + 영문/숫자 혼합` 검증 — 실패 시 `400 {error:"Password too short or invalid"}`
-4. player_name 길이 2~12자 검증 (한글 허용, `String#length` 기준) — 실패 시 `400`
-5. `SELECT id FROM player_users WHERE username=?` — 이미 있으면 `409 {error:"Username already exists"}`
-6. `bcrypt.hash(password, 10)` (정확한 패키지 — `bcryptjs` 금지)
+#### 5-5-1. `POST /api/v1/auth/signup` (반드시 이 순서)
+
+1. body `{username, password, player_name}` 누락 → `400 {success:false, error:"Missing required fields"}`
+2. username 정규식 `/^[a-zA-Z0-9_]{4,16}$/` (underscore 포함, 시드 `demo_user` 통과 필수) → 실패 `400 {error:"Invalid username format"}`
+3. password 정규식 `8자 이상 + 영문+숫자 혼합` → 실패 `400 {error:"Password too short or invalid"}`
+4. player_name 길이 2~12 (`String#length`) → 위반 `400`
+5. `SELECT id FROM player_users WHERE username=?` → 있으면 `409 {error:"Username already exists"}`
+6. `bcrypt.hash(password, 10)` (정확한 패키지)
 7. `INSERT INTO player_users (username, password_hash, player_name) VALUES (?, ?, ?)`
 8. `201 {success:true, data:{id:insertId, username, player_name}}`
 
-#### 5-5-2. `GET /api/v1/auth/check?username=<string>` — 처리 흐름
+#### 5-5-2. `GET /api/v1/auth/check?username=<string>`
 
-1. query.username 누락 또는 형식 위반 → `400 {error:"Invalid username"}`
-2. `SELECT id FROM player_users WHERE username=?` 1개 row 조회
-3. row 있으면 `exists:true`, 없으면 `exists:false`
-4. `200 {success:true, data:{exists:boolean}}`
+1. query.username 누락/형식 위반 → `400 {error:"Invalid username"}`
+2. `SELECT id FROM player_users WHERE username=?`
+3. `200 {success:true, data:{exists:boolean}}`
 
-#### 5-5-3. `POST /api/v1/auth/login` — 처리 흐름
+#### 5-5-3. `POST /api/v1/auth/login`
 
-1. body 파싱: `{username, password}` — 누락 시 `400`
+1. body `{username, password}` 누락 → `400`
 2. `SELECT id, username, password_hash, player_name FROM player_users WHERE username=?`
 3. row 없으면 → `401 {success:false, error:"Invalid username or password"}` (계정 존재 누설 방지)
-4. `bcrypt.compare(password, row.password_hash)` → false면 같은 `401`
+4. `bcrypt.compare(password, row.password_hash)` false → 같은 `401`
 5. `200 {success:true, data:{player_id:row.id, username, player_name}}`
 
-#### 5-5-4. `POST /api/v1/game/result` — 처리 흐름 (⚠️ datetime 변환 필수)
+#### 5-5-4. `POST /api/v1/game/result` (⚠️ datetime 변환 필수)
 
-1. body 파싱: `{player_id, stage, score, weapon_used, play_duration, pattern_seed, play_time}` — 누락 시 `400`
-2. stage 1~5 / score≥0 / play_duration≥0 / weapon_used ∈ `['holy_sword','fire_magic','thunder_lance','holy_light']` 검증 — 위반 시 `400`
-3. **⚠️ `play_time` 변환** (필수, 누락 시 MySQL `ER_TRUNCATED_WRONG_VALUE` 500):
-   ```js
-   const mysqlTime = new Date(play_time).toISOString().slice(0, 19).replace('T', ' ');
-   // ISO 8601 ('YYYY-MM-DDTHH:MM:SS.sssZ') → MySQL DATETIME ('YYYY-MM-DD HH:MM:SS')
-   ```
-4. `SELECT MAX(score) FROM game_results WHERE player_id=?` 으로 현재 best 조회 (없으면 0)
-5. `score > currentBest`면 `is_best=1`. 같은 player의 기존 `is_best=1` row를 `UPDATE ... SET is_best=0`
-6. `INSERT INTO game_results (player_id, stage, score, weapon_used, play_duration, pattern_seed, is_best, play_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)` — pattern_seed는 nullable
+1. body `{player_id, stage, score, weapon_used, play_duration, pattern_seed, play_time}` 누락 → `400`
+2. stage 1~5 / score≥0 / play_duration≥0 / weapon_used ∈ `['holy_sword','fire_magic','thunder_lance','holy_light']` → 위반 `400`
+3. **`play_time` 변환** (필수): `new Date(play_time).toISOString().slice(0,19).replace('T',' ')` — 안 하면 `ER_TRUNCATED_WRONG_VALUE` 500
+4. `SELECT MAX(score) FROM game_results WHERE player_id=?` (없으면 0)
+5. `score > currentBest`면 `is_best=1` + 같은 player 기존 `is_best=1` row를 `UPDATE ... SET is_best=0`
+6. `INSERT INTO game_results (player_id, stage, score, weapon_used, play_duration, pattern_seed, is_best, play_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 7. `201 {success:true, data:{result_id:insertId, is_best}}`
 
-#### 5-5-5. `GET /api/v1/game/best?player_id=<integer>` — 처리 흐름 (⚠️ default 값 필수)
+#### 5-5-5. `GET /api/v1/game/best?player_id=<integer>` (⚠️ default 필수)
 
 1. query.player_id 누락/숫자 아님 → `400`
 2. `SELECT score, stage, weapon_used FROM game_results WHERE player_id=? AND is_best=1 ORDER BY score DESC LIMIT 1`
-3. **⚠️ row 없으면** (이력 X) → `200 {success:true, data:{best_score:0, stage_reached:0, weapon_used:'none'}}` *(null 반환 금지 — contract type 유지)*
+3. row 없으면 → `200 {success:true, data:{best_score:0, stage_reached:0, weapon_used:'none'}}` *(null 반환 금지 — contract type 유지)*
 4. row 있으면 → `200 {success:true, data:{best_score:row.score, stage_reached:row.stage, weapon_used:row.weapon_used}}`
 
-> ⚠️ **PostTest 시나리오 안정성 — 시드 best 보존 (CodeChecker가 router_details.test_scenarios 작성 시 *반드시* 적용)**
-> PostTest는 `api_contract.endpoints` 순서대로 endpoint × 시나리오를 *동일 컨테이너/DB 인스턴스*에 직렬 실행. 즉 `game/result` POST 시나리오가 *시드(score=500)보다 큰 score*를 보내면 그 row가 `is_best=1`이 되고, 곧이어 실행되는 `game/best` GET 시나리오가 그 새 row를 반환 → 시드 검증 시나리오 mismatch FAIL.
-> **룰:**
-> - `game/result` POST의 `test_scenarios`는 *모두 시드값(500)보다 낮은 score만* 사용 (예: `score=100` valid_save, `score=200` another_save). 절대 500 이상 금지.
-> - `game/best` GET의 `test_scenarios`는 시드를 *그대로* 검증 — `expect_response_subset: {data: {best_score: 500, stage_reached: 1, weapon_used: "holy_sword"}}` 만 권장 (가변 필드는 빼라). missing_player_id / empty_history(다른 player_id) 시나리오도 OK.
-> - 일반 원칙: *집계 endpoint (best/top/latest 등)는 시드를 검증* + *그 시드를 갈아치울 수 있는 다른 endpoint의 시나리오는 시드보다 작은 값만* — 시나리오 간 *상태 충돌* 차단.
+> ⚠️ **PostTest 시나리오 안정성 — 시드 best 보존 (CodeChecker가 test_scenarios 작성 시 *필수*)**
+> PostTest는 endpoint × 시나리오를 *동일 컨테이너/DB*에 직렬 실행. `game/result` POST가 시드(500)보다 큰 score를 넣으면 is_best 갱신 → 직후 `game/best` GET 시나리오가 시드 mismatch FAIL.
+> **룰:** `game/result` 시나리오 score는 *모두 500 미만* (예: 100, 200). `game/best` 시나리오는 시드 그대로 검증 (`{data:{best_score:500, stage_reached:1, weapon_used:"holy_sword"}}`). 일반 원칙: *집계 endpoint(best/top/latest)는 시드 검증, 그 시드를 갈아치울 다른 endpoint 시나리오값은 시드보다 작게*.
 
-### 5-6. 중복확인 (`/auth/check`) 구현 상세
+### 5-6. 중복확인 FE 흐름
 
-- Method: **GET** (query string, 부작용 없음)
-- BE 핸들러: `SELECT id FROM player_users WHERE username = ?` 1개 row 존재 여부만 응답
-- FE 흐름:
-  1. 사용자가 ID 입력
-  2. 클라이언트 검증 PASS면 "중복확인" 버튼 enabled
-  3. 클릭 → `GET /api/v1/auth/check?username=<encoded>` 호출
-  4. 응답 `exists:false` → 사용 가능 메시지 표시 + `usernameAvailable=true` state set
-  5. 응답 `exists:true` → 이미 사용중 메시지 표시 + `usernameAvailable=false`
-  6. ID 입력 변경 시 다시 `usernameChecked=false`로 reset
+1. ID 입력 → 클라이언트 검증 PASS → "중복확인" 버튼 enabled
+2. 클릭 → `GET /api/v1/auth/check?username=<encoded>`
+3. `exists:false` → 사용 가능 메시지 + `usernameAvailable=true`
+4. `exists:true` → 이미 사용중 + `usernameAvailable=false`
+5. ID 변경 시 `usernameChecked=false` reset
 
 ---
 
 ## 6. 화면 / 그래픽 규격
 
-- 캔버스 크기: **1000 × 750 px 고정**
-- 주인공: **흰색 원**
-- 적: **세모**, 색깔은 자기가 장비한 무기 색과 동일
+- 캔버스: **1000 × 750 px 고정**
+- 주인공: 흰색 원
+- 적: 세모, 색깔은 자기 장비 무기 색과 동일
 
 ---
 
-## 7. 무기 4종 명세
+## 7. 무기 4종
 
-| # | 무기 | 식별자 | 자원 | 발사 패턴 | 권장 색상 (HEX) |
+| # | 무기 | 식별자 | 자원 | 발사 패턴 | 색상 |
 |---|---|---|---|---|---|
-| 1 | 성검 | `holy_sword` | 무제한 | 직선 단발 | `#FFD700` (황금색) |
-| 2 | 불꽃 마법 | `fire_magic` | MP 5 | 부채꼴 범위 | `#FF3B30` (빨강) |
-| 3 | 번개 창 | `thunder_lance` | MP 3 | 관통 고속 직선 | `#A347FF` (보라) |
-| 4 | 성스러운 빛 | `holy_light` | MP 8 | 360° 전방향 | `#33E0E0` (청록) |
+| 1 | 성검 | `holy_sword` | 무제한 | 직선 단발 | `#FFD700` |
+| 2 | 불꽃 마법 | `fire_magic` | MP 5 | 부채꼴 범위 | `#FF3B30` |
+| 3 | 번개 창 | `thunder_lance` | MP 3 | 관통 고속 직선 | `#A347FF` |
+| 4 | 성스러운 빛 | `holy_light` | MP 8 | 360° 전방향 | `#33E0E0` |
 
-> 4색 모두 서로 달라야 하며, **주인공 색(흰색)과도 겹치지 않을 것**.
-> 자원이 부족하면 해당 무기는 발사 불가, 성검은 항상 사용 가능.
+> 4색은 서로 다르고 주인공 흰색과도 안 겹침. 자원 부족 시 발사 불가, 성검은 항상 가능.
 
 ---
 
 ## 8. 스테이지
 
-| Stage | 테마 | 전환 조건 |
+| Stage | 테마 | 전환 |
 |---|---|---|
-| 1 | 마법의 숲 | 해당 스테이지 점수 **1000점 누적** 시 다음 단계 |
-| 2 | 저주의 늪 | 〃 |
-| 3 | 용암 화산 | 〃 |
-| 4 | 암흑 성채 | 〃 |
-| 5 | 마왕의 탑 | **최종 단계, 추가 전환 없음** |
+| 1 | 마법의 숲 | 1000점 누적 |
+| 2 | 저주의 늪 | 1000점 누적 |
+| 3 | 용암 화산 | 1000점 누적 |
+| 4 | 암흑 성채 | 1000점 누적 |
+| 5 | 마왕의 탑 | 최종, 전환 없음 |
 
-- 스테이지 선택 UI는 두지 않고, **무조건 Stage 1부터 시작**.
-- 스테이지별 배경 그래픽을 서로 다르게 적용.
-
----
-
-## 9. 적(Enemy) 명세
-
-### 9-1. 종류
-- **총 4종**. 각 적은 **무기 4종 중 하나와 1:1로 매핑**되어 자기 무기를 들고 등장.
-- 스폰 시 4종 중 하나가 무작위 선택.
-- **적 색깔 = 그 적이 장비한 무기 색깔**. 모든 적은 반드시 §7 표의 4색 중 한 가지를 갖는다.
-
-### 9-2. 이동 패턴 (스폰 시 아래 3종 중 1개를 무작위 부여)
-1. **직선 하강**: 화면 상단에서 일정 속도로 아래로 내려옴.
-2. **지그재그 하강**: 좌우로 sin 곡선을 그리며 내려옴.
-3. **타원 편대 하강**: 여러 마리가 줄지어 타원형 궤적을 그리며 진입 후 하강.
-
-### 9-3. 공격 패턴
-- 적은 **자기 무기로 주인공을 향해 발사**한다.
-- 발사 주기:
-  - 성검 적: 1.2초마다 직선 1발
-  - 불꽃 적: 2.0초마다 부채꼴 3발
-  - 번개 적: 1.5초마다 고속 관통 1발
-  - 성광 적: 3.0초마다 360° 8방향
-- **탄환 색 = 적의 무기 색**.
-- 적은 화면 상단 진입 후 **0.5초 유예** 뒤부터 발사 시작 (스폰 즉시 피탄 방지).
+- Stage 선택 UI 없이 **무조건 1부터 시작**. 스테이지별 배경 그래픽 다르게.
 
 ---
 
-## 10. 주인공 HP / 충돌 / 게임오버
+## 9. 적
+
+- **4종**, 각 적은 무기 1종과 1:1 매핑 (자기 무기 들고 등장). 색깔 = 그 무기 색.
+- 스폰 시 4종 중 무작위 1.
+- 이동 패턴 (스폰 시 3종 중 무작위 1):
+  1. 직선 하강
+  2. 지그재그 (sin 곡선)
+  3. 타원 편대 (여러 마리 줄지어)
+- 공격 패턴 (자기 무기로 주인공 향해 발사, 탄환 색 = 무기 색):
+  - 성검 적: 1.2s마다 직선 1발
+  - 불꽃 적: 2.0s마다 부채꼴 3발
+  - 번개 적: 1.5s마다 관통 1발
+  - 성광 적: 3.0s마다 360° 8방향
+- 화면 상단 진입 후 **0.5초 유예** 뒤 발사 시작 (스폰 즉시 피탄 방지).
+
+---
+
+## 10. 주인공 HP / 충돌
 
 | 항목 | 값 |
 |---|---|
-| 초기 HP | **100** |
-| 적 탄환 피탄 | **-10** |
-| 적과 본체 충돌 | **-10** |
-| 게임오버 조건 | **HP ≤ 0** |
+| 초기 HP | 100 |
+| 적 탄환 피탄 | -10 |
+| 적과 본체 충돌 | -10 |
+| 게임오버 | HP ≤ 0 → 즉시 ResultPage |
 
-- HP는 화면 상단에 게이지로 표시.
-- 게임오버 시 즉시 `ResultPage`로 이동.
+HP는 화면 상단 게이지 표시.
 
 ---
 
-## 10-bis. 키보드 입력 매핑 (필수 — 누락 시 게임 조작 불가)
-
-⚠️ **반드시 GamePage.jsx에 구현**. 입력 listener 없으면 화면만 렌더되고 *동작 안 함* (이전 cycle 실제 발생).
+## 10-bis. 키보드 입력 (GamePage.jsx 필수 — 누락 시 조작 불가)
 
 | 키 | 동작 |
 |---|---|
-| ← ↑ ↓ → (화살표) | 주인공 이동 (눌린 동안 해당 방향, 대각선 동시 가능) |
-| **Space** | **현재 무기로 발사** — MP 부족 시 발사 안 됨, 성검은 항상 가능 |
-| 1 / 2 / 3 / 4 | 무기 슬롯 전환 (1=성검, 2=불꽃, 3=번개, 4=성스러운 빛) |
-| ESC | 게임 일시정지 / 재개 토글 |
+| ← ↑ ↓ → | 주인공 이동 (눌린 동안, 대각선 동시 가능) |
+| **Space** | 현재 무기 발사 — MP 부족 시 불가, 성검은 항상 가능 |
+| 1 / 2 / 3 / 4 | 무기 슬롯 전환 |
+| ESC | 일시정지 토글 |
 
-### 구현 패턴 (필수 골격)
+### 구현 골격 (필수)
 
 ```jsx
 import { useEffect, useRef, useState } from 'react';
 
-function GamePage() {
-  const keysRef = useRef(new Set());          // 현재 눌린 키 집합
-  const [paused, setPaused] = useState(false);
-  // ... player/enemies/bullets state ...
+const keysRef = useRef(new Set());
+const [paused, setPaused] = useState(false);
 
-  useEffect(() => {
-    const onDown = (e) => {
-      if (e.code === 'Escape') { setPaused((p) => !p); return; }
-      keysRef.current.add(e.code);
-      if (e.code === 'Space') {
-        e.preventDefault();                    // page scroll 방지
-        fireWeapon();                          // 발사 즉시 1회
-      }
-      if (['Digit1','Digit2','Digit3','Digit4'].includes(e.code)) {
-        switchWeapon(e.code.replace('Digit',''));
-      }
-    };
-    const onUp = (e) => keysRef.current.delete(e.code);
-    window.addEventListener('keydown', onDown);
-    window.addEventListener('keyup', onUp);
-    return () => {                              // cleanup 필수 (메모리 누수 + 다중 등록 방지)
-      window.removeEventListener('keydown', onDown);
-      window.removeEventListener('keyup', onUp);
-    };
-  }, []);
-
-  // 게임 루프 안에서 keysRef 확인하여 이동:
-  // if (keysRef.current.has('ArrowLeft'))  player.x -= speed * dt;
-  // if (keysRef.current.has('ArrowRight')) player.x += speed * dt;
-  // ...
-}
+useEffect(() => {
+  const onDown = (e) => {
+    if (e.code === 'Escape') { setPaused(p => !p); return; }
+    keysRef.current.add(e.code);
+    if (e.code === 'Space') { e.preventDefault(); fireWeapon(); }
+    if (['Digit1','Digit2','Digit3','Digit4'].includes(e.code)) {
+      switchWeapon(e.code.replace('Digit',''));
+    }
+  };
+  const onUp = (e) => keysRef.current.delete(e.code);
+  window.addEventListener('keydown', onDown);
+  window.addEventListener('keyup', onUp);
+  return () => {                          // cleanup 필수
+    window.removeEventListener('keydown', onDown);
+    window.removeEventListener('keyup', onUp);
+  };
+}, []);
+// 게임 루프(requestAnimationFrame)에서 keysRef.current.has('ArrowLeft') 등 확인 후 player 이동
 ```
 
-핵심 룰:
-- `keydown`은 *눌린 즉시* 한 번 + auto-repeat. 이동은 *키 hold* 패턴이므로 `keysRef`(Set)에 추가하고 게임 루프(requestAnimationFrame)에서 확인.
-- Space는 **즉시 발사** (auto-repeat 활용 OK — 연사). 단 자원(MP) 부족 검사는 fireWeapon 내부.
-- `e.preventDefault()` for Space — 브라우저 페이지 scroll 방지.
-- `useEffect` cleanup으로 listener 해제 — 컴포넌트 언마운트 시 또는 dependency 변경 시 stale listener 제거.
-- 발사한 탄환은 player 위치에서 spawn, weapon별 색상/패턴 적용 (§7 표 참조).
+핵심: 이동은 *키 hold* 패턴 → `keysRef`(Set) + 게임 루프에서 확인. Space는 즉시 발사(auto-repeat OK, MP 검사는 fireWeapon 내부). `e.preventDefault()`로 page scroll 방지. cleanup으로 listener 해제 (stale listener 방지).
 
 ---
 
-## 11. 게임 플레이 요약
+## 11. 결과 화면 / 리포트
 
-1. 주인공: 흰색 원
-2. 적: 세모 (색은 무기 색과 동일)
-3. 적 종류 4가지 = 무기 4종 1:1 매핑
-4. 적은 자기 무기로 공격, 이동 패턴은 §9-2의 3종 중 하나
-5. 점수 1000점 단위로 스테이지 전환 (Stage 5에서는 전환 없음)
-6. HP 0이면 게임오버 → ResultPage
-7. 정상 종료 시(Stage 5 클리어 또는 게임오버) **실제 플레이 데이터 기반 리포트** 표시
-
----
-
-## 12. 결과 화면 / 리포트
-
-`ResultPage.jsx`에서 다음 정보 표시:
+`ResultPage.jsx` 표시 항목:
 - 최종 점수, 도달 스테이지, 사용 무기, 플레이 시간
 - 피탄 횟수, 충돌 횟수, 격파 적 수
-- 개인 최고 점수와의 비교 (`GET /api/v1/game/best?player_id=<id>` 호출 결과)
+- 개인 최고와 비교 (`GET /api/v1/game/best?player_id=<id>` 호출 결과)
 
-### 12-1. `report.html` 다운로드 (브라우저 환경)
-
-브라우저 FE는 로컬 파일 시스템 직접 write 불가. 대신 *Blob + download attribute* 패턴 사용:
+### 11-1. `report.html` 다운로드 (Blob + download attribute)
 
 ```jsx
-const html = `<!DOCTYPE html><html><body><h1>Result</h1>... </body></html>`;
+const html = `<!DOCTYPE html><html><body><h1>Result</h1>...</body></html>`;
 const blob = new Blob([html], { type: 'text/html' });
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
-a.href = url;
-a.download = 'report.html';
-a.click();
+a.href = url; a.download = 'report.html'; a.click();
 URL.revokeObjectURL(url);
 ```
 
-→ 사용자의 브라우저 다운로드 폴더에 `report.html` 저장됨. 외부 라이브러리 불필요.
-
----
-
-## 13. 완료 조건 (체크리스트)
-
-- [ ] 로컬에서 BE / FE 동시 실행 확인
-- [ ] `POST /api/v1/auth/signup` 정상 응답 (201 / 400 / 409) 직접 확인
-- [ ] `GET /api/v1/auth/check?username=...` 정상 응답 (200 `{exists:boolean}`) 직접 확인
-- [ ] `POST /api/v1/auth/login` 정상 응답 (200 / 401) 직접 확인
-- [ ] 회원가입 시 한글 Player Name 저장 확인 (MySQL utf8mb4)
-- [ ] Confirm Password 불일치 시 가입 버튼 비활성 유지 확인
-- [ ] **ID 중복확인 통과 후에만 가입 버튼 활성** 확인
-- [ ] `player_users`, `game_results` 시드 데이터 1건씩 삽입 확인
-- [ ] 게임오버 시 `POST /api/v1/game/result` 호출 + DB 적재 확인
-- [ ] `GET /api/v1/game/best?player_id=...` 으로 최고 점수 조회 확인
-- [ ] 적이 자기 무기로 공격하는지 화면상 확인
-- [ ] 주인공 피탄 / 충돌 시 HP -10 감소 확인
-- [ ] HP 0 도달 시 ResultPage 전환 확인
-- [ ] 게임 종료 후 브라우저에서 `report.html` 다운로드 확인
+브라우저 다운로드 폴더에 저장. 외부 라이브러리 불필요.
