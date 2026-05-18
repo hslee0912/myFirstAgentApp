@@ -255,14 +255,32 @@ expect(container.firstChild).not.toBeNull();   // ← 핵심: non-null DOM
 - CSS-in-JS 라이브러리 없음. 인라인 style / `<style>` 태그 / 별도 `.css` import만.
 - `styled-components`, `@emotion/*`, `tailwindcss`, `clsx`, `classnames` 등 모두 `validateAllowedDeps` ERROR.
 
-## 7-bis. FE 한정 흔한 위반 (common.md §9-bis 참조 + FE 특이)
+## 7-bis. FE 한정 흔한 위반 — *학습 데이터 빈도 높아 자동완성 함정* (round ERROR 0회 목표)
 
-일반 금지 패키지 표는 `rules/common.md` §9-bis 참조. FE 한정 특이:
+> ⚠️ **FE Agent의 system prompt 상단 `🚫 의존성` 카드에 같은 표가 *그대로* prepend된다.** 이 §7-bis는 *왜 금지인지*의 부연 + FE 특이 함정. 표 자체는 system prompt를 우선 참조.
 
-- 라우팅 `react-router-dom` → 단일 페이지 또는 조건부 렌더링으로 처리.
-- 폼 `react-hook-form`, `formik` → `useState`로 직접 controlled form.
-- 아이콘 `react-icons`, `@mui/icons-material` → SVG 인라인 또는 텍스트.
-- **🚫 FE에서 비밀번호 해싱 시도 금지** (`bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API). 평문 그대로 fetch body로 BE에 전송 (HTTPS가 전송 구간 담당). BE가 bcrypt로 해시 (`rules/be.md §5`). FE 사전 해시는 *해시값=비밀번호* 안티패턴 + DB가 *해시의 해시* 보관.
+일반 금지 패키지 표는 `rules/common.md` §9-bis + `agents/fe_agent.js` buildSystemPrompt 상단 카드 참조. *FE에서 LLM이 학습 분포 따라 가장 자주 시도하는 5종*:
+
+| 함정 패키지 | 시도 동기 (학습 빈도) | ✅ 대체 (allowedDeps만 사용) |
+|---|---|---|
+| `react-router-dom` | "여러 페이지 = 라우터" 학습 강함 | `useState`로 현재 페이지 state 관리 + 조건부 렌더링. 예: `const [page, setPage] = useState('login'); return page==='login' ? <Login/> : <Game/>` |
+| `axios` | "HTTP 호출 = axios" 패턴 강함 | 브라우저 builtin `fetch`. `await fetch(url, {method, headers, body})` — import 자체 불필요 |
+| `react-hook-form` / `formik` | form 다루는 React 코드 = 거의 항상 둘 중 하나 | `useState`로 controlled input. `<input value={u} onChange={e=>setU(e.target.value)} />` |
+| `lodash` / `date-fns` | util 함수 학습 빈도 1위 | `Array.prototype.{map,filter,reduce}`, `Date` builtin. lodash debounce는 직접 `setTimeout` |
+| `styled-components` / `@emotion/*` | React + 스타일 = CSS-in-JS 학습 강함 | 인라인 `style={{color:'red'}}` 또는 `.css` import |
+
+### 자가 점검 절차 (응답 emit 전 *마지막* 단계)
+
+1. 응답에 포함될 모든 `.jsx`/`.js` 파일에서 `^import\b` 라인을 *전부* 모아본다.
+2. 각 라인의 from 뒤 모듈명을 *눈으로* 확인:
+   - `from './...'` / `from '../...'` → OK (상대경로)
+   - `from 'react'` / `from 'react-dom/client'` / `from 'react-dom'` → OK
+   - 그 외 → **emit 전에 위 표의 대체 코드로 치환**.
+3. *retry로 풀리는 게 정상 경로가 아니다*. 처음부터 안 쓰는 것이 비용·시간 절감.
+
+### FE 한정 비밀번호 처리
+
+**🚫 FE에서 비밀번호 해싱 시도 금지** (`bcrypt`, `bcryptjs`, `crypto-js`, Web Crypto API). 평문 그대로 fetch body로 BE에 전송 (HTTPS가 전송 구간 담당). BE가 bcrypt로 해시 (`rules/be.md §5`). FE 사전 해시는 *해시값=비밀번호* 안티패턴 + DB가 *해시의 해시* 보관.
 
 ## 8. 보호 파일 (FE) — common.md 보호 파일 섹션 참조
 
