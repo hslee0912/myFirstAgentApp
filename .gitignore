@@ -17,3 +17,7 @@ FE/dist/
 BE/dist/
 FE/coverage/
 BE/coverage/
+
+# D87 (2026-05-18): eslint --cache 결과물. retry round에서 변경 없는 파일 skip.
+FE/.eslintcache
+BE/.eslintcache

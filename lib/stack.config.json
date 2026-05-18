@@ -12,7 +12,7 @@
         "type": "command_batch",
         "label": "FE eslint",
         "command_prefix": ["npx", "--no-install", "eslint"],
-        "batch_args": ["src/", "--ext", ".js,.jsx", "--format=json"],
+        "batch_args": ["src/", "--ext", ".js,.jsx", "--cache", "--cache-location", ".eslintcache", "--format=json"],
         "batch_parser": "eslint",
         "per_file_pattern": {
           "rootDir": "src",
@@ -21,8 +21,8 @@
         }
       },
       "stage2": {
-        "type": "command",
-        "command": ["npm", "run", "build", "--silent"]
+        "_doc": "D86 (2026-05-18): FE vite build skip — Phase 8 docker compose --build가 동일 검증 (지연되지만 확실). -10~15s/cycle.",
+        "type": "skip"
       },
       "stage3": {
         "type": "command_batch",
@@ -90,7 +90,7 @@
         "type": "command_batch",
         "label": "BE eslint",
         "command_prefix": ["npx", "--no-install", "eslint"],
-        "batch_args": ["src/", "--ext", ".js", "--format=json"],
+        "batch_args": ["src/", "--ext", ".js", "--cache", "--cache-location", ".eslintcache", "--format=json"],
         "batch_parser": "eslint",
         "per_file_pattern": {
           "rootDir": "src",

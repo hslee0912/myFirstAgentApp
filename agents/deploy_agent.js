@@ -408,7 +408,9 @@ async function run({ task_id }) {
   }
 
   // up --build [--wait when v2]
-  const upArgs = ['up', '--build', '--detach'];
+  // D88 (2026-05-18): --pull never — base image (node:20) fresh check skip.
+  //   처음 한 번만 pull, 그 뒤는 항상 캐시 사용. Anthropic API와 무관하니 -0~2s/cycle.
+  const upArgs = ['up', '--build', '--detach', '--pull', 'never'];
   const detected = detectComposeCmd();
   if (detected.v2) upArgs.push('--wait');
   const upInv = composeInvoke(...upArgs);
