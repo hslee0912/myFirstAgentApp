@@ -196,6 +196,62 @@ express, mysql2, bcrypt, cors, dotenv, jest, supertest
 
 - try/catch로 잡고, 5xx로 응답할 때는 `{ success: false, error: '...' }` 형식 유지.
 - 클라이언트 에러(4xx)는 구체적 메시지, 서버 에러(5xx)는 일반화된 메시지 (스택 트레이스 노출 금지).
+- ⚠️ `catch (err)` 안에 **반드시 `console.error('[<endpoint> error]', err);`** 추가 — 500 원인 추적 가능. 침묵 catch 금지.
+
+## 6-bis. 🚫 API 통신 흔한 함정 — 모든 endpoint에 *반드시* 적용 (PostTest 랜덤 fail 방지)
+
+> ⚠️ **rules에 명시해도 LLM이 자주 어기는 4가지 — 매 endpoint 핸들러 작성 직전 self-check.**
+
+### (1) datetime은 MySQL 형식으로 변환 후 INSERT
+
+MySQL `DATETIME` 컬럼은 `'YYYY-MM-DD HH:MM:SS'` 형식만 받음. FE가 보내는 ISO 8601 (`new Date().toISOString()` → `'2026-05-18T07:30:45.123Z'`)을 *그대로* INSERT하면 `ER_TRUNCATED_WRONG_VALUE` → 500.
+
+```js
+// ✅ 반드시 변환
+const mysqlTime = new Date(play_time).toISOString().slice(0, 19).replace('T', ' ');
+await pool.execute('INSERT ... VALUES (..., ?)', [..., mysqlTime]);
+
+// ❌ 그대로 넣음 — 500
+await pool.execute('INSERT ... VALUES (..., ?)', [..., play_time]);
+```
+
+### (2) response data 필드에 `null` 금지 — contract type 유지
+
+contract response schema가 `type: integer` / `string`이라 선언했으면 응답에 `null` 넣지 말 것. 빈 이력·미존재 경우엔 **default 값으로 채울 것** (정수=0, 문자열=`'none'`/`''`).
+
+```js
+// ✅ default 값
+if (rows.length === 0) return { best_score: 0, stage_reached: 0, weapon_used: 'none' };
+
+// ❌ null — PostTest schema 검증 fail
+if (rows.length === 0) return { best_score: 0, stage_reached: null, weapon_used: null };
+```
+
+### (3) HTTP status code 정확성 (contract와 일치)
+
+| 상황 | status | 응답 body |
+|---|---|---|
+| 신규 리소스 생성 (INSERT 성공) | **201** | `{success:true, data:{...}}` |
+| 정상 조회/처리 (GET, login 등) | **200** | `{success:true, data:{...}}` |
+| 입력 검증 실패 (필수 필드 누락, 형식 위반, enum 미일치, 범위 위반) | **400** | `{success:false, error:"<구체적 메시지>"}` |
+| 인증 실패 (잘못된 username/password — 어느 쪽이 틀렸는지 누설 X) | **401** | `{success:false, error:"Invalid username or password"}` |
+| 충돌 (UNIQUE 위반 — 이미 가입된 username 등) | **409** | `{success:false, error:"Username already exists"}` |
+| 서버 내부 throw (catch 안) | **500** | `{success:false, error:"Internal server error"}` |
+
+POST endpoint가 INSERT 성공 시 200 응답하면 PostTest는 *contract의 201과 mismatch*로 FAIL. 항상 contract의 declared statuses 와 정확히 일치.
+
+### (4) error 응답 형식 일관 — `{success:false, error:string}`
+
+쓰는 message는 짧고 사용자 노출 가능한 수준 (스택 트레이스 X). FE가 `if (!json.success) showError(json.error)` 로 일관 처리할 수 있어야.
+
+### (5) self-check (응답 emit 전)
+
+각 endpoint 핸들러 작성 후 다음을 점검:
+- [ ] 모든 throw 경로에 적절한 status code (400/401/409/500) 매핑됐는가
+- [ ] body 받는 모든 datetime 필드를 MySQL 형식으로 변환했는가
+- [ ] response data 어디에도 `null`/`undefined` 가 새지 않는가 (default 값 채움)
+- [ ] catch 안에 console.error 로깅 있는가
+- [ ] contract의 declared statuses 와 모든 응답이 일치하는가
 
 ## 7. 테스트 (BE) — common.md §5 참조 + BE 한정 룰
 
