@@ -107,6 +107,10 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 - \`api_contract.endpoints\`의 모든 \`name\`이 \`router_details\`에 1:1로 있어야 한다. 누락 시 Phase 9 PostTest가 throw.
 - \`name\`은 snake_case. path를 기준으로 자연스러운 이름 (\`/auth/signup\` → \`auth_signup\`).
 - **금지 형식 (Phase 9가 처리 못함)**: \`response\` (단수), \`success/error_cases\` 분리 구조, \`status_code\`를 schema 안에 두는 형식, endpoint detail을 \`api_contract\` 자체에 inline 두는 형식. **반드시 index + router_details 분리**.
+- ⚠️ D68: 각 endpoint의 router_details에 권장 — \`test_scenarios\` 배열 (PostTest 정밀 검증).
+  형식: \`[{ name, request_body|request_query, expect_status, expect_response_subset }]\`. PostTest가 각 시나리오 모두 실행해 BE 실제 동작 (validation/edge case/error) 검증.
+  권장 패턴: POST → valid_input(201), missing_field(400), duplicate(409); GET → valid_query(200), missing_query(400), empty_result(200, default 응답); 인증 → valid_credentials(200), invalid_credentials(401).
+  미정의 시 기존 동작(request.example로 positive case 1번)만 검증 — 약함.
 - base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
