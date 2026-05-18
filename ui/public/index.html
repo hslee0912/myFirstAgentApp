@@ -152,6 +152,33 @@
       font-weight: 600;
       animation: pulse-running 1.4s ease-in-out infinite;
     }
+    /* D76 (2026-05-18): RUNNING row 옆 logTail 기반 inline 진행 텍스트 + disclosure */
+    .run-progress-inline {
+      margin-left: 8px;
+      color: var(--warn);
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 500;
+      opacity: 0.85;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 480px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .run-progress-log-block {
+      background: rgba(245, 158, 11, 0.05);
+      border-left: 3px solid var(--warn);
+      margin: 2px 0 6px 0;
+      padding: 6px 10px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      max-height: 240px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      color: #ccc;
+    }
     pre {
       background: var(--panel-2);
       border: 1px solid var(--border);
@@ -1230,9 +1257,18 @@ function renderTopErrorSummary(decision, states, runs) {
   return '';
 }
 
-/** Render the run timeline (Layer 2) — each row coloured by severity + area chip + expand. */
-function renderTimeline(runs) {
+/** Render the run timeline (Layer 2) — each row coloured by severity + area chip + expand.
+ *  D76 (2026-05-18): liveLogLastLine / liveLogTailRecent를 가장 최근 RUNNING run row에 inject —
+ *  inline 진행 텍스트 + disclosure에 누적 로그 표시.
+ */
+function renderTimeline(runs, liveLogLastLine, liveLogTailRecent) {
   if (!runs || runs.length === 0) return '';
+  // D76: 가장 최근 RUNNING row (id 최대) 1개에만 logTail 표시 — 여러 동시 RUNNING 시 중복 방지.
+  const latestRunningId = (() => {
+    const running = [...runs].filter((r) => r.status === 'RUNNING');
+    if (running.length === 0) return null;
+    return running.reduce((a, b) => (a.id > b.id ? a : b)).id;
+  })();
   const rows = runs.map((r, idx) => {
     const oj = safeJson(r.output_json) || {};
     const area = areaClass(r.agent_name, r.target);
@@ -1300,13 +1336,30 @@ function renderTimeline(runs) {
     const runningTag = r.status === 'RUNNING'
       ? '<span class="loading-dots" style="color: var(--warn); margin-left: 6px;"></span>'
       : '';
+
+    // D76 (2026-05-18): 가장 최근 RUNNING row 옆에 logTail 마지막 라인 inline + 누적 disclosure.
+    // 여러 RUNNING이 동시(Orchestrator + 자식) 일 때 가장 자식(id 최대) row에만 표시 — 중복 방지.
+    let liveInline = '';
+    let liveLogDisclosure = '';
+    if (r.status === 'RUNNING' && r.id === latestRunningId && liveLogLastLine) {
+      liveInline = `<span class="run-progress-inline" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`;
+      if (liveLogTailRecent) {
+        liveLogDisclosure = `
+          <details class="disclosure" data-live="${r.id}">
+            <summary>▼ 진행 로그 (최근 50줄, 펼치기/접기)</summary>
+            <div class="run-progress-log-block">${esc(liveLogTailRecent)}</div>
+          </details>`;
+      }
+    }
+
     return `
       <div class="run-row ${sev}">
         <span class="area-chip ${area}">${esc(r.agent_name)}</span>
         ${tgt}
-        <span>${pill(r.status)}</span>${runningTag}
+        <span>${pill(r.status)}</span>${runningTag}${liveInline}
         <span class="ts">${ts}</span>
       </div>
+      ${liveLogDisclosure}
       ${expandWrapped}`;
   });
   return `<h2 style="margin-top: 14px;">타임라인 (Phase 1~9)</h2><div class="timeline">${rows.join('')}</div>`;
@@ -1315,18 +1368,29 @@ function renderTimeline(runs) {
 /** D35+ (2026-05-14): detail panel 최상단의 "진행 중" 배너.
  *  log_agent_runs에서 status='RUNNING' row가 있으면 그 agent + target을 표시.
  *  여러 RUNNING 동시면 가장 최근(id DESC) 하나만 — orchestrator는 직렬이라 보통 1개.
+ *  D76 (2026-05-18): liveLogLastLine을 ... 옆 inline에, liveLogTailRecent를 disclosure에 표시.
  */
-function renderRunningBanner(runs) {
+function renderRunningBanner(runs, liveLogLastLine, liveLogTailRecent) {
   if (!Array.isArray(runs)) return '';
   // id 가장 큰 RUNNING (가장 최근 시작)
   const running = [...runs].reverse().find((r) => r.status === 'RUNNING');
   if (!running) return '';
   const area = areaClass(running.agent_name, running.target);
   const tgt = running.target ? ` / ${esc(running.target)}` : '';
+  const inline = liveLogLastLine
+    ? `<span class="run-progress-inline" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`
+    : '';
+  const disclosure = liveLogTailRecent
+    ? `<details class="disclosure" style="margin-top:6px;">
+         <summary>▼ 진행 로그 (최근 50줄, 펼치기/접기)</summary>
+         <div class="run-progress-log-block">${esc(liveLogTailRecent)}</div>
+       </details>`
+    : '';
   return `
     <div class="running-banner">
       ▶ <span class="area-chip ${area}">${esc(running.agent_name)}${esc(tgt)}</span>
-      <span>진행 중</span><span class="loading-dots"></span>
+      <span>진행 중</span><span class="loading-dots"></span>${inline}
+      ${disclosure}
     </div>`;
 }
 
@@ -1396,8 +1460,22 @@ async function loadDetail() {
   // 펼친 disclosure가 그대로 살아남는다.
   if (lastDetailTerminal) return;
 
-  const data = await fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`);
+  // D76 (2026-05-18): /api/tasks + /api/run 병렬 fetch — logTail을 RUNNING row에 inject.
+  const [data, runStatus] = await Promise.all([
+    fetchJSON(`/api/tasks/${encodeURIComponent(selectedTaskId)}`),
+    fetchJSON('/api/run').catch(() => ({})),
+  ]);
   const { decision, states, runs, resume } = data;
+
+  // 현재 활성 run의 logTail (현 task와 일치할 때만).
+  const cur = runStatus && runStatus.current;
+  const liveLogTail = (cur && cur.task_id === selectedTaskId && runStatus.running)
+    ? (cur.logTail || '')
+    : '';
+  // 마지막 비어있지 않은 라인 — RUNNING row 옆 inline에 표시.
+  const liveLogLastLine = liveLogTail.split('\n').filter((l) => l.trim()).slice(-1)[0] || '';
+  // 누적 로그 — 마지막 50줄, RUNNING row disclosure body에 표시.
+  const liveLogTailRecent = liveLogTail.split('\n').filter((l) => l.trim()).slice(-50).join('\n');
 
   // 직전 응답과 비교 — RUNNING 중에도 의미 있는 변화가 없으면 re-render skip.
   // runs/states는 timestamp 일부만 fingerprint에 포함 (id+status면 충분).
@@ -1419,6 +1497,8 @@ async function loadDetail() {
     }),
     r: (runs || []).map((r) => [r.id, r.agent_name, r.target, r.status, r.ended_at]),
     re: resume && resume.eligible,
+    // D76: logTail의 마지막 라인 변화 시 re-render — 같은 line 반복이면 skip.
+    lt: liveLogLastLine,
   });
   if (fingerprint === lastDetailHash) return;
   lastDetailHash = fingerprint;
@@ -1427,7 +1507,8 @@ async function loadDetail() {
   let html = '';
 
   // D35+ (2026-05-14): 진행 중 배너 — RUNNING agent run이 있으면 최상단에 펄스 표시.
-  html += renderRunningBanner(runs);
+  // D76 (2026-05-18): liveLogLastLine을 inline 진행 텍스트로 함께 표시.
+  html += renderRunningBanner(runs, liveLogLastLine, liveLogTailRecent);
 
   // (B) "최종 결과" 큰 카드 — verdict + final_result_text를 가장 위에 풀 노출.
   html += renderFinalResultCard(decision, states, runs);
@@ -1461,7 +1542,8 @@ async function loadDetail() {
   }
 
   // Layer 2 — timeline with per-run area chip + severity colour + expand
-  html += renderTimeline(runs);
+  // D76: liveLogTail을 전달해 가장 최근 RUNNING row에 inline 진행 + 누적 disclosure 표시.
+  html += renderTimeline(runs, liveLogLastLine, liveLogTailRecent);
 
   // task_state rows (Lint) with stage_logs disclosure
   html += renderStates(states);
