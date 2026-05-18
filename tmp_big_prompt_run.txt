@@ -78,13 +78,12 @@ myFirstAgentApp/
 
 ### 4-3. 시드 데이터
 - migration에 `INSERT IGNORE`로 시드 1건씩 추가:
-  - `player_users`: `(username='demo_user', password_hash=<'Pass1234'를 bcrypt(rounds=10)로 해시한 60자 결과>, player_name='데모용사')` — **password_hash는 반드시 평문 `Pass1234` 의 실제 bcrypt 해시여야 함**. 임의의 60자 문자열로 채우면 시드 사용자로 login(401) 실패 → PostTest valid_credentials 시나리오가 FAIL.
+  - `player_users`: `(username='demo_user', password_hash='$2b$10$fmKqy9chmRPcdIq6nEbRoeP7bNX7CPQmZ7felu0VOleDBqeUO96Aq', player_name='데모용사')` — **이 60자 hash 문자열을 SQL에 *그대로* 박을 것** (`bcrypt.compareSync('Pass1234', hash) === true` 검증 완료된 실제 hash). LLM이 다른 hash 문자열로 교체하거나 placeholder처럼 보여 자체 생성 시 PostTest valid_credentials 시나리오가 401 fail.
   - `game_results`: `(player_id=1, stage=1, score=500, weapon_used='holy_sword', play_duration=120, pattern_seed='seed_001', is_best=1, play_time=NOW())`
 
 > ⚠️ **시드 정합성 (PostTest fail 방지)** — 시드 row가 BE 핸들러의 validation을 *전부* 통과해야 함:
-> - `username='demo_user'`는 underscore 포함 → username 정규식이 `[a-zA-Z0-9_]{4,16}`여야 통과
-> - `password_hash`는 실제 `Pass1234`의 bcrypt 결과여야 `bcrypt.compare('Pass1234', hash) === true`
-> - 권장: `node -e "console.log(require('bcrypt').hashSync('Pass1234', 10))"` 결과를 그대로 사용
+> - `username='demo_user'`는 underscore 포함 → username 정규식이 `[a-zA-Z0-9_]{4,16}`여야 통과 (§5-5-1 #2 참조)
+> - `password_hash`는 위 표의 정확한 60자 문자열 그대로 — `bcrypt.compareSync('Pass1234', hash) === true` 검증 완료. *예시 같아 보이지만 placeholder 아님, 실제 사용할 hash임.* LLM이 무의식적으로 `$2b$10$N9qo8...` 같은 *예시처럼 보이는 학습 데이터 hash*를 적으면 PostTest login 시나리오가 401 fail.
 
 ---
 
@@ -177,6 +176,13 @@ ID 입력이 변경되면 *중복확인 상태를 reset* — 다시 중복확인
 2. `SELECT score, stage, weapon_used FROM game_results WHERE player_id=? AND is_best=1 ORDER BY score DESC LIMIT 1`
 3. **⚠️ row 없으면** (이력 X) → `200 {success:true, data:{best_score:0, stage_reached:0, weapon_used:'none'}}` *(null 반환 금지 — contract type 유지)*
 4. row 있으면 → `200 {success:true, data:{best_score:row.score, stage_reached:row.stage, weapon_used:row.weapon_used}}`
+
+> ⚠️ **PostTest 시나리오 안정성 — 시드 best 보존 (CodeChecker가 router_details.test_scenarios 작성 시 *반드시* 적용)**
+> PostTest는 `api_contract.endpoints` 순서대로 endpoint × 시나리오를 *동일 컨테이너/DB 인스턴스*에 직렬 실행. 즉 `game/result` POST 시나리오가 *시드(score=500)보다 큰 score*를 보내면 그 row가 `is_best=1`이 되고, 곧이어 실행되는 `game/best` GET 시나리오가 그 새 row를 반환 → 시드 검증 시나리오 mismatch FAIL.
+> **룰:**
+> - `game/result` POST의 `test_scenarios`는 *모두 시드값(500)보다 낮은 score만* 사용 (예: `score=100` valid_save, `score=200` another_save). 절대 500 이상 금지.
+> - `game/best` GET의 `test_scenarios`는 시드를 *그대로* 검증 — `expect_response_subset: {data: {best_score: 500, stage_reached: 1, weapon_used: "holy_sword"}}` 만 권장 (가변 필드는 빼라). missing_player_id / empty_history(다른 player_id) 시나리오도 OK.
+> - 일반 원칙: *집계 endpoint (best/top/latest 등)는 시드를 검증* + *그 시드를 갈아치울 수 있는 다른 endpoint의 시나리오는 시드보다 작은 값만* — 시나리오 간 *상태 충돌* 차단.
 
 ### 5-6. 중복확인 (`/auth/check`) 구현 상세
 

@@ -117,6 +117,7 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
     3. **type 정확성** — \`expect_response_subset\`의 값 타입이 실제 응답 타입과 정확히 일치해야 함 (\`success: true\`는 boolean, \`exists: true\`는 boolean, id는 integer).
     4. **시나리오 간 체이닝 의존 금지** — signup 시나리오가 만든 user를 login 시나리오가 그대로 쓰는 식의 순서 의존 X. 각 시나리오는 독립적으로 PASS 가능해야 함 (시드 사용자나 명시적 setup만 의존).
     5. **subset 검증이 안전한 default** — \`expect_response_subset\`은 *부분 일치*(deep subset)로 검증. 가변 필드를 굳이 명시하지 말고, *확실히 안정된 필드만* 적어라 (예: \`{success: true, data: {username: 'demo_user'}}\` 정도. \`data.id\`는 빼라).
+    6. **집계 endpoint(best/top/latest/max 등) 시드 보존** — PostTest는 endpoint × 시나리오를 *동일 컨테이너/DB*에 직렬 실행. *집계 결과를 갈아치울 수 있는 endpoint* (예: \`POST /game/result\` → is_best=1 갱신)의 시나리오는 *시드값보다 작은 값만* 사용. 그래야 그 다음 실행되는 \`GET /game/best\` 시나리오가 시드 값을 안정적으로 검증. 명세서 §4-3 시드값을 인지하고 다른 endpoint의 시나리오값을 *반드시 시드보다 낮게* 설계할 것.
 - base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
