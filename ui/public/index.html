@@ -118,10 +118,13 @@
     .pill.ERROR { background: var(--fail); color: #fff; }
     .pill.IN_PROGRESS, .pill.RUNNING, .pill.PENDING { background: var(--warn); color: #0a0d14; }
 
-    /* D35+ (2026-05-14): 진행 중 시각화 — pulse + 점 로딩 */
-    @keyframes pulse-running {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
+    /* D35+ (2026-05-14): 진행 중 시각화 — 점 로딩
+       D77 (2026-05-18): fade(opacity) 제거 → 외곽선 box-shadow 깜박이로 교체.
+                         전체 fade 시 텍스트 가독성 저하 + UX 산만 → 테두리만 깜박.
+    */
+    @keyframes pulse-border {
+      0%, 100% { box-shadow: 0 0 0 2px var(--warn), 0 0 8px 1px rgba(245, 158, 11, 0.45); }
+      50%      { box-shadow: 0 0 0 2px transparent, 0 0 0 1px transparent; }
     }
     @keyframes dots-loading {
       0%   { content: ''; }
@@ -131,10 +134,14 @@
       100% { content: ''; }
     }
     .pill.IN_PROGRESS, .pill.RUNNING, .pill.PENDING {
-      animation: pulse-running 1.4s ease-in-out infinite;
+      animation: pulse-border 1.4s ease-in-out infinite;
+      border-radius: 6px;
     }
     .run-row.sev-info {   /* timeline 안 status=RUNNING row */
-      animation: pulse-running 1.4s ease-in-out infinite;
+      animation: pulse-border 1.4s ease-in-out infinite;
+      border-radius: 6px;
+      position: relative;
+      z-index: 1;
     }
     .loading-dots::after {
       content: '';
@@ -150,7 +157,7 @@
       border-radius: 8px;
       color: var(--warn);
       font-weight: 600;
-      animation: pulse-running 1.4s ease-in-out infinite;
+      animation: pulse-border 1.4s ease-in-out infinite;
     }
     /* D76 (2026-05-18): RUNNING row 옆 logTail 기반 inline 진행 텍스트 + disclosure */
     .run-progress-inline {
@@ -1339,15 +1346,16 @@ function renderTimeline(runs, liveLogLastLine, liveLogTailRecent) {
 
     // D76 (2026-05-18): 가장 최근 RUNNING row 옆에 logTail 마지막 라인 inline + 누적 disclosure.
     // 여러 RUNNING이 동시(Orchestrator + 자식) 일 때 가장 자식(id 최대) row에만 표시 — 중복 방지.
+    // D77 (2026-05-18): inline span / log block에 안정적 data-key 부여 — 부분 update 대상.
     let liveInline = '';
     let liveLogDisclosure = '';
     if (r.status === 'RUNNING' && r.id === latestRunningId && liveLogLastLine) {
-      liveInline = `<span class="run-progress-inline" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`;
+      liveInline = `<span class="run-progress-inline" data-livelog-inline="row-${r.id}" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`;
       if (liveLogTailRecent) {
         liveLogDisclosure = `
-          <details class="disclosure" data-live="${r.id}">
+          <details class="disclosure" data-livelog-details="row-${r.id}">
             <summary>▼ 진행 로그 (최근 50줄, 펼치기/접기)</summary>
-            <div class="run-progress-log-block">${esc(liveLogTailRecent)}</div>
+            <div class="run-progress-log-block" data-livelog-block="row-${r.id}">${esc(liveLogTailRecent)}</div>
           </details>`;
       }
     }
@@ -1377,13 +1385,14 @@ function renderRunningBanner(runs, liveLogLastLine, liveLogTailRecent) {
   if (!running) return '';
   const area = areaClass(running.agent_name, running.target);
   const tgt = running.target ? ` / ${esc(running.target)}` : '';
+  // D77 (2026-05-18): 안정적 data-key — partial update가 textContent만 갈아끼움.
   const inline = liveLogLastLine
-    ? `<span class="run-progress-inline" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`
+    ? `<span class="run-progress-inline" data-livelog-inline="banner" title="${esc(liveLogLastLine)}">${esc(liveLogLastLine)}</span>`
     : '';
   const disclosure = liveLogTailRecent
-    ? `<details class="disclosure" style="margin-top:6px;">
+    ? `<details class="disclosure" data-livelog-details="banner" style="margin-top:6px;">
          <summary>▼ 진행 로그 (최근 50줄, 펼치기/접기)</summary>
-         <div class="run-progress-log-block">${esc(liveLogTailRecent)}</div>
+         <div class="run-progress-log-block" data-livelog-block="banner">${esc(liveLogTailRecent)}</div>
        </details>`
     : '';
   return `
@@ -1454,6 +1463,27 @@ function renderStates(states) {
   return `<h2 style="margin-top: 14px;">TASK_STATE (영역별)</h2><div class="timeline">${rows.join('')}</div>`;
 }
 
+/** D77 (2026-05-18): 정적 변화 없을 때 logTail만 부분 update.
+ *  - `[data-livelog-inline]` 의 textContent + title 교체
+ *  - `[data-livelog-block]` 의 textContent 교체 + scroll 위치 *bottom 유지*
+ *  - `<details>`의 open state는 건드리지 않음 → 사용자가 펼친 상태 유지.
+ */
+function updateLiveLogPartial(lastLine, recent) {
+  document.querySelectorAll('[data-livelog-inline]').forEach((el) => {
+    if (el.textContent !== lastLine) {
+      el.textContent = lastLine;
+      el.title = lastLine;
+    }
+  });
+  document.querySelectorAll('[data-livelog-block]').forEach((el) => {
+    if (el.textContent !== recent) {
+      const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      el.textContent = recent;
+      if (wasAtBottom) el.scrollTop = el.scrollHeight;
+    }
+  });
+}
+
 async function loadDetail() {
   if (!selectedTaskId) return;
   // Terminal 상태(verdict 확정)면 더 변할 일 없으니 polling 자체를 건너뜀.
@@ -1477,9 +1507,11 @@ async function loadDetail() {
   // 누적 로그 — 마지막 50줄, RUNNING row disclosure body에 표시.
   const liveLogTailRecent = liveLogTail.split('\n').filter((l) => l.trim()).slice(-50).join('\n');
 
-  // 직전 응답과 비교 — RUNNING 중에도 의미 있는 변화가 없으면 re-render skip.
-  // runs/states는 timestamp 일부만 fingerprint에 포함 (id+status면 충분).
-  const fingerprint = JSON.stringify({
+  // D77 (2026-05-18): fingerprint 분리.
+  //   - staticFingerprint: 정적 (decision/states/runs/resume). 변화 시 전체 re-render.
+  //   - logTail 변화는 staticFingerprint 안 잡힘 → 부분 update만 (펼친 disclosure 상태 유지).
+  // 직전 응답과 비교 — 의미 있는 변화 없으면 re-render skip.
+  const staticFingerprint = JSON.stringify({
     d: decision && {
       v: decision.final_verdict,
       t: decision.final_result_text,
@@ -1497,11 +1529,14 @@ async function loadDetail() {
     }),
     r: (runs || []).map((r) => [r.id, r.agent_name, r.target, r.status, r.ended_at]),
     re: resume && resume.eligible,
-    // D76: logTail의 마지막 라인 변화 시 re-render — 같은 line 반복이면 skip.
-    lt: liveLogLastLine,
   });
-  if (fingerprint === lastDetailHash) return;
-  lastDetailHash = fingerprint;
+
+  // D77: 정적 변화 없으면 logTail만 부분 update (펼친 disclosure / scroll 위치 유지).
+  if (staticFingerprint === lastDetailHash) {
+    updateLiveLogPartial(liveLogLastLine, liveLogTailRecent);
+    return;
+  }
+  lastDetailHash = staticFingerprint;
 
   const root = $('#detail');
   let html = '';
