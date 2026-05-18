@@ -183,13 +183,14 @@ test('buildFixInstructions — 1000자 넘는 원본 메시지는 자름', () =>
 
 // ─────────── RETRYABLE_PATTERNS 자체 sanity ───────────
 
-test('RETRYABLE_PATTERNS — 9개 모두 unique category (D34+ 2개 추가)', () => {
+test('RETRYABLE_PATTERNS — 10개 모두 unique category (D34+ D66 추가)', () => {
   const cats = new Set(RETRYABLE_PATTERNS.map((p) => p.category));
-  assert.equal(cats.size, 9);
+  assert.equal(cats.size, 10);
   // 핵심 카테고리 존재 확인
   assert.ok(cats.has('UNAUTHORIZED_DEPS'));
   assert.ok(cats.has('LLM_API_TRANSIENT'));
   assert.ok(cats.has('LLM_API_AUTH'));
+  assert.ok(cats.has('FE_CONTRACT_DRIFT'));
 });
 
 test('RETRYABLE_PATTERNS — retryable_override가 있으면 false 강제', () => {

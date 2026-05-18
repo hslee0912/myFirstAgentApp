@@ -23,6 +23,7 @@ const logger = require('../lib/logger');
 const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { autoFixDependencyAliases } = require('../lib/dep_autofix');
+const { assertFEContract } = require('../lib/fe_contract_guard');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
@@ -274,17 +275,25 @@ async function run(params) {
 
       try {
         validateAllowedDeps(files, stackCfg.agent.allowedDeps, 'FE Agent');
+        // D66 (2026-05-18) FE contract drift guard — fetch literal URL이 contract endpoints에
+        // 매핑되는지 정적 검증. drift 발견 시 throw → inline retry로 LLM에게 fix 요청.
+        const apiContract = readApiContractIfAny();
+        if (apiContract) {
+          assertFEContract(files, apiContract.endpoints || [], apiContract.base_url || '');
+        }
         break;  // PASS — exit inline retry loop
       } catch (e) {
-        if (e.code !== 'UNAUTHORIZED_DEPS' || inlineRetry >= MAX_INLINE_RETRIES) {
+        const retriableCodes = ['UNAUTHORIZED_DEPS', 'FE_CONTRACT_DRIFT'];
+        if (!retriableCodes.includes(e.code) || inlineRetry >= MAX_INLINE_RETRIES) {
           throw e;
         }
-        console.log(`[fe:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] UNAUTHORIZED_DEPS — retrying with fix hint`);
+        const violationLabel = e.code === 'FE_CONTRACT_DRIFT' ? 'contract drift' : '미허가 의존성';
+        console.log(`[fe:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] ${e.code} — retrying with fix hint`);
         userPromptForCall =
           userPrompt +
-          '\n\n---\n\n## ⚠️ 직전 응답에 미허가 의존성 발견 — 즉시 다음 대체로 fix하라\n\n' +
+          `\n\n---\n\n## ⚠️ 직전 응답에 ${violationLabel} 발견 — 즉시 fix하라\n\n` +
           e.message +
-          '\n\n위 안내대로 require/import 라인을 바꾸고 *동일 형식*의 JSON으로 다시 emit하라.';
+          '\n\n위 안내대로 코드를 바꾸고 *동일 형식*의 JSON으로 다시 emit하라.';
       }
     }
 

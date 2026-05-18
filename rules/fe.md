@@ -178,6 +178,28 @@ function GameCanvas({ width = 1000, height = 750 }) {
 
 ## 5. API 호출 패턴
 
+### 5-zero. ⚠️ contract에 *있는 endpoint만* fetch — 결정론 가드 (D66)
+
+> **`fetch('/api/...')` 라인의 URL은 `shared/api_contract.json`의 endpoints에 *정확히* 포함된 path만 사용 가능.** contract에 없는 endpoint를 fetch하면 `lib/fe_contract_guard.js` 가 정적으로 catch하고 `FE_CONTRACT_DRIFT` ERROR로 round retry 발동. *retry로 풀지 말고 첫 응답부터 contract endpoint만 호출하는 게 정상 경로*.
+
+흔한 사고 (절대 금지):
+
+```js
+// ❌ 나쁨 — "ID 중복확인" UX를 위해 contract에 없는 /auth/check를 자체 발명
+fetch('/api/v1/auth/check?username=' + u)  // → 404, gate 차단
+
+// ✅ 좋음 — contract에 있는 signup endpoint를 호출하고 409 응답으로 "이미 사용중" 표시
+const res = await fetch('/api/v1/auth/signup', { method: 'POST', body: ... });
+if (res.status === 409) setError('이미 사용중인 아이디입니다');
+```
+
+**판단 기준**:
+1. UX 요소(중복확인, 비밀번호 강도, 자동 저장 등)가 *새* endpoint를 요구하는 것 같아도 — 먼저 `shared/api_contract.json` endpoint 목록을 본다.
+2. 같은 UX를 contract endpoint *조합*으로 달성 가능한지 검토 (signup 시도 후 409, login 후 token 검사 등).
+3. 그래도 새 endpoint가 *진짜* 필요하면 응답의 `notes`에 사유만 기록 — Agent가 contract를 임의 확장하지 말 것. system이 contract 갱신을 결정하는 영역.
+
+### 5-bis. 기본 fetch 룰
+
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
 - **URL은 항상 상대 경로** (`/api/...` 형태). absolute URL (`http://...`)이나 BE host hardcode 금지.
   - Vite dev server에 `server.proxy['/api']`가 설정되어 있어 `/api/*` 요청을
