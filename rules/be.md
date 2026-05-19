@@ -137,6 +137,7 @@ router.<method>('<subpath>', handler);       // subpath from contract
 - ContractSync는 `(METHOD, full path)` tuple로 비교. OpenAPI 스타일 `{id}` ↔ Express 스타일 `:id`는 동등 처리.
 - contract에 *없는* extra endpoint를 만들지는 말 것 (warning은 나지만 FAIL은 아님 — FE는 contract만 보므로 dead code가 됨).
 - prompt에 `## 구현해야 할 endpoint` 체크리스트가 함께 표시되므로 그것을 빠짐없이 확인할 것 (D39, 2026-05-14).
+- **(인프라 강제) `app.use(<prefix>, ...)`의 prefix는 항상 `contract.base_url`(`/api/v1`)로 시작해야 한다.** Nginx reverse proxy가 `/api/v1/*` path만 BE 컨테이너(:3001)로 forward하므로, `/api`, `/v1`, `/api/v2` 같은 다른 prefix는 외부 요청이 BE에 도달하지 못한다. 즉 모든 비즈니스 router는 `/api/v1`로 시작하는 mount path를 가져야 한다.
 
 ## 4. DB 접근 패턴
 

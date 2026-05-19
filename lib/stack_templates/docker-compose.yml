@@ -45,8 +45,11 @@ services:
       # host-gateway는 Docker 20.10+에서 호스트 IP로 alias 해주는 magic value.
       # Docker Desktop (Win/Mac)에서는 이미 자동 지원하므로 무해.
       - "host.docker.internal:host-gateway"
+    # Nginx reverse proxy 환경: 외부 NIC 직접 노출 안 함. 127.0.0.1 binding
+    # 으로 호스트 내부에서만 접근 가능 (Nginx가 /api/v1/* → 여기로 forward).
+    # 외부에서 :3001 직접 접근은 SG 차단 + 이제 OS 인터페이스에서도 차단.
     ports:
-      - "${DEPLOY_PORT_BE:-3001}:3001"
+      - "127.0.0.1:${DEPLOY_PORT_BE:-3001}:3001"
     restart: "no"
 
   fe:
@@ -56,16 +59,17 @@ services:
     labels:
       com.myfirstagentapp.managed: "true"
     environment:
-      # FE vite.config.js의 proxy target. compose 내부 network에서 BE 컨테이너
-      # service name 'be'로 접근. 브라우저 fetch가 상대경로 /api/*를 쓸 때
-      # Vite dev server가 받아 여기로 forward한다.
+      # (Legacy) Vite dev server의 proxy target — Nginx 도입 후 더 이상 사용 X.
+      # 보존 사유: BE Agent prompt나 cycle 환경에서 참조할 수 있어 호환성 유지.
+      # 현재 라우팅: 브라우저 → Nginx :80 /api/v1/* → BE 컨테이너 :3001 (직접).
       VITE_BE_PROXY_TARGET: http://be:3001
+    # Nginx reverse proxy 환경: 외부 NIC 직접 노출 X. 127.0.0.1 binding으로
+    # 호스트 내부에서만. Nginx가 /demo/* → 여기로 forward (Vite HMR WebSocket 포함).
     ports:
-      - "${DEPLOY_PORT_FE:-5173}:5173"
-    # FE Vite dev server runs in this container. 브라우저는 호스트 5173으로
-    # 들어와 vite에 도착하고, vite가 /api/*를 위 VITE_BE_PROXY_TARGET으로
-    # forward한다. BE 컨테이너의 외부 expose port(DEPLOY_PORT_BE)는 직접
-    # 호출하지 않음 — 브라우저는 같은 origin(5173)으로 비즈니스 API 호출.
+      - "127.0.0.1:${DEPLOY_PORT_FE:-5173}:5173"
+    # 브라우저는 Nginx :80 → /demo/ path로 FE에 도달. Vite는 base='/demo/'로
+    # 정적 자산 import를 그 prefix에 맞춰 빌드 (vite.config.js 참조).
+    # 비즈니스 API는 Vite proxy가 아닌 Nginx의 /api/v1/* → BE로 직결.
     depends_on:
       - be
     restart: "no"

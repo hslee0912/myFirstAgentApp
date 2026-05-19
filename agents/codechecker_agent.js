@@ -71,7 +71,7 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
 \`\`\`json
 {
   "version": "1.0.0",
-  "base_url": "/api/v1",                   // optional. BE는 이 prefix를 \`app.use\`에 적용.
+  "base_url": "/api/v1",                   // 필수 (required). 값은 반드시 "/api/v1" 고정 — Nginx reverse proxy가 이 prefix만 BE 컨테이너로 forward. 다른 값(/api, /v1, /api/v2 등) 금지. BE는 이 prefix를 \`app.use\`에 적용.
   "endpoints": [
     {
       "name": "auth_signup",               // shared/router/<name>.json 파일명과 일치 (snake_case)
@@ -118,7 +118,7 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
     4. **시나리오 간 체이닝 의존 금지** — signup 시나리오가 만든 user를 login 시나리오가 그대로 쓰는 식의 순서 의존 X. 각 시나리오는 독립적으로 PASS 가능해야 함 (시드 사용자나 명시적 setup만 의존).
     5. **subset 검증이 안전한 default** — \`expect_response_subset\`은 *부분 일치*(deep subset)로 검증. 가변 필드를 굳이 명시하지 말고, *확실히 안정된 필드만* 적어라 (예: \`{success: true, data: {username: 'demo_user'}}\` 정도. \`data.id\`는 빼라).
     6. **집계 endpoint(best/top/latest/max 등) 시드 보존** — PostTest는 endpoint × 시나리오를 *동일 컨테이너/DB*에 직렬 실행. *집계 결과를 갈아치울 수 있는 endpoint* (예: \`POST /game/result\` → is_best=1 갱신)의 시나리오는 *시드값보다 작은 값만* 사용. 그래야 그 다음 실행되는 \`GET /game/best\` 시나리오가 시드 값을 안정적으로 검증. 명세서 §4-3 시드값을 인지하고 다른 endpoint의 시나리오값을 *반드시 시드보다 낮게* 설계할 것.
-- base_url을 적었으면 BE는 그 prefix를 \`app.use\`에 적용해야 한다.${SCHEMA_SECTION}`;
+- **base_url은 반드시 \`/api/v1\` 고정** (다른 값 금지). 외부 진입은 Nginx :80 → \`/api/v1/*\`만 BE로 forward되므로, BE는 모든 비즈니스 router를 \`app.use('/api/v1/...', ...)\` 형태로 mount해야 한다. \`/api\`, \`/v1\`, \`/api/v2\` 등 다른 prefix를 사용하면 외부 요청이 BE에 도달하지 못한다.${SCHEMA_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
   return [
@@ -132,7 +132,7 @@ function buildUserPrompt(userRequirement) {
     `  "targets": "FE" | "BE" | "BOTH",`,
     `  "be_spec": { ... } | null,`,
     `  "fe_spec": { ... } | null,`,
-    `  "api_contract": { version, base_url?, endpoints: [{ name, path, method, description }] } | null,`,
+    `  "api_contract": { version, base_url: "/api/v1", endpoints: [{ name, path, method, description }] } | null,`,
     `  "router_details": { "<name>": { path, method, description?, request, responses } } | null,`,
     `  "rationale": "분류 근거 1-2문장"`,
     `}`,

@@ -249,11 +249,13 @@ if (res.status === 409) setError('이미 사용중인 아이디입니다');
 ### 5-bis. 기본 fetch 룰
 
 - `fetch` 또는 axios... 가 아니라 **fetch만**: `axios`는 `allowedDeps`에 없음 → `validateAllowedDeps` 가드가 즉시 ERROR.
-- **URL은 항상 상대 경로** (`/api/...` 형태). absolute URL (`http://...`)이나 BE host hardcode 금지.
-  - Vite dev server에 `server.proxy['/api']`가 설정되어 있어 `/api/*` 요청을
-    자동으로 BE 컨테이너로 forward한다. FE Agent는 BE의 host/port를 *알 필요
-    없음*. dev/docker/EC2 환경 분기, CORS 헤더, `VITE_BE_URL` 같은 env 변수는
-    *인프라 영역* — LLM이 절대 신경 쓰지 말 것.
+- **URL은 항상 상대 경로** (`/api/v1/...` 형태). absolute URL (`http://...`)이나 BE host hardcode 금지.
+  - 외부 진입은 Nginx :80 단일 진입점. `/api/v1/*` path는 Nginx config에서
+    BE 컨테이너(:3001)로 reverse proxy된다. FE Agent는 BE의 host/port를
+    *알 필요 없음*. dev/docker/EC2 환경 분기, CORS 헤더, `VITE_BE_URL` 같은
+    env 변수는 *인프라 영역* — LLM이 절대 신경 쓰지 말 것.
+  - 외부 노출 URL 형태: `http://<host>/demo/` (FE) + `http://<host>/api/v1/*` (BE).
+    같은 origin이므로 CORS 무관 + 인증 쿠키도 자동 동반.
 - 경로는 `shared/api_contract.json`의 `base_url` + `endpoint.path`로 조합.
   예: `base_url='/api/v1'`, `endpoint.path='/auth/signup'` → 최종 fetch URL은
   `'/api/v1/auth/signup'`.
@@ -277,9 +279,9 @@ if (res.status === 409) setError('이미 사용중인 아이디입니다');
   // 나쁨 2: env 분기 시도
   const BE_URL = import.meta.env.VITE_BE_URL || 'http://localhost:3001';
   fetch(`${BE_URL}/api/v1/auth/signup`, ...)
-  // → 인프라 영역 침범. Vite proxy로 이미 해결된 문제를 FE 코드에서 다시 풀려는
-  //   안티패턴. proxy 설정 자체가 protected file이라 FE Agent는 그게 어떻게
-  //   세팅됐는지 알 필요도 없다.
+  // → 인프라 영역 침범. Nginx reverse proxy로 이미 해결된 문제를 FE 코드에서
+  //   다시 풀려는 안티패턴. Nginx config / docker-compose / vite.config는
+  //   protected file이라 FE Agent는 그게 어떻게 세팅됐는지 알 필요도 없다.
 
   // 나쁨 3: base_url 누락
   fetch('/auth/signup', ...)

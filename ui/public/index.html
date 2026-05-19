@@ -1568,8 +1568,8 @@ async function loadDetail() {
         <div class="err-card sev-ok" style="margin-top: 10px;">
           <div class="err-head"><span class="err-title">배포된 서비스 (DEPLOY_TEARDOWN_ON_PASS=off일 때 PASS 후에도 유지)</span></div>
           <div class="err-body">
-            <a href="http://${PUBLIC_HOST}:${fe}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🌐 FE 열기 (:${fe})</a>
-            <a href="http://${PUBLIC_HOST}:${be}" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🔌 BE 열기 (:${be})</a>
+            <a href="http://${PUBLIC_HOST}/demo/" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🌐 FE 열기 (/demo/)</a>
+            <a href="http://${PUBLIC_HOST}/api/v1/" target="_blank" rel="noopener" style="margin-right: 12px; color: var(--accent); font-weight: 600;">🔌 BE 열기 (/api/v1/)</a>
             <button class="secondary" id="stopContainersBtn" style="margin-left: 6px;">🛑 Stop containers</button>
           </div>
         </div>`;
@@ -1810,8 +1810,11 @@ async function executeRedeploy(opts = { context: 'manual' }) {
   const r = await fetchJSON('/api/redeploy', { method: 'POST' });
   if (r.ok) {
     const p = r.ports || {};
-    const feUrl = `http://${PUBLIC_HOST}:${p.fe}`;
-    const beUrl = `http://${PUBLIC_HOST}:${p.be}`;
+    // Nginx reverse proxy 환경: 외부 진입은 :80 (default), 내부 라우팅은
+    // path 기반. p.fe / p.be 포트값은 호스트 localhost binding 디버깅용으로만
+    // 유지 (Stop containers 등). 외부 노출 URL은 path로 표현.
+    const feUrl = `http://${PUBLIC_HOST}/demo/`;
+    const beUrl = `http://${PUBLIC_HOST}/api/v1/`;
     const prefix = opts.context === 'after-rollback'
       ? 'Rollback 후 Redeploy 완료'
       : 'Redeploy 완료';
