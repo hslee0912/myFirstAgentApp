@@ -36,15 +36,12 @@ function getTimeoutMs() {
 
 function getBeBaseUrl() {
   const port = Number(process.env.DEPLOY_PORT_BE || 3001);
-  // PostTest runs on the same host as the BE container (orchestrator +
-  // docker compose are co-located). PUBLIC_HOST exists for the *browser's*
-  // benefit (EC2 public DNS, etc.); for a server-side fetch on the same
-  // box, 'localhost' is always correct. We still respect PUBLIC_HOST when
-  // explicitly set to anything non-'localhost', for setups that route
-  // through a public DNS even from inside the box.
-  const envHost = (process.env.PUBLIC_HOST || '').trim();
-  const host = envHost && envHost !== 'localhost' ? envHost : 'localhost';
-  return `http://${host}:${port}`;
+  // PostTest는 orchestrator process (host)에서 직접 fetch — BE 컨테이너의
+  // ports는 docker-compose.yml에서 127.0.0.1:port:port (localhost-only)로
+  // bind. PUBLIC_HOST는 *브라우저*용 외부 도메인이며, 서버 내부에서 그 도메인으로
+  // 가면 외부 NIC를 거쳐 SG(:3001 차단)에 막혀 timeout.
+  // → 항상 localhost로 직접 접근 (Nginx 도입 후 BE 외부 직접 노출 X).
+  return `http://localhost:${port}`;
 }
 
 // ---------------- timeout helper ----------------
