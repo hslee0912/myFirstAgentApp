@@ -131,7 +131,7 @@ npm run test         # 단위 테스트
 # Claude Code 시작
 claude
 # 또는 UI 직접 띄움
-npm run ui:test      # main 디렉터리에서 동작 — 위로 가서: cd ~/myFirstAgentApp && npm run ui:test
+npm run ui           # 어디서든 동일 — wrapper(scripts/launch-ui.sh)가 자동으로 test 워크트리로 redirect
 ```
 
 ### Step 7 — 검증

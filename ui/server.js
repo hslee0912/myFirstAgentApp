@@ -143,7 +143,7 @@ app.use('/api', initRoutes);
 /**
  * 이전에 떠 있던 UI 서버를 자동 종료한다 — `.ui-server.pid`에 적힌 PID로 식별.
  *
- * Why: 사용자가 `npm run ui:test`를 반복 호출할 때마다 옛 process가 옛 port
+ * Why: 사용자가 `npm run ui`를 반복 호출할 때마다 옛 process가 옛 port
  * (4005, 4006 …)에 누적되는 게 혼란스러움. 단일 active UI 서버만 살아있도록
  * 새 부팅이 이전 부팅을 정리.
  *
@@ -237,7 +237,7 @@ function snapshotEnvOnStart() {
 }
 
 async function main() {
-  // 1) 이전 UI 서버 자동 종료 (PID file 기반) — `npm run ui:test`를 반복
+  // 1) 이전 UI 서버 자동 종료 (PID file 기반) — `npm run ui`를 반복
   //    호출해도 단일 active 서버만 유지된다. port preflight + fallback에
   //    의존하지 않고 *명시적으로* 옛 process를 정리.
   await killPreviousUIServer();
