@@ -44,6 +44,41 @@ function getBeBaseUrl() {
   return `http://localhost:${port}`;
 }
 
+// ---------------- BE warmup ----------------
+
+/**
+ * Phase 8(`docker compose up --wait`)은 컨테이너 *started* 시점까지만 기다림.
+ * BE의 mysql2 connection pool은 **lazy init** — 첫 query 시 connect 시도.
+ * BE listen 직후 PostTest가 즉시 fetch하면 DB 연결 setup이 안 끝나 await
+ * 안에서 hang → PostTest 60s timeout. healthcheck로 BE가 *traffic ready*임을
+ * 확인 후 본 시나리오 실행.
+ *
+ * 30s 안에 /health가 200 OK 떨어지면 통과. 못 떨어지면 PostTest에서 명확히
+ * "BE not ready" 에러 (timeout과 구분).
+ *
+ * @param {string} baseUrl  http://host:port
+ * @param {number} [maxWaitMs=30000]
+ * @returns {Promise<{ ok: boolean, waited_ms: number, attempts: number }>}
+ */
+async function waitForBeReady(baseUrl, maxWaitMs = 30000) {
+  const t0 = Date.now();
+  let attempts = 0;
+  while (Date.now() - t0 < maxWaitMs) {
+    attempts += 1;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      const res = await fetch(`${baseUrl}/health`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        return { ok: true, waited_ms: Date.now() - t0, attempts };
+      }
+    } catch (_) { /* not ready yet — keep polling */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return { ok: false, waited_ms: Date.now() - t0, attempts };
+}
+
 // ---------------- timeout helper ----------------
 
 /**
@@ -93,6 +128,19 @@ async function run({ task_id }) {
     return { status: 'SUCCESS', skipped: true };
   }
 
+  // BE warmup — Phase 8 `--wait`이 컨테이너 started만 보장. lazy mysql2 pool
+  // init이 끝나기 전 fetch하면 hang. /health 응답 OK까지 최대 30s 대기.
+  const warmup = await waitForBeReady(baseUrl);
+  if (!warmup.ok) {
+    console.error(`[posttest] BE not ready after ${warmup.waited_ms}ms (${warmup.attempts} attempts)`);
+    await logger.endRun(run_id, {
+      status: 'FAILED',
+      output_json: { pass: false, error: 'BE not ready (warmup timeout)', baseUrl, warmup },
+    });
+    return { status: 'FAILED' };
+  }
+  console.log(`[posttest] BE ready after ${warmup.waited_ms}ms (${warmup.attempts} attempts)`);
+
   // Run contract test with timeout (D37=A)
   let result;
   try {
@@ -105,7 +153,7 @@ async function run({ task_id }) {
     console.error(`[posttest] ${e.message}`);
     await logger.endRun(run_id, {
       status: 'FAILED',
-      output_json: { pass: false, error: e.message, baseUrl },
+      output_json: { pass: false, error: e.message, baseUrl, warmup },
     });
     return { status: 'FAILED' };
   }
