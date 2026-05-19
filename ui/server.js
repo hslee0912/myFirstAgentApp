@@ -28,6 +28,7 @@ require('dotenv').config({ override: true });
 
 const { killHostHolders } = require('../lib/port_killer');
 const { readEnv } = require('../lib/env_writer');
+const { dockerPreflight } = require('../lib/docker_health');
 
 const envRoutes = require('./routes/env');
 const tasksRoutes = require('./routes/tasks');
@@ -79,9 +80,11 @@ function isPortFree(port) {
     server.once('listening', () => server.close(() => finish(true)));
     try { server.listen(port, host); } catch (_) { finish(false); }
   });
-  return Promise.all([probe('0.0.0.0'), probe('::')]).then(
-    ([v4, v6]) => v4 && v6,
-  );
+  // IMPORTANT: sequential, not Promise.all. Linux dual-stack에선 IPv4
+  // 0.0.0.0 listen이 동일 port의 IPv6 ::도 자동 점유 → 동시 probe하면
+  // 두 번째가 EADDRINUSE (free한 port인데도 not-free 판정). Sequential
+  // 하게 close 완료 대기 후 다음 probe.
+  return probe('0.0.0.0').then((v4) => v4 && probe('::'));
 }
 
 async function findFreePort(start, max = 20) {
@@ -245,6 +248,20 @@ async function main() {
   process.on('SIGTERM', () => process.exit(0));
 
   snapshotEnvOnStart();
+
+  // Docker daemon preflight — Phase 8 (Deploy) + Phase 9 (PostTest) 가
+  // docker compose 의존이라 daemon이 죽어 있으면 cycle이 *시작은 되지만*
+  // deploy 단계에서 opaque error로 실패한다. 여기서 fail-fast.
+  // sudo NOPASSWD (`/etc/sudoers.d/docker-start`)가 등록되어 있으면
+  // daemon down 상태에서 자동 `systemctl start docker` 시도.
+  const dp = dockerPreflight();
+  if (!dp.ok) {
+    console.error(`[ui] Docker preflight FAILED — ${dp.reason}`);
+    console.error(`[ui]   ${dp.hint}`);
+    if (dp.detail) console.error(`[ui]   detail: ${dp.detail}`);
+    process.exit(1);
+  }
+  console.log(`[ui] Docker preflight OK (compose: ${dp.compose})`);
 
   // Kill stale node.exe processes holding any canonical project port
   // (UI_PORT + DEPLOY_PORT_FE/BE). D29=A 이후 mysql 컨테이너 없음 —
