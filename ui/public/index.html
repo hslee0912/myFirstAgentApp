@@ -1268,6 +1268,32 @@ function renderTopErrorSummary(decision, states, runs) {
  *  D76 (2026-05-18): liveLogLastLine / liveLogTailRecent를 가장 최근 RUNNING run row에 inject —
  *  inline 진행 텍스트 + disclosure에 누적 로그 표시.
  */
+/**
+ * Cycle 총 소요 시간 chip — 첫 row의 started_at ~ 마지막 row의 ended_at 차이
+ * (ended_at null인 row가 있으면 NOW까지). 분+초로 표시. cycle 진행 상태에
+ * 따라 "진행 중" / "완료" 라벨.
+ */
+function renderElapsed(runs) {
+  if (!runs || runs.length === 0) return '';
+  const started = runs.map((r) => r.started_at).filter(Boolean).map((s) => new Date(s).getTime());
+  if (!started.length) return '';
+  const ended = runs.map((r) => r.ended_at).filter(Boolean).map((s) => new Date(s).getTime());
+  const minStart = Math.min(...started);
+  const maxEnd = ended.length ? Math.max(...ended) : Date.now();
+  const elapsedMs = Math.max(0, maxEnd - minStart);
+  const min = Math.floor(elapsedMs / 60000);
+  const sec = Math.floor((elapsedMs % 60000) / 1000);
+  const running = runs.some((r) => r.status === 'RUNNING');
+  const label = running ? '진행 중' : '완료';
+  const labelColor = running ? 'var(--warning, #c89200)' : 'var(--success, #2e8b57)';
+  return `
+    <div style="padding: 8px 12px; margin: 10px 0 6px; background: rgba(255,255,255,0.04); border-left: 3px solid ${labelColor}; border-radius: 4px; font-size: 0.95em;">
+      ⏱ cycle 총 소요: <b>${min}분 ${sec}초</b>
+      <span style="color: ${labelColor}; margin-left: 8px; font-size: 0.9em;">(${label})</span>
+      <span style="color: var(--muted, #888); margin-left: 12px; font-size: 0.85em;">시작 ${fmtTime(new Date(minStart).toISOString())} → ${running ? '...' : '종료 ' + fmtTime(new Date(maxEnd).toISOString())}</span>
+    </div>`;
+}
+
 function renderTimeline(runs, liveLogLastLine, liveLogTailRecent) {
   if (!runs || runs.length === 0) return '';
   // D76: 가장 최근 RUNNING row (id 최대) 1개에만 logTail 표시 — 여러 동시 RUNNING 시 중복 방지.
@@ -1575,6 +1601,9 @@ async function loadDetail() {
         </div>`;
     }
   }
+
+  // Cycle 총 소요 시간 chip — 첫 row 시작 ~ 마지막 row 종료 (진행 중이면 NOW까지).
+  html += renderElapsed(runs);
 
   // Layer 2 — timeline with per-run area chip + severity colour + expand
   // D76: liveLogTail을 전달해 가장 최근 RUNNING row에 inline 진행 + 누적 disclosure 표시.
