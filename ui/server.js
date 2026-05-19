@@ -158,35 +158,53 @@ app.use('/api', initRoutes);
  *
  * @returns {Promise<{killed: boolean, pid?: number}>}
  */
-async function killPreviousUIServer() {
-  if (!fs.existsSync(PID_FILE)) return { killed: false };
+async function killPreviousUIServer(pidFile = PID_FILE) {
+  if (!fs.existsSync(pidFile)) {
+    console.log('[ui]   no previous PID file — fresh start');
+    return { killed: false, reason: 'no-pid-file' };
+  }
   let pid;
   try {
-    pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-  } catch (_) { return { killed: false }; }
-  if (!pid || pid === process.pid) return { killed: false };
+    pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+  } catch (e) {
+    console.log(`[ui]   PID file unreadable (${e.code || e.message}) — ignoring`);
+    return { killed: false, reason: 'unreadable' };
+  }
+  if (!pid || pid === process.pid) {
+    console.log(`[ui]   PID file points to invalid/self pid=${pid} — ignoring`);
+    return { killed: false, reason: 'self-or-invalid', pid };
+  }
+
+  console.log(`[ui]   PID file found: pid=${pid}`);
 
   // signal 0 — process가 살아있고 우리가 죽일 권한이 있는지만 확인.
   try { process.kill(pid, 0); }
-  catch (_) {
-    // 죽은 process. PID file은 stale 상태였을 뿐.
-    return { killed: false, pid };
+  catch (e) {
+    console.log(`[ui]   pid=${pid} is stale (${e.code || 'unknown'}) — no kill needed`);
+    return { killed: false, reason: 'stale', pid };
   }
+  console.log(`[ui]   pid=${pid} is alive — sending SIGTERM`);
 
-  console.log(`[ui] previous UI server (pid=${pid}) detected — terminating`);
-  try { process.kill(pid, 'SIGTERM'); } catch (_) { /* 권한 부족 등 무시 */ }
+  try { process.kill(pid, 'SIGTERM'); }
+  catch (e) {
+    console.warn(`[ui]   SIGTERM failed (${e.code || e.message}) — continuing to polling`);
+  }
 
   // 최대 1초 (50ms × 20회) 동안 죽는지 polling.
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 50));
     try { process.kill(pid, 0); }
-    catch (_) { return { killed: true, pid }; }
+    catch (_) {
+      const elapsed = (i + 1) * 50;
+      console.log(`[ui]   pid=${pid} terminated after ~${elapsed}ms (SIGTERM 성공)`);
+      return { killed: true, reason: 'sigterm', pid };
+    }
   }
 
   // 끝까지 안 죽으면 SIGKILL.
-  console.warn(`[ui] previous UI server pid=${pid} 가 SIGTERM에 응답 X — SIGKILL`);
+  console.warn(`[ui]   pid=${pid} did NOT respond to SIGTERM in 1s — escalating to SIGKILL`);
   try { process.kill(pid, 'SIGKILL'); } catch (_) { /* 이미 죽었으면 무시 */ }
-  return { killed: true, pid };
+  return { killed: true, reason: 'sigkill', pid };
 }
 
 /**
@@ -196,18 +214,28 @@ async function killPreviousUIServer() {
  * 비정상 종료(kill -9 / 크래시) 시 stale PID가 남아도 다음 부팅이 signal 0
  * 체크로 무시한다.
  */
-function writePidFile() {
-  try { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); }
-  catch (e) { console.warn(`[ui] PID file write 실패 (non-fatal): ${e.message}`); }
+function writePidFile(pidFile = PID_FILE) {
+  try {
+    fs.writeFileSync(pidFile, String(process.pid), 'utf8');
+    console.log(`[ui]   PID file written: pid=${process.pid} → ${path.basename(pidFile)}`);
+    return true;
+  } catch (e) {
+    console.warn(`[ui]   PID file write 실패 (non-fatal): ${e.message}`);
+    return false;
+  }
 }
 
-function cleanupPidFile() {
+function cleanupPidFile(pidFile = PID_FILE) {
   try {
-    if (fs.existsSync(PID_FILE)) {
-      const owner = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-      if (owner === process.pid) fs.unlinkSync(PID_FILE);
+    if (fs.existsSync(pidFile)) {
+      const owner = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+      if (owner === process.pid) {
+        fs.unlinkSync(pidFile);
+        return true;
+      }
     }
   } catch (_) { /* 종료 직전이라 best-effort */ }
+  return false;
 }
 
 /**
@@ -237,9 +265,13 @@ function snapshotEnvOnStart() {
 }
 
 async function main() {
+  const startupT0 = Date.now();
+  console.log(`[ui] ━━━ startup begin (pid=${process.pid}, cwd=${process.cwd()}) ━━━`);
+
   // 1) 이전 UI 서버 자동 종료 (PID file 기반) — `npm run ui`를 반복
   //    호출해도 단일 active 서버만 유지된다. port preflight + fallback에
   //    의존하지 않고 *명시적으로* 옛 process를 정리.
+  console.log('[ui] [1/5] previous UI server check (PID file 기반)');
   await killPreviousUIServer();
   writePidFile();
   // 비정상 종료 외 모든 path에서 PID file 청소.
@@ -247,6 +279,7 @@ async function main() {
   process.on('SIGINT', () => process.exit(0));
   process.on('SIGTERM', () => process.exit(0));
 
+  console.log('[ui] [2/5] .env snapshot (rollback safety net)');
   snapshotEnvOnStart();
 
   // Docker daemon preflight — Phase 8 (Deploy) + Phase 9 (PostTest) 가
@@ -254,14 +287,15 @@ async function main() {
   // deploy 단계에서 opaque error로 실패한다. 여기서 fail-fast.
   // sudo NOPASSWD (`/etc/sudoers.d/docker-start`)가 등록되어 있으면
   // daemon down 상태에서 자동 `systemctl start docker` 시도.
+  console.log('[ui] [3/5] Docker preflight (daemon + compose binary)');
   const dp = dockerPreflight();
   if (!dp.ok) {
-    console.error(`[ui] Docker preflight FAILED — ${dp.reason}`);
+    console.error(`[ui]   Docker preflight FAILED — ${dp.reason}`);
     console.error(`[ui]   ${dp.hint}`);
     if (dp.detail) console.error(`[ui]   detail: ${dp.detail}`);
     process.exit(1);
   }
-  console.log(`[ui] Docker preflight OK (compose: ${dp.compose})`);
+  console.log(`[ui]   Docker preflight OK (compose: ${dp.compose})`);
 
   // Kill stale node.exe processes holding any canonical project port
   // (UI_PORT + DEPLOY_PORT_FE/BE). D29=A 이후 mysql 컨테이너 없음 —
@@ -272,20 +306,32 @@ async function main() {
     Number(process.env.DEPLOY_PORT_FE || 5173),
     Number(process.env.DEPLOY_PORT_BE || 3001),
   ];
+  console.log(`[ui] [4/5] stale port holders sweep — ports=[${sweepPorts.join(', ')}]`);
   const sweepResult = killHostHolders(sweepPorts, 'ui');
   if (sweepResult.killed.length > 0) {
+    console.log(`[ui]   killed ${sweepResult.killed.length} stale holder(s): ${sweepResult.killed.map((k) => `pid=${k.pid}(:${k.port})`).join(', ')}`);
     await new Promise((r) => setTimeout(r, 500));
+  } else {
+    console.log('[ui]   no stale holders');
   }
 
+  console.log(`[ui] [5/5] port preflight + listen (요청 port=${REQUESTED_PORT})`);
   const port = await findFreePort(REQUESTED_PORT);
+  if (port !== REQUESTED_PORT) {
+    console.log(`[ui]   fallback port=${port}`);
+  } else {
+    console.log(`[ui]   port ${port} is free`);
+  }
   // Bind explicitly to IPv4 0.0.0.0 (not dual-stack). Avoids the failure
   // mode where IPv4 probe says free but a stale IPv6 listener forces
   // app.listen to EADDRINUSE on `:::PORT`. localhost browser access still
   // works — the OS resolves localhost to 127.0.0.1 first.
   const server = app.listen(port, '0.0.0.0', () => {
     const host = readPublicHost();
+    const elapsed = Date.now() - startupT0;
     console.log(`[ui] listening on http://${host}:${port}`);
-    console.log(`[ui] open the URL in a browser to drive the orchestrator`);
+    console.log(`[ui] ━━━ startup complete (${elapsed}ms) ━━━`);
+    console.log('[ui] open the URL in a browser to drive the orchestrator');
   });
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -311,9 +357,15 @@ if (require.main === module) {
 
 // Preserve the historical export surface so existing tests (and any
 // future ones) keep working. `startOrchestrator` now lives in run.js.
+// Lifecycle helpers (killPreviousUIServer, writePidFile, cleanupPidFile)도
+// export — tests/ui_server_lifecycle.test.js가 임시 PID file로 검증.
 module.exports = {
   app,
   startOrchestrator: runRoutes.startOrchestrator,
   isPortFree,
   findFreePort,
+  killPreviousUIServer,
+  writePidFile,
+  cleanupPidFile,
+  PID_FILE,
 };
