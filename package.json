@@ -8,6 +8,7 @@
     "start": "node agents/orchestrator.js",
     "ui": "bash scripts/launch-ui.sh",
     "ui:test": "bash scripts/deprecated-ui-test.sh",
+    "monitor": "bash scripts/monitor-cycle.sh",
     "init-db": "node lib/init_db.js",
     "reset-db": "node lib/reset_db.js",
     "test": "node --test tests/prompt_util.test.js tests/orchestrator_util.test.js tests/test_codegen.test.js tests/deploy_agent.test.js tests/api_test.test.js tests/llm_continuation.test.js tests/env_writer.test.js tests/port_killer.test.js tests/container_cleanup.test.js tests/migration_agent.test.js tests/agent_error_classifier.test.js tests/resume_helper.test.js tests/contract_sync.test.js tests/ui_buttons.test.js tests/agent_prompts.test.js tests/db_state.test.js tests/container_sanity.test.js tests/be_retry_migration.test.js tests/migration_sanity.test.js tests/canvas_stub.test.js tests/dep_autofix.test.js tests/fe_contract_guard.test.js tests/docker_health.test.js tests/launch_ui_wrapper.test.js tests/ui_server_lifecycle.test.js",
