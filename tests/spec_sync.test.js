@@ -259,6 +259,72 @@ test('checkSpecSync — cross-endpoint 분리된 경우 PASS', () => {
   assert.equal(r.drifts.length, 0);
 });
 
+// D92: valid_credentials password seed 매핑 검사
+
+test('checkSpecSync — valid_credentials password 시드 mismatch 감지 (D92)', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  writeRouter(routerDir, 'auth_login', {
+    method: 'POST', path: '/auth/login',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      // 시드 매핑값 'Pass1234' 대신 'secure99x' (§2 PASS 예 2번째) 사용 → mismatch
+      { name: 'valid_credentials', request_body: { username: 'demo_user', password: 'secure99x' }, expect_status: 200 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  assert.equal(r.pass, false);
+  const mismatch = r.drifts.find((d) => d.issue === 'credential_seed_mismatch');
+  assert.ok(mismatch, 'credential_seed_mismatch drift 누락');
+  assert.equal(mismatch.scenario, 'valid_credentials');
+  assert.equal(mismatch.actual, 'secure99x');
+  assert.match(r.fix_instructions, /bcrypt\.compare false/);
+});
+
+test('checkSpecSync — valid_credentials password가 시드값이면 PASS (D92)', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  writeRouter(routerDir, 'auth_login', {
+    method: 'POST', path: '/auth/login',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      // §2 password PASS 예 첫 번째 = Pass1234 = 시드 매핑값
+      { name: 'valid_credentials', request_body: { username: 'demo_user', password: 'Pass1234' }, expect_status: 200 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  const mismatch = r.drifts.find((d) => d.issue === 'credential_seed_mismatch');
+  assert.equal(mismatch, undefined, 'mismatch가 없어야 PASS');
+});
+
+test('checkSpecSync — invalid_credentials는 시드 매핑 검사 안 함 (다른 password 의도)', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  writeRouter(routerDir, 'auth_login', {
+    method: 'POST', path: '/auth/login',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      // invalid_credentials는 *틀린 password* 의도라 시드값과 달라야 정상
+      { name: 'invalid_credentials', request_body: { username: 'demo_user', password: 'wrongPass9' }, expect_status: 401 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  const mismatch = r.drifts.find((d) => d.issue === 'credential_seed_mismatch');
+  assert.equal(mismatch, undefined, 'invalid_credentials는 검사 대상 X');
+});
+
+test('checkSpecSync — login 외 endpoint의 password는 시드 매핑 검사 안 함', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  writeRouter(routerDir, 'auth_signup', {
+    method: 'POST', path: '/auth/signup',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      // signup의 valid_signup은 새 사용자라 어떤 PASS 예든 OK
+      { name: 'valid_signup', request_body: { username: 'newplayer1', password: 'secure99x' }, expect_status: 201 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  const mismatch = r.drifts.find((d) => d.issue === 'credential_seed_mismatch');
+  assert.equal(mismatch, undefined, 'signup은 검사 대상 X');
+});
+
 test('checkSpecSync — signup의 invalid_* / missing_* 는 INSERT 안 일으키므로 충돌 검사 제외', () => {
   const { catalogPath, routerDir } = mkTempDirs();
   // signup의 invalid_username 시나리오 username='ab' (FAIL 예라 INSERT 안 됨)
