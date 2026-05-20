@@ -73,3 +73,13 @@ services:
     depends_on:
       - be
     restart: "no"
+
+# D93 (2026-05-20): docker-compose가 cycle마다 random subnet을 잡는 패턴이 발견됨
+#   (예: 192.168.0.0/20 → UFW 3306 룰 172.16.0.0/12 밖이라 BE→MySQL ETIMEDOUT).
+#   고정 subnet 172.20.0.0/16 으로 두면 매 cycle 같은 대역 → UFW 룰과 항상 매칭.
+#   172.16.0.0/12 안에 들어가는 안전한 값.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

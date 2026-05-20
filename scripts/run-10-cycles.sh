@@ -46,6 +46,8 @@ restore_fixes() {
   cp "$FIX_DIR/agent_prompts.test.js" tests/agent_prompts.test.js
   cp "$FIX_DIR/package.json"         package.json
   mkdir -p .vscode && [ -f "$FIX_DIR/vscode_settings.json" ] && cp "$FIX_DIR/vscode_settings.json" .vscode/settings.json
+  # D93 (2026-05-20): docker-compose.yml에 subnet 172.20.0.0/16 고정 (random subnet 회피)
+  [ -f "$FIX_DIR/docker-compose.yml" ] && cp "$FIX_DIR/docker-compose.yml" lib/stack_templates/docker-compose.yml
   # D89: InitProject가 DB를 origin/main의 agent_schema.sql로 reset해 SpecSync ENUM이 사라짐 →
   #   매 cycle 시작 시 ENUM ALTER 다시 적용. 빈 테이블이라 즉시 완료.
   if [ -f .env ]; then
@@ -63,10 +65,12 @@ if [ ! -f "$RESULTS" ]; then
   printf "cycle\ttask_id\tstart_at\tend_at\tduration_s\tverdict\tphase_summary\n" > "$RESULTS"
 fi
 
-# prompt body (1회)
-node -e "
+# prompt body (1회) — PROMPT_FILE env로 다른 명세서 사용 가능 (default: tmp_big_prompt_run.txt)
+PROMPT_FILE="${PROMPT_FILE:-tmp_big_prompt_run.txt}"
+echo "  📄 PROMPT_FILE = $PROMPT_FILE"
+PROMPT_FILE="$PROMPT_FILE" node -e "
 const fs = require('fs');
-fs.writeFileSync('/tmp/run-body.json', JSON.stringify({ prompt: fs.readFileSync('tmp_big_prompt_run.txt','utf8') }));
+fs.writeFileSync('/tmp/run-body.json', JSON.stringify({ prompt: fs.readFileSync(process.env.PROMPT_FILE,'utf8') }));
 "
 
 for i in $(seq 1 "$N_CYCLES"); do
