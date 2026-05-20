@@ -1,0 +1,38 @@
+{
+  "_comment_search": "VSCode Remote-SSH 검색 속도 최적화. node_modules 2개(BE+FE) + cycle 산출물 + big_cycle_logs/ 가 워크스페이스에 함께 있으면 인덱싱 timeout으로 일부 매치를 놓침. 아래 exclude로 5~10배 빨라짐.",
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/coverage": true,
+    "**/.eslintcache": true,
+    "BE/node_modules": true,
+    "FE/node_modules": true,
+    "BE/db/migrations": true,
+    "big_cycle_logs": true,
+    "**/*.log": true,
+    "**/.git": true,
+    "package-lock.json": true,
+    "**/package-lock.json": true
+  },
+  "_comment_watcher": "파일 변경 감시 부담을 줄여 검색 인덱스 refresh 가 정상적으로 끝나게 함. cycle InitProject 가 BE/src+FE/src 통째 삭제·재생성을 자주 하므로 watcher 폭주가 흔함.",
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/big_cycle_logs/**": true,
+    "**/.eslintcache": true,
+    "**/dist/**": true,
+    "**/coverage/**": true,
+    "**/BE/db/migrations/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  },
+  "files.exclude": {
+    "**/.eslintcache": true,
+    "**/*.bak": true,
+    "**/*.bak_*": true
+  },
+  "search.useIgnoreFiles": true,
+  "search.useGlobalIgnoreFiles": true,
+  "search.smartCase": true,
+  "search.followSymlinks": false,
+  "search.useParentIgnoreFiles": true
+}

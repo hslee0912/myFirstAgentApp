@@ -45,6 +45,7 @@ restore_fixes() {
   cp "$FIX_DIR/spec_sync.test.js"    tests/spec_sync.test.js
   cp "$FIX_DIR/agent_prompts.test.js" tests/agent_prompts.test.js
   cp "$FIX_DIR/package.json"         package.json
+  mkdir -p .vscode && [ -f "$FIX_DIR/vscode_settings.json" ] && cp "$FIX_DIR/vscode_settings.json" .vscode/settings.json
   # D89: InitProject가 DB를 origin/main의 agent_schema.sql로 reset해 SpecSync ENUM이 사라짐 →
   #   매 cycle 시작 시 ENUM ALTER 다시 적용. 빈 테이블이라 즉시 완료.
   if [ -f .env ]; then
