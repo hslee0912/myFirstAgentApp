@@ -100,6 +100,32 @@
 
 ⚠️ `available_username` 같은 "사용 가능 확인" 시나리오는 **PASS 예** 중에서 시드에 없는 값을 골라야 한다 (예: `valid_user`, `player_99`). FAIL 예(`totally_new_user99` 등)를 쓰면 BE validator가 거부해 400을 반환 → scenario FAIL.
 
+### 4-bis. cross-endpoint 격리 (PostTest 직렬 실행 사이드 이펙트 차단 — D90)
+
+PostTest는 endpoint × scenario를 **동일 컨테이너·동일 DB에 직렬 실행**한다. 따라서 한 endpoint의 시나리오가 INSERT한 row가 다음 endpoint의 검증을 *오염*시킬 수 있다. 다음 룰을 *반드시* 따른다:
+
+- **`POST .../signup` (또는 register)의 `valid_*` scenario에서 사용한 `username`** 은 **같은 task의 `GET .../check` (또는 비슷한 "존재 여부 확인") endpoint의 `available_*` scenario에서 *재사용 금지***.
+  - 이유: signup이 INSERT한 row를 check가 그대로 발견 → `available_*` 가 `exists:false`를 기대하는데 `exists:true` 받음 → scenario FAIL.
+- §2 카탈로그 username PASS 예 5개(`newplayer1`, `demo_user`, `valid_user`, `player_99`, `test_user`)를 **겹치지 않게 배분**:
+  - `demo_user` → 시드(존재). `existing_username`, `duplicate_username`, `valid_credentials` 시나리오.
+  - signup `valid_*` → 5개 중 1개 골라 사용 (예: `newplayer1`).
+  - check `available_*` → 위 두 곳에서 안 쓴 다른 값 (예: `player_99` 또는 `test_user`).
+- 같은 원칙이 다른 unique 필드(이메일·전화번호 등)에도 적용된다. POST가 만든 row의 unique 키를 *그 뒤 endpoint의 "존재 안 함" 시나리오*에 쓰지 않는다.
+
+❌ **나쁜 예** (이번 cycle FAIL 사례):
+```json
+"auth_signup": { "test_scenarios": [{ "name": "valid_signup", "request_body": { "username": "valid_user", ... }}] }
+"auth_check":  { "test_scenarios": [{ "name": "available_username", "request_query": { "username": "valid_user" }}] }
+//                                                                                                  ↑ 같은 값 → signup이 INSERT한 row가 check 시점에 존재 → FAIL
+```
+
+✅ **좋은 예**:
+```json
+"auth_signup": { "test_scenarios": [{ "name": "valid_signup", "request_body": { "username": "newplayer1", ... }}] }
+"auth_check":  { "test_scenarios": [{ "name": "available_username", "request_query": { "username": "player_99" }}] }
+//                                                                                                  ↑ signup이 안 쓴 값 → check 시점에 미존재 → PASS
+```
+
 `expect_response_subset`은 `{ success: <bool> }`만 강하게 검증 권장. 동적 값(id, timestamp)·가변 필드는 안 적는 게 안전 (D69).
 
 ## 5. BE Agent용 — `BE/src/validators.js` placeholder 강제 사용

@@ -207,3 +207,78 @@ test('checkSpecSync — duplicate/nonexistent 시나리오는 검증 skip', () =
   assert.equal(r.pass, true);
   assert.equal(r.drifts.length, 0);
 });
+
+// D90: cross-endpoint username 충돌 (signup valid_* INSERT × check available_*)
+
+test('checkSpecSync — cross-endpoint username 충돌 감지 (D90)', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  // signup이 valid_user INSERT
+  writeRouter(routerDir, 'auth_signup', {
+    method: 'POST', path: '/auth/signup',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'valid_signup', request_body: { username: 'valid_user', password: 'Pass1234' }, expect_status: 201 },
+    ],
+  });
+  // check available가 같은 valid_user 사용 → 충돌
+  writeRouter(routerDir, 'auth_check', {
+    method: 'GET', path: '/auth/check',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'available_username', request_query: { username: 'valid_user' }, expect_status: 200 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  assert.equal(r.pass, false);
+  assert.equal(r.drifts.length, 1);
+  assert.equal(r.drifts[0].issue, 'cross_endpoint_username_collision');
+  assert.equal(r.drifts[0].scenario, 'available_username');
+  assert.equal(r.drifts[0].actual, 'valid_user');
+  assert.match(r.fix_instructions, /이미 INSERT한 값/);
+});
+
+test('checkSpecSync — cross-endpoint 분리된 경우 PASS', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  // signup은 newplayer1, check는 player_99 → 겹치지 않음
+  writeRouter(routerDir, 'auth_signup', {
+    method: 'POST', path: '/auth/signup',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'valid_signup', request_body: { username: 'newplayer1', password: 'Pass1234' }, expect_status: 201 },
+    ],
+  });
+  writeRouter(routerDir, 'auth_check', {
+    method: 'GET', path: '/auth/check',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'available_username', request_query: { username: 'player_99' }, expect_status: 200 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  assert.equal(r.pass, true);
+  assert.equal(r.drifts.length, 0);
+});
+
+test('checkSpecSync — signup의 invalid_* / missing_* 는 INSERT 안 일으키므로 충돌 검사 제외', () => {
+  const { catalogPath, routerDir } = mkTempDirs();
+  // signup의 invalid_username 시나리오 username='ab' (FAIL 예라 INSERT 안 됨)
+  writeRouter(routerDir, 'auth_signup', {
+    method: 'POST', path: '/auth/signup',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'invalid_username_format', request_body: { username: 'ab', password: 'Pass1234' }, expect_status: 400 },
+    ],
+  });
+  // check available가 같은 'ab' 사용 → invalid라 충돌 아님 (단 invalid_* PASS 의도 아니라 별개)
+  writeRouter(routerDir, 'auth_check', {
+    method: 'GET', path: '/auth/check',
+    request: { schema: { properties: {} } },
+    test_scenarios: [
+      { name: 'available_username', request_query: { username: 'valid_user' }, expect_status: 200 },
+    ],
+  });
+  const r = checkSpecSync({ catalogPath, routerDir });
+  // cross collision은 0 (signup이 valid_*가 아니라 invalid_*만 가짐)
+  const collisions = r.drifts.filter((d) => d.issue === 'cross_endpoint_username_collision');
+  assert.equal(collisions.length, 0);
+});
