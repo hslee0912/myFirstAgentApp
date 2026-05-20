@@ -1,24 +1,9 @@
 # 판타지 슈팅 게임 프로젝트 — 전체 구성 지시서
 
-> **§0. 게임 메타 정보**
->
-> - **장르**: 판타지 종스크롤 슈팅 (single-player, 키보드 조작)
-> - **레퍼런스**: 마성전설(Knightmare) 오마주. Demo는 React Canvas로 구현.
-> - **best score 의미**: **Yes** — `/api/v1/game/best` endpoint 사용.
-> - **장기 상태 변수**: HP, MP, 현재 stage, score, currentWeapon
-> - **플레이 시간**: 약 3~10분 (HP 0 도달 시 종료)
-> - **저장 단위**: 한 판 끝나면 결과 1행 INSERT
-
-> ⚠️ **이 명세서의 가장 중요한 룰**: 모든 *수치·enum·색·매핑*은 `FE/src/constants/game.js` placeholder에 *이미 정의됨*. `GamePage.jsx`는 **반드시 import해서 사용**. 인라인 hex / 인라인 enum / 단일 숫자 fallback (`|| 10` 등) **금지**. 표 형식은 *사람이 읽기 위함*이지 LLM이 다시 변환하라는 게 아님 — placeholder가 ground truth.
-
----
-
 ## 1. 프로젝트 개요
 
-- 마성전설(Knightmare) 오마주 판타지 종스크롤 슈팅 게임.
-- 주인공이 SelectPage에서 무기 1개를 선택 → GamePage에서 *그 무기로만* 진행 (게임 중 무기 변경 불가).
-- HP/MP 자원 관리 + 적 무기별 패턴 + 스테이지별 시각적 난이도 곡선이 핵심.
-- Demo는 React Canvas로 1000×750 화면에서 진행.
+- 마성전설(Knightmare) 오마주 판타지 종스크롤 슈팅 게임
+- Demo는 React로 제작, **인게임 로직만 추후 Phaser.js로 리팩토링** 예정 (이번 단계에서는 React Canvas로 구현)
 
 ---
 
@@ -26,664 +11,318 @@
 
 ```
 myFirstAgentApp/
-├── .env                       # DB·BE_PORT 등 (이미 설정됨)
+├── .env                       # DB 접속 정보 등 환경변수
 ├── package.json
 ├── BE/
 │   └── src/
-│       ├── server.js          # Express 진입점 (placeholder)
-│       ├── validators.js      # 🔒 결정론 placeholder (rules/domain.md §2 카탈로그)
-│       ├── db.js              # mysql2 연결
+│       ├── server.js          # Express 서버
+│       ├── db.js              # MySQL 연결
 │       └── routes/
-│             ├── auth.js      # POST /signup, GET /check, POST /login
+│             ├── auth.js      # POST /signup, POST /login
 │             └── result.js    # POST /result, GET /best
 └── FE/
     └── src/
         ├── App.jsx
-        ├── constants/
-        │   └── game.js        # 🔒 결정론 placeholder (게임별 enum/색/수치)
         ├── pages/
-        │   ├── LoginPage.jsx       # ID/PW 입력 + MemberShipPage 이동
-        │   ├── MemberShipPage.jsx  # 회원가입 (ID 중복확인 / PW + Confirm PW / 한글 player_name)
-        │   ├── SelectPage.jsx      # 무기 4종 선택 (게임 시작 전 유일한 무기 선택 시점)
-        │   ├── GamePage.jsx        # 종스크롤 인게임 (React Canvas, 무기 변경 X)
-        │   └── ResultPage.jsx      # 점수 + 분석 결과 + report.html 다운로드
+        │   ├── LoginPage.jsx       # ID / PW / Player name 입력, MemberShipPage 이동 버튼
+        │   ├── MemberShipPage.jsx  # 회원가입 (ID 중복확인 / PW + Confirm PW / Player name 한글 허용)
+        │   ├── SelectPage.jsx      # 무기 4종 선택
+        │   ├── GamePage.jsx        # 종스크롤 인게임 (React Canvas)
+        │   └── ResultPage.jsx      # 점수 + 분석 결과
         └── components/
 ```
 
-> 🔒 표시 파일은 `stack.config.json.protectedConfigFiles` 등록됨. Agent 응답에 포함 시 차단.
+> LoginPage, MemberShipPage, SelectPage, GamePage, ResultPage는 슈팅 게임 분위기에 맞게 화려하게 꾸밀 것.
+> 회원가입 / 로그인은 **반드시 API 단위 호출 테스트(Postman 등)로 정상 동작 확인**.
 
-### 2-bis. UI 꾸미기 (필수 — "기본 흰 배경 + 검은 글씨" 금지)
-
-판타지 슈팅 분위기 = **어두운 배경 + 금/보라/청록 accent + 게임 캔버스의 화려한 색**. 모든 페이지에 다음 공통 룰 적용:
-
-| 요소 | 스타일 |
-|---|---|
-| body / 페이지 배경 | `linear-gradient(180deg, #0a0a1a 0%, #1e1a33 100%)` (검정→어두운 보라 그라데이션) |
-| 카드/패널 배경 | `rgba(20, 20, 35, 0.85)` 반투명 + 1px solid `#FFD700` (금색 외곽) + `border-radius: 8px` |
-| 제목 폰트 | `font-family: 'Cinzel', serif` (또는 시스템 serif fallback), 색 `#FFD700`, text-shadow `0 0 8px #FFD700` |
-| 본문 폰트 | sans-serif, 색 `#E0E0E0` |
-| 버튼 (active) | 배경 `linear-gradient(180deg, #A347FF, #5C1AFF)`, 글자 white, hover 시 box-shadow `0 0 12px #A347FF` |
-| 버튼 (disabled) | 배경 `#333333`, 글자 `#666666`, cursor not-allowed |
-| 입력 필드 | 배경 `#1A1A2E`, 1px solid `#444`, focus 시 border `#FFD700` |
-| 에러 메시지 | 색 `#FF4D4D`, 12px |
-
-페이지별 추가:
-
-- **LoginPage / MemberShipPage**: 가운데 정렬 카드 (max-width 400px), 제목 `"⚔️ 마성전설"` 또는 영문 `"Knightmare"`.
-- **SelectPage**: 4개 무기 카드 가로 배치 (각 카드 200×280px). 각 카드 배경은 *그 무기의 placeholder 색* (`WEAPONS[i].color`)을 *50% 불투명도*로. 선택 시 외곽선 white 2px + 글로우. 카드 안에 무기 이름·cost·패턴 표시.
-- **GamePage**: 캔버스 1000×750 외 좌우 여백은 어두운 그라데이션. HUD는 §6-2 위치 그대로.
-- **ResultPage**: 가운데 카드, 큰 점수 글자 (48px gold), 통계 list, 하단 "다시 시작" 버튼.
-
-🚫 **금지 — 기본 brower default 스타일**:
-- 흰 배경 (body { background: white })
-- 검은색 글자 (color: black) 만 사용
-- 외곽선·box-shadow 없는 plain HTML 버튼
-- "잘 안 보이는" 회색 + 회색 조합
-
----
 
 ## 3. 환경 변수 (.env, 이미 설정됨)
 
-`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `BE_PORT`(3001) / `FE_PORT`(5173). placeholder가 `process.env.BE_PORT || 3001` 패턴 사용. ⚠️ `JWT_SECRET`은 본 PoC *사용 안 함*. 로그인 응답엔 `player_id` / `username` / `player_name`만.
+`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `BE_PORT` (placeholder가 `process.env.BE_PORT || 3001` 사용 — 변수명 유지).
+⚠️ `JWT_SECRET`은 본 PoC *사용 안 함*. 로그인 응답엔 토큰 대신 `player_id` / `username` / `player_name`만.
 
 ---
 
 ## 4. MySQL 스키마 (테이블 2개 + 시드)
 
-`BE/db/migrations/<UTC ts>_<name>.sql` emit. orchestrator Phase 2.5가 자동 적용. **charset/collation은 `utf8mb4` / `utf8mb4_unicode_ci`** (한글 player_name). `CREATE INDEX IF NOT EXISTS`는 MySQL 미지원 — INDEX는 `CREATE TABLE` 안에 선언.
+> `BE/db/migrations/<UTC ts>_<name>.sql` emit. orchestrator Phase 2.5가 자동 적용. **charset/collation은 `utf8mb4` / `utf8mb4_unicode_ci`** (한글 player_name).
+> `CREATE INDEX IF NOT EXISTS`는 MySQL 미지원 — INDEX는 `CREATE TABLE` 안에 선언.
 
-### 4-1. `player_users` (완전 고정)
-
+### 4-1. `player_users`
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
 | id | BIGINT PK AUTO_INCREMENT | |
 | username | VARCHAR(32) UNIQUE NOT NULL | 영문/숫자/언더스코어, 4~16자 |
-| password_hash | CHAR(60) NOT NULL | bcrypt rounds=10 |
+| password_hash | CHAR(60) NOT NULL | bcrypt rounds=10 (60자) |
 | player_name | VARCHAR(60) NOT NULL | 한글 허용, 2~12자 |
 | created_at | DATETIME DEFAULT CURRENT_TIMESTAMP | |
 
 ### 4-2. `game_results`
-
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
 | id | BIGINT PK AUTO_INCREMENT | |
 | player_id | BIGINT NOT NULL | FK → player_users(id) |
-| score | INT NOT NULL | |
 | stage | TINYINT NOT NULL | 1~5 |
-| weapon_used | VARCHAR(32) NOT NULL | enum: §7-10 `WEAPONS[*].id` |
+| score | INT NOT NULL | |
+| weapon_used | VARCHAR(32) NOT NULL | holy_sword / fire_magic / thunder_lance / holy_light |
 | play_duration | INT NOT NULL | 초 |
 | pattern_seed | VARCHAR(64) | nullable |
-| is_best | TINYINT(1) DEFAULT 0 | |
-| play_time | DATETIME NOT NULL | MySQL `'YYYY-MM-DD HH:MM:SS'`. FE가 ISO 8601 보내면 BE에서 `new Date(s).toISOString().slice(0,19).replace('T',' ')` |
+| is_best | TINYINT(1) DEFAULT 0 | 개인 최고 점수 여부 |
+| play_time | DATETIME NOT NULL | ⚠️ MySQL `'YYYY-MM-DD HH:MM:SS'` 형식만. FE가 ISO 8601 보내면 BE에서 `new Date(s).toISOString().slice(0,19).replace('T',' ')`로 변환 (안 하면 500). |
 | INDEX | (player_id, score DESC) | |
 
-### 4-3. 시드
+### 4-3. 시드 (INSERT IGNORE 1건씩)
 
 - `player_users`: `(username='demo_user', password_hash='$2b$10$fmKqy9chmRPcdIq6nEbRoeP7bNX7CPQmZ7felu0VOleDBqeUO96Aq', player_name='데모용사')`
 - `game_results`: `(player_id=1, stage=1, score=500, weapon_used='holy_sword', play_duration=120, pattern_seed='seed_001', is_best=1, play_time=NOW())`
 
+> ⚠️ **시드 정합성 (PostTest fail 방지)** — 시드 row는 BE 핸들러 validation을 *전부* 통과해야 함:
+> - username regex가 underscore 허용해야 시드 `demo_user` 통과 (§5-5-1 #2).
+> - `password_hash`는 위 60자 hash *그대로* 박을 것 — `bcrypt.compareSync('Pass1234', hash) === true` 검증 완료된 실제 hash. 예시처럼 보여 placeholder로 오인하고 다른 hash로 교체 시 login valid_credentials 시나리오 401 fail.
+
 ---
 
-## 5. 회원가입 / 로그인 규칙 (모든 게임 동일 — rules/domain.md §2 참조)
+## 5. 회원가입 / 로그인 규칙
 
-### 5-1. 입력 필드 (`MemberShipPage.jsx`)
+### 5-1. 입력 필드 (MemberShipPage.jsx)
 
-| 필드 | FE 검증 | BE 재검증 |
+| 필드 | FE 검증 (실시간) | BE 재검증 |
 |---|---|---|
-| ID (`username`) | `^[a-zA-Z0-9_]{4,16}$`, **/auth/check 중복 확인 필수** | 정규식 + UNIQUE |
-| Password | 8자 이상, 영문+숫자 혼합 (`^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$`) | 동일 |
-| Confirm Password | Password와 완전 일치 | (FE only) |
+| ID (`username`) | 영문/숫자/언더스코어 4~16자, **/auth/check로 중복 확인 필수** | 정규식 + UNIQUE |
+| Password | 8자 이상, 영문+숫자 혼합 | 동일 정규식 |
+| Confirm Password | Password와 완전 일치해야 가입 버튼 활성 | (FE only) |
 | Player Name | 한글/영문/숫자, 2~12자 | 길이 검증 |
 
 ### 5-2. 가입 버튼 활성 조건 (FE, AND)
 1. 모든 필드 클라이언트 검증 PASS
 2. Confirm Password = Password
-3. `/auth/check` 응답 `exists:false`로 중복확인 통과
+3. **`/auth/check` 응답 `exists:false`로 중복확인 통과**
 
-ID 입력 변경 시 중복확인 상태 reset.
+ID 입력이 바뀌면 *중복확인 상태 reset* — 다시 누르기 전까진 가입 비활성.
 
 ### 5-3. 보안
-- 평문 저장 금지. `bcrypt.hash(password, 10)` (`bcryptjs` 아님).
-- 로그인 응답에 토큰 X. `player_id` / `username` / `player_name`만.
 
-### 5-4. BE Endpoint 5종
+- 평문 저장 금지. **`bcrypt`** (정확한 철자, `bcryptjs` 아님) `bcrypt.hash(password, 10)` 으로 해시.
+- 로그인 응답에 토큰 X. `player_id` / `username` / `player_name`만 — FE가 sessionStorage/state에 보관.
 
-| # | Endpoint | Method |
-|---|---|---|
-| 1 | `/api/v1/auth/signup` | POST |
-| 2 | `/api/v1/auth/check` | GET |
-| 3 | `/api/v1/auth/login` | POST |
-| 4 | `/api/v1/game/result` | POST |
-| 5 | `/api/v1/game/best` | GET |
+### 5-4. BE Endpoint 5종 — contract와 정확히 일치 (D66 가드)
 
-#### 5-5-1. `POST /api/v1/auth/signup`
-1. body `{username, password, player_name}` 누락 → `400 {error:"Missing required fields"}`
-2. `validateUsername(username)` 실패 → `400 {error:"Invalid username format"}`
-3. `validatePassword(password)` 실패 → `400 {error:"Password too short or invalid"}`
-4. `validatePlayerName(player_name)` 실패 → `400 {error:"Invalid player name"}`
+| # | Endpoint | Method | 핵심 |
+|---|---|---|---|
+| 1 | `/api/v1/auth/signup` | POST | 회원가입 + 중복 체크 + bcrypt 해시 |
+| 2 | `/api/v1/auth/check` | GET | username 중복 여부 |
+| 3 | `/api/v1/auth/login` | POST | bcrypt.compare + 세션 정보 응답 |
+| 4 | `/api/v1/game/result` | POST | 결과 저장 + is_best 계산 |
+| 5 | `/api/v1/game/best` | GET | 개인 최고 + 이력 없으면 default |
+
+> ⚠️ FE는 이 목록의 path만 fetch. 다른 path 발명 시 `FE_CONTRACT_DRIFT` ERROR. BE는 5개 모두 mount해야 ContractSync PASS.
+
+#### 5-5-1. `POST /api/v1/auth/signup` (반드시 이 순서)
+
+1. body `{username, password, player_name}` 누락 → `400 {success:false, error:"Missing required fields"}`
+2. username 정규식 `/^[a-zA-Z0-9_]{4,16}$/` (underscore 포함, 시드 `demo_user` 통과 필수) → 실패 `400 {error:"Invalid username format"}`
+3. password 정규식 `8자 이상 + 영문+숫자 혼합` → 실패 `400 {error:"Password too short or invalid"}`
+4. player_name 길이 2~12 (`String#length`) → 위반 `400`
 5. `SELECT id FROM player_users WHERE username=?` → 있으면 `409 {error:"Username already exists"}`
-6. `bcrypt.hash(password, 10)` → INSERT → `201 {success:true, data:{id, username, player_name}}`
+6. `bcrypt.hash(password, 10)` (정확한 패키지)
+7. `INSERT INTO player_users (username, password_hash, player_name) VALUES (?, ?, ?)`
+8. `201 {success:true, data:{id:insertId, username, player_name}}`
 
 #### 5-5-2. `GET /api/v1/auth/check?username=<string>`
-1. 누락/형식 위반 → `400 {error:"Invalid username"}`
-2. SELECT → `200 {data:{exists:boolean}}`
+
+1. query.username 누락/형식 위반 → `400 {error:"Invalid username"}`
+2. `SELECT id FROM player_users WHERE username=?`
+3. `200 {success:true, data:{exists:boolean}}`
 
 #### 5-5-3. `POST /api/v1/auth/login`
-1. 누락 → `400`
-2. row 없거나 bcrypt.compare false → `401 {error:"Invalid username or password"}`
-3. PASS → `200 {data:{player_id, username, player_name}}`
 
-#### 5-5-4. `POST /api/v1/game/result` (datetime 변환 필수)
-1. body 누락 → `400`
-2. `validateStage` (1~5) / `validateNonNegativeInt(score/play_duration)` / weapon_used ∈ §7-10 `WEAPONS[*].id` enum → 위반 `400`
-3. `play_time` 변환: `new Date(play_time).toISOString().slice(0,19).replace('T',' ')`
+1. body `{username, password}` 누락 → `400`
+2. `SELECT id, username, password_hash, player_name FROM player_users WHERE username=?`
+3. row 없으면 → `401 {success:false, error:"Invalid username or password"}` (계정 존재 누설 방지)
+4. `bcrypt.compare(password, row.password_hash)` false → 같은 `401`
+5. `200 {success:true, data:{player_id:row.id, username, player_name}}`
+
+#### 5-5-4. `POST /api/v1/game/result` (⚠️ datetime 변환 필수)
+
+1. body `{player_id, stage, score, weapon_used, play_duration, pattern_seed, play_time}` 누락 → `400`
+2. stage 1~5 / score≥0 / play_duration≥0 / weapon_used ∈ `['holy_sword','fire_magic','thunder_lance','holy_light']` → 위반 `400`
+3. **`play_time` 변환** (필수): `new Date(play_time).toISOString().slice(0,19).replace('T',' ')` — 안 하면 `ER_TRUNCATED_WRONG_VALUE` 500
 4. `SELECT MAX(score) FROM game_results WHERE player_id=?` (없으면 0)
-5. score > currentBest면 is_best=1 + 기존 is_best=1 row UPDATE 0
-6. INSERT → `201 {data:{result_id, is_best}}`
+5. `score > currentBest`면 `is_best=1` + 같은 player 기존 `is_best=1` row를 `UPDATE ... SET is_best=0`
+6. `INSERT INTO game_results (player_id, stage, score, weapon_used, play_duration, pattern_seed, is_best, play_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+7. `201 {success:true, data:{result_id:insertId, is_best}}`
 
-#### 5-5-5. `GET /api/v1/game/best?player_id=<int>`
-1. 누락/숫자 아님 → `400`
-2. row 없으면 → `200 {data:{best_score:0, stage_reached:0, weapon_used:'none'}}` (null 금지)
-3. row 있으면 → `200 {data:{best_score, stage_reached, weapon_used}}`
+#### 5-5-5. `GET /api/v1/game/best?player_id=<integer>` (⚠️ default 필수)
 
-> PostTest 안정성: game/result 시나리오 score 모두 시드 500 미만. game/best는 시드 검증.
+1. query.player_id 누락/숫자 아님 → `400`
+2. `SELECT score, stage, weapon_used FROM game_results WHERE player_id=? AND is_best=1 ORDER BY score DESC LIMIT 1`
+3. row 없으면 → `200 {success:true, data:{best_score:0, stage_reached:0, weapon_used:'none'}}` *(null 반환 금지 — contract type 유지)*
+4. row 있으면 → `200 {success:true, data:{best_score:row.score, stage_reached:row.stage, weapon_used:row.weapon_used}}`
+
+> ⚠️ **PostTest 시나리오 안정성 — 시드 best 보존 (CodeChecker가 test_scenarios 작성 시 *필수*)**
+> PostTest는 endpoint × 시나리오를 *동일 컨테이너/DB*에 직렬 실행. `game/result` POST가 시드(500)보다 큰 score를 넣으면 is_best 갱신 → 직후 `game/best` GET 시나리오가 시드 mismatch FAIL.
+> **룰:** `game/result` 시나리오 score는 *모두 500 미만* (예: 100, 200). `game/best` 시나리오는 시드 그대로 검증 (`{data:{best_score:500, stage_reached:1, weapon_used:"holy_sword"}}`). 일반 원칙: *집계 endpoint(best/top/latest)는 시드 검증, 그 시드를 갈아치울 다른 endpoint 시나리오값은 시드보다 작게*.
 
 ### 5-6. 중복확인 FE 흐름
-1. ID 입력 + 클라이언트 검증 PASS → "중복확인" 버튼 enabled
-2. 클릭 → GET /auth/check → exists:false → `usernameAvailable=true`
-3. ID 변경 시 `usernameChecked=false` reset
+
+1. ID 입력 → 클라이언트 검증 PASS → "중복확인" 버튼 enabled
+2. 클릭 → `GET /api/v1/auth/check?username=<encoded>`
+3. `exists:false` → 사용 가능 메시지 + `usernameAvailable=true`
+4. `exists:true` → 이미 사용중 + `usernameAvailable=false`
+5. ID 변경 시 `usernameChecked=false` reset
 
 ---
 
 ## 6. 화면 / 그래픽 규격
 
-### 6-1. 캔버스·기본 시각
-
-- 캔버스: **1000 × 750 px 고정** (placeholder `CANVAS`)
-- 주인공: 흰색 원 (반지름 16px), 화면 하단 중앙 시작 (`y = 700`)
-- 적: 도형 4종 × 무기색 (§7-2, placeholder `ENEMY_SHAPE_BY_WEAPON` + `WEAPONS[*].color`)
-- 탄환: 무기 색 (작은 원, 반지름 4px)
-
-### 6-2. HUD — *반드시 그릴 5개 항목*
-
-**모든 항목은 매 frame `ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(...)` 으로 반투명 검정 박스 깔고 그 위에 텍스트를 그릴 것** (그라데이션 배경 위 가독성).
-
-| # | 항목 | 위치 | 형식 | 데이터 출처 |
-|---|---|---|---|---|
-| 1 | HP 게이지 | `top:16, left:16, w:200, h:16` | 배경 `#333` → fill `#FF4D4D` 폭 `200*hp/100` + 외곽 white 1px + 텍스트 `"HP <hp>/100"` 12px white | `s.player.hp` |
-| 2 | MP 게이지 | `top:40, left:16, w:200, h:16` | 배경 `#333` → fill `#33B5FF` 폭 `200*mp/100` + 외곽 white 1px + 텍스트 `"MP <mp>/100"` 12px white | `s.player.mp` |
-| 3 | Score | `top:16, left:240` | `"SCORE: <score>"` 14px `#FFD700` | `s.score` |
-| 4 | 스테이지 제목 | `top:16, right:16` | `"Stage <n> · <theme>"` 12px white, 우측 정렬 | `STAGES[s.currentStage-1].theme` |
-| 5 | **현재 무기 이름** (필수) | `top:40, left:240` | `"⚔ <무기 한글명>"` 14px `<무기 색>`. 한글 이름 매핑은 §7-4 표 | `s.player.weapon` |
-
-🚫 **금지**: HP만 그리고 MP·Score·Stage·Weapon 누락. 5개 *모두* 매 frame `(state.gameOver ? 마지막값 : 현재값)` 그리기.
-
+- 캔버스: **1000 × 750 px 고정**
+- 주인공: 흰색 원
+- 적: 세모, 색깔은 자기 장비 무기 색과 동일
+- 초기 플레이어 HP: 100, MP : 100 고정 
+- HP는 화면 상단 게이지 표시.
 ---
 
-## 7. 게임 규칙
+## 7. 무기 4종
 
-### 7-1. 장르
-판타지 종스크롤 슈팅. SelectPage에서 선택한 *단일 무기*로 5스테이지 진행. 한 발 즉사 적.
-
-### 7-2. 적 모양·색 1:1 매핑
-
-| 적이 든 무기 | 모양 | 색 | placeholder |
-|---|---|---|---|
-| `holy_sword` | 세모 (정삼각형 ▲) | `#FFD700` | `ENEMY_SHAPE_BY_WEAPON.holy_sword === 'triangle'` |
-| `thunder_lance` | 별 (5각 ★) | `#A347FF` | `ENEMY_SHAPE_BY_WEAPON.thunder_lance === 'star'` |
-| `fire_magic` | 네모 (정사각형 ■) | `#FF3B30` | `ENEMY_SHAPE_BY_WEAPON.fire_magic === 'square'` |
-| `holy_light` | 역삼각형 (▽) | `#33E0E0` | `ENEMY_SHAPE_BY_WEAPON.holy_light === 'inverted_triangle'` |
-
-**구현 패턴 (반드시 이 패턴 그대로)**:
-
-```js
-import { WEAPONS, ENEMY_SHAPE_BY_WEAPON } from '../constants/game';
-
-function drawEnemy(ctx, enemy) {
-  const weaponDef = WEAPONS.find(w => w.id === enemy.weapon);
-  ctx.fillStyle = weaponDef.color;  // 무기 색 그대로
-  const shape = ENEMY_SHAPE_BY_WEAPON[enemy.weapon];
-  if (shape === 'triangle')          { /* moveTo+lineTo 정삼각형 */ }
-  else if (shape === 'star')         { /* 10점 별 */ }
-  else if (shape === 'square')       { ctx.fillRect(enemy.x-12, enemy.y-12, 24, 24); }
-  else if (shape === 'inverted_triangle') { /* 역삼각형 */ }
-}
-```
-
-🚫 **금지**: `enemy.color = '#ff4466'` 같은 인라인 hex. 모든 적 색은 *반드시* `WEAPONS.find(...).color`.
-
-### 7-3. 초기 상태
-
-| 변수 | 초기값 | 출처 |
-|---|---|---|
-| `s.player.hp` | 100 | `HERO_INITIAL.hp` |
-| `s.player.mp` | 100 | `HERO_INITIAL.mp` |
-| `s.player.weapon` | (SelectPage 전달값) | `route.state` 또는 sessionStorage |
-| `s.player.x` | 500 | `CANVAS.width / 2` |
-| `s.player.y` | 700 | `CANVAS.height - 50` |
-| `s.score` | 0 | - |
-| `s.currentStage` | 1 | - |
-| `s.gameOver` | false | - |
-| `s.paused` | false | - |
-| `s.lastFireTime` | `{ [weaponId]: 0 }` | §7-4 |
-| `s.lastMpRegen` | 0 | §7-4 |
-| `s.lastAttackTime` | 0 | §7-4 |
-| `s.spawnTimer` | `Date.now() + SPAWN_CONFIG.firstSpawnDelayMs` | §7-9-2 |
-
-### 7-4. 자원·점수·발사 룰 — *코드 패턴 반드시 적용*
-
-#### MP 회복 (필수 — *placeholder 속성명 그대로*)
-
-```js
-import { MP_REGEN, HERO_INITIAL } from '../constants/game';
-
-// game loop 매 frame 안 (gameOver / paused 아닐 때만):
-if (!s.gameOver && !s.paused) {
-  const now = Date.now();
-  const sinceLastAttack = now - s.lastAttackTime;
-  const sinceLastRegen  = now - s.lastMpRegen;
-  // 공격 후 cooldownAfterFireMs 동안은 회복 X, 그 외엔 intervalMs마다 amount씩
-  if (sinceLastAttack >= MP_REGEN.cooldownAfterFireMs && sinceLastRegen >= MP_REGEN.intervalMs) {
-    s.player.mp = Math.min(HERO_INITIAL.mp, s.player.mp + MP_REGEN.amount);
-    s.lastMpRegen = now;
-  }
-}
-```
-
-⚠️ **placeholder 속성명 정확**: `MP_REGEN.cooldownAfterFireMs` / `MP_REGEN.intervalMs` / `MP_REGEN.amount`. *다른 이름으로 변형 금지* (`attackCooldownMs` 같은 변형 발견 시 placeholder import 누락 또는 잘못된 이름 사용 — 명세 위반).
-
-#### HP 감소 (피탄·충돌)
-
-```js
-import { DAMAGE } from '../constants/game';
-// 적 탄환 피탄 시
-s.player.hp = Math.max(0, s.player.hp - DAMAGE.bulletHit);
-// 적 본체 충돌 시
-s.player.hp = Math.max(0, s.player.hp - DAMAGE.enemyCollide);
-```
-
-#### 발사 (Space 키 입력)
-
-```js
-import { WEAPONS } from '../constants/game';
-
-function tryFire(s, now) {
-  const wId = s.player.weapon;
-  const wDef = WEAPONS.find(w => w.id === wId);
-  if (s.player.mp < wDef.cost) return;  // MP 부족
-  if (now - (s.lastFireTime[wId] || 0) < wDef.fireDelayMs) return;  // cooldown
-  s.player.mp = Math.max(0, s.player.mp - wDef.cost);
-  s.lastFireTime[wId] = now;
-  s.lastAttackTime = now;  // MP 회복 cooldown trigger
-  spawnPlayerBullet(s, wDef);  // wDef.pattern: single/fan/pierce/omni 분기
-}
-```
-
-#### 주인공 무기 4종 (placeholder `WEAPONS` 그대로)
-
-| 무기 (한글) | id | cost | 패턴 | 색 | 발사 딜레이 |
+| # | 무기 | 식별자 | 자원 | 발사 패턴 | 색상 |
 |---|---|---|---|---|---|
-| 성검 | `holy_sword` | 0 | single (직선 단발) | `#FFD700` | 100ms |
-| 번개 창 | `thunder_lance` | 3 | pierce (관통 고속) | `#A347FF` | 300ms |
-| 불꽃 마법 | `fire_magic` | 5 | fan (부채꼴 3발 ±20°) | `#FF3B30` | 200ms |
-| 성스러운 빛 | `holy_light` | 8 | omni (8방향) | `#33E0E0` | 400ms |
+| 1 | 성검 | `holy_sword` | 무제한 | 직선 단발 | `#FFD700` |
+| 2 | 불꽃 마법 | `fire_magic` | MP 5 | 부채꼴 범위 | `#FF3B30` |
+| 3 | 번개 창 | `thunder_lance` | MP 3 | 관통 고속 직선 | `#A347FF` |
+| 4 | 성스러운 빛 | `holy_light` | MP 8 | 360° 전방향 | `#33E0E0` |
 
-위 표는 *읽기 용*. 코드는 `WEAPONS.find(w => w.id === s.player.weapon)`로 즉시 조회.
+> 4색은 서로 다르고 주인공 흰색과도 안 겹침. 자원 부족 시 발사 불가, 성검은 항상 가능.
+> 플레이어가 게임 시작 전에 반드시 하나를 선택해야 게임 진행
+---
 
-### 7-5. Stage 전환 — *코드 패턴 반드시 적용*
+## 8. 스테이지
 
-#### 매 frame 배경 그리기 (필수 — 인라인 hex 금지)
-
-```js
-import { STAGES, CANVAS } from '../constants/game';
-
-// game loop 매 frame 첫 줄
-const stageData = STAGES[s.currentStage - 1];
-ctx.fillStyle = stageData.bgColor;  // ← STAGES placeholder의 bgColor 그대로
-ctx.fillRect(0, 0, CANVAS.width, CANVAS.height);
-```
-
-🚫 **금지 패턴 (이번 cycle 실패 원인)**:
-- `ctx.fillStyle = '#000000'` 또는 임의 hex로 배경 — STAGES 안 씀
-- `STAGES[currentStage-1]` 사용 안 함 → stage 전환해도 배경 안 바뀜
-
-#### Stage 전환 검사 (적 격파 후 score 갱신 직후)
-
-```js
-// score 갱신 후
-const cur = STAGES[s.currentStage - 1];
-if (cur.scoreThreshold !== null && s.score >= cur.scoreThreshold && s.currentStage < 5) {
-  s.currentStage += 1;
-  // 즉시 다음 spawn은 새 ENEMY_POOLS[s.currentStage]에서
-}
-```
-
-#### Stage 데이터 (placeholder `STAGES` 그대로)
-
-| Stage | 테마 | 배경 | scoreThreshold |
+| Stage | 테마 | 전환 조건 (누적 score) | **배경색 (필수)** |
 |---|---|---|---|
-| 1 | Magic Forest | `#1B4D2E` | 1000 |
-| 2 | Cursed Swamp | `#1A3D3A` | 2000 |
-| 3 | Lava Volcano | `#5C1A0E` | 3000 |
-| 4 | Dark Castle | `#1E1A33` | 4000 |
-| 5 | Demon Tower | `#0A0A0A` | null (마지막) |
+| 1 | 마법의 숲 | 누적 score ≥ 1000 → Stage 2 | `#1B4D2E` (짙은 숲 녹색) |
+| 2 | 저주의 늪 | 누적 score ≥ 2000 → Stage 3 | `#1A3D3A` (어두운 청록 늪) |
+| 3 | 용암 화산 | 누적 score ≥ 3000 → Stage 4 | `#5C1A0E` (용암 진홍/적갈) |
+| 4 | 암흑 성채 | 누적 score ≥ 4000 → Stage 5 | `#1E1A33` (어둠 자주/회보라) |
+| 5 | 마왕의 탑 | 최종, 전환 없음 | `#0A0A0A` (칠흑) |
 
-### 7-6. 게임오버 — *그 frame*에 즉시
+- Stage 선택 UI 없이 **무조건 1부터 시작**. 스테이지별 배경 그래픽 다르게.
 
+### 8-bis. ⚠️ 스테이지 배경색 — *반드시 stage 제목과 매핑* (시각 검증 핵심)
+
+스테이지가 바뀌었는데 *배경이 안 바뀌면* 사용자는 stage 전환 자체를 인지 못함. 따라서 배경색은 *stage 제목과 1:1 매핑*되어야 하고, *매 frame render의 첫 fillRect*가 *현재 stage 배경색*을 사용해야 함.
+
+**❌ 나쁨** — 배경색이 stage와 무관 / hardcoded 검정:
 ```js
-if (s.player.hp <= 0 && !s.gameOver) {
-  s.gameOver = true;
-  cancelAnimationFrame(rafIdRef.current);
-  navigate('/result', { state: { score: s.score, stage: s.currentStage, weapon: s.player.weapon, playDuration: ((Date.now() - s.startTime)/1000)|0 } });
-  return;  // game loop body 즉시 종료
-}
+renderCtx.fillStyle = '#000';
+renderCtx.fillRect(0, 0, w, h);
 ```
 
-🚫 **금지**: setTimeout/setInterval로 navigate 지연. spawn·탄환 한 frame 더 진행. HP 음수 누적.
-
-### 7-7. 승리 조건
-없음. Stage 5 무한 진행, HP 0만 종료.
-
-### 7-8. 점수 가산 — *placeholder 사용 필수*
-
+**✅ 좋음** — STAGES 배열에 `bgColor`를 stage 제목과 함께 박고, render 첫 줄에서 사용:
 ```js
-import { SCORE_PER_STAGE } from '../constants/game';
-
-// 적 격파 시
-s.score += SCORE_PER_STAGE[s.currentStage];
-// fallback `|| 10` 금지 — currentStage는 항상 1~5라 SCORE_PER_STAGE에 정의됨
-```
-
-| Stage | 적 격파당 |
-|---|---|
-| 1 | 100 |
-| 2 | 90 |
-| 3 | 80 |
-| 4 | 60 |
-| 5 | 50 |
-
-🚫 **금지**: `s.score += 10` 같은 단일 값. 항상 `SCORE_PER_STAGE[s.currentStage]`.
-
-### 7-9. 적 — *코드 패턴 반드시 적용*
-
-#### 7-9-1. spawn 시 무기 결정 (필수 — ENEMY_POOLS 사용 강제)
-
-```js
-import { ENEMY_POOLS, WEAPONS, ENEMY_SHAPE_BY_WEAPON, ENEMY_MOVEMENT } from '../constants/game';
-
-function spawnEnemy(s, now) {
-  const pool = ENEMY_POOLS[s.currentStage];  // ← stage별 pool 사용
-  const weaponId = pool[Math.floor(Math.random() * pool.length)];
-  const weaponDef = WEAPONS.find(w => w.id === weaponId);
-  const movements = ['straight', 'zigzag', 'formation'];
-  const movement = movements[Math.floor(Math.random() * movements.length)];
-  return {
-    x: Math.random() * (CANVAS.width - 40) + 20,
-    y: -20,
-    weapon: weaponId,
-    color: weaponDef.color,
-    shape: ENEMY_SHAPE_BY_WEAPON[weaponId],
-    movement,
-    spawnTime: now,
-    lastFireTime: now,
-    alive: true,
-  };
-}
-```
-
-🚫 **금지 (이번 cycle 실패 원인)**:
-- `enemy.weapon = 'holy_sword'` 같이 하나로 고정 → 모든 적이 디폴트 무기
-- 랜덤 hex 색 사용 → 적 색 ≠ 무기 색
-- ENEMY_POOLS 안 쓰기 → stage별 적 다양성 X
-
-#### 7-9-2. spawn 보충
-
-```js
-import { SPAWN_CONFIG } from '../constants/game';
-
-function updateSpawn(s, now) {
-  if (s.gameOver || s.paused) return;
-  const interval = SPAWN_CONFIG.intervalByStage[s.currentStage];
-  const aliveCount = s.enemies.filter(e => e.alive).length;
-  // 화면 적이 minOnScreen 미만이면 즉시 spawn 강제
-  if (aliveCount < SPAWN_CONFIG.minOnScreen) {
-    s.spawnTimer = Math.min(s.spawnTimer, now);
-  }
-  if (now >= s.spawnTimer && aliveCount < SPAWN_CONFIG.maxOnScreen) {
-    s.enemies.push(spawnEnemy(s, now));
-    s.spawnTimer = now + interval;
-  }
-}
-```
-
-#### 7-9-3. 이동 패턴 (placeholder `ENEMY_MOVEMENT` 사용)
-
-```js
-function moveEnemy(e, dt, now) {
-  if (e.movement === 'straight') {
-    e.y += ENEMY_MOVEMENT.straight.speed * dt;
-  } else if (e.movement === 'zigzag') {
-    e.y += ENEMY_MOVEMENT.zigzag.speed * dt;
-    const ms = now - e.spawnTime;
-    e.x += Math.sin(ms / 1000 * 2 * Math.PI * ENEMY_MOVEMENT.zigzag.frequencyHz) * ENEMY_MOVEMENT.zigzag.amplitude * dt;
-  } else if (e.movement === 'formation') {
-    e.y += ENEMY_MOVEMENT.formation.speed * dt;
-    // 타원 궤적은 진입 1초 동안만, 이후 직선
-  }
-}
-```
-
-#### 7-9-4. 적 발사 (placeholder `ENEMY_FIRE_COOLDOWN_MS` 사용)
-
-```js
-import { ENEMY_FIRE_COOLDOWN_MS, BULLET_SPEED } from '../constants/game';
-
-function updateEnemyFire(s, now) {
-  for (const e of s.enemies) {
-    if (!e.alive) continue;
-    const cooldown = ENEMY_FIRE_COOLDOWN_MS[e.weapon];
-    // 첫 발사는 스폰 후 500ms 유예
-    if (now - e.spawnTime < 500) continue;
-    if (now - e.lastFireTime < cooldown) continue;
-    e.lastFireTime = now;
-    // 발사 시점 dx/dy 1회만 (homing 금지)
-    const dx = s.player.x - e.x;
-    const dy = s.player.y - e.y;
-    const len = Math.hypot(dx, dy);
-    const vx = (dx/len) * BULLET_SPEED;
-    const vy = (dy/len) * BULLET_SPEED;
-    s.enemyBullets.push({ x: e.x, y: e.y, vx, vy, color: e.color, pierce: e.weapon === 'thunder_lance' });
-  }
-}
-```
-
-🚫 **금지**:
-- 매 frame `vx = (player.x - bullet.x) / len * speed` 재계산 (homing)
-- setInterval로 vx/vy 갱신 (tracking)
-- 표 외 속도 (예: 400 px/s) 임의 사용
-
-#### 7-9-5. 피격·사망 — 한 발 즉사
-
-```js
-import { SCORE_PER_STAGE } from '../constants/game';
-
-function handleBulletEnemyCollision(s, bullet, enemy) {
-  enemy.alive = false;
-  if (!bullet.pierce) bullet.dead = true;  // 주인공 pierce 탄환은 유지
-  s.score += SCORE_PER_STAGE[s.currentStage];
-  // §7-5 stage 전환 검사
-  const cur = STAGES[s.currentStage - 1];
-  if (cur.scoreThreshold !== null && s.score >= cur.scoreThreshold && s.currentStage < 5) {
-    s.currentStage += 1;
-  }
-}
-```
-
-🚫 **금지**: `enemy.hp -= 1`, `enemy.durability`, `enemy.invulnUntil` 같은 누적 데미지 / 무적 시간.
-
-### 7-10. 결정론 placeholder (`FE/src/constants/game.js` — 수정 금지)
-
-GamePage.jsx는 *반드시* 다음을 모두 import:
-
-```js
-import {
-  CANVAS, STAGES, WEAPONS, ENEMY_SHAPE_BY_WEAPON, ENEMY_POOLS,
-  ENEMY_FIRE_COOLDOWN_MS, SPAWN_CONFIG, ENEMY_MOVEMENT,
-  SCORE_PER_STAGE, HERO_INITIAL, DAMAGE, MP_REGEN, BULLET_SPEED,
-} from '../constants/game';
-```
-
-placeholder 내용 (수정 금지, GamePage는 import만):
-
-```js
-export const CANVAS = { width: 1000, height: 750 };
-
-export const STAGES = [
-  { stage: 1, theme: 'Magic Forest', bgColor: '#1B4D2E', scoreThreshold: 1000 },
-  { stage: 2, theme: 'Cursed Swamp', bgColor: '#1A3D3A', scoreThreshold: 2000 },
-  { stage: 3, theme: 'Lava Volcano', bgColor: '#5C1A0E', scoreThreshold: 3000 },
-  { stage: 4, theme: 'Dark Castle',  bgColor: '#1E1A33', scoreThreshold: 4000 },
-  { stage: 5, theme: 'Demon Tower',  bgColor: '#0A0A0A', scoreThreshold: null  },
+const STAGES = [
+  { stage: 1, theme: 'Magic Forest',  bgColor: '#1B4D2E', scoreThreshold: 1000 },
+  { stage: 2, theme: 'Cursed Swamp',  bgColor: '#1A3D3A', scoreThreshold: 2000 },
+  { stage: 3, theme: 'Lava Volcano',  bgColor: '#5C1A0E', scoreThreshold: 3000 },
+  { stage: 4, theme: 'Dark Castle',   bgColor: '#1E1A33', scoreThreshold: 4000 },
+  { stage: 5, theme: 'Demon Tower',   bgColor: '#0A0A0A', scoreThreshold: null  },
 ];
 
-export const WEAPONS = [
-  { id: 'holy_sword',    name: '성검',         color: '#FFD700', cost: 0, pattern: 'single', fireDelayMs: 100 },
-  { id: 'thunder_lance', name: '번개 창',      color: '#A347FF', cost: 3, pattern: 'pierce', fireDelayMs: 300 },
-  { id: 'fire_magic',    name: '불꽃 마법',    color: '#FF3B30', cost: 5, pattern: 'fan',    fireDelayMs: 200 },
-  { id: 'holy_light',    name: '성스러운 빛',  color: '#33E0E0', cost: 8, pattern: 'omni',   fireDelayMs: 400 },
-];
-
-export const ENEMY_SHAPE_BY_WEAPON = {
-  holy_sword: 'triangle',
-  thunder_lance: 'star',
-  fire_magic: 'square',
-  holy_light: 'inverted_triangle',
-};
-
-export const ENEMY_POOLS = {
-  1: ['holy_sword'],
-  2: ['holy_sword', 'thunder_lance'],
-  3: ['holy_sword', 'thunder_lance', 'fire_magic'],
-  4: ['holy_sword', 'thunder_lance', 'fire_magic', 'holy_light'],
-  5: ['holy_sword', 'thunder_lance', 'fire_magic', 'holy_light'],
-};
-
-export const ENEMY_FIRE_COOLDOWN_MS = {
-  holy_sword: 1200, thunder_lance: 1500, fire_magic: 2000, holy_light: 3000,
-};
-
-export const SPAWN_CONFIG = {
-  minOnScreen: 5, maxOnScreen: 12, firstSpawnDelayMs: 500,
-  intervalByStage: { 1: 1500, 2: 1300, 3: 1100, 4: 900, 5: 700 },
-};
-
-export const ENEMY_MOVEMENT = {
-  straight: { speed: 80 },
-  zigzag: { speed: 70, amplitude: 80, frequencyHz: 1 },
-  formation: { speed: 70, groupSize: 3 },
-};
-
-export const SCORE_PER_STAGE = { 1: 100, 2: 90, 3: 80, 4: 60, 5: 50 };
-export const HERO_INITIAL = { hp: 100, mp: 100 };
-export const DAMAGE = { bulletHit: 10, enemyCollide: 10 };
-export const MP_REGEN = { amount: 2, intervalMs: 500, cooldownAfterFireMs: 300 };
-export const BULLET_SPEED = 250;
+// 매 frame 렌더 첫 줄
+const current = STAGES[gs.stage - 1] || STAGES[0];
+renderCtx.fillStyle = current.bgColor;   // ← stage 따라 자동 교체
+renderCtx.fillRect(0, 0, w, h);
 ```
 
-### 7-11. ❌→✅→🚫 자가체크 (응답 emit 전 — 14항목)
+**핵심 룰:**
+- 배경색 HEX는 *위 표의 정확한 값을 그대로 사용* (LLM이 임의로 다른 색을 적으면 시각 회귀).
+- 캔버스 1000×750 *전체*를 매 frame `fillRect(0,0,w,h)`로 칠하기 (이전 frame 잔상 + 배경 바뀜 동시 해결).
+- HUD/score/HP 텍스트 영역도 같은 배경 위에 그리되, 가독성 위해 *반투명 검정 박스* 위에 텍스트를 올릴 것.
+- 스테이지 제목(테마 이름)도 HUD 한 구석에 *짧게* 표시 (예: 좌상단 "Stage 1 · Magic Forest") — 사용자가 현재 stage 인지 가능.
 
-GamePage.jsx 코드 작성 직후 다음을 *grep으로 확인*:
-
-- [ ] `import { ... } from '../constants/game'` 한 줄에 13개 상수 모두 포함?
-- [ ] `STAGES[` 사용 ≥ 1 (배경색·테마·threshold 모두 placeholder로부터)?
-- [ ] `ctx.fillStyle = '#` 인라인 hex 사용은 *HUD 텍스트·게이지·박스 외엔* 0? 배경엔 `STAGES[s.currentStage-1].bgColor` 사용?
-- [ ] `WEAPONS.find(` 또는 `WEAPONS[` 사용 ≥ 2 (무기 정의 조회)?
-- [ ] `ENEMY_POOLS[s.currentStage]` 또는 `ENEMY_POOLS[<stage>]` 사용 ≥ 1 (적 무기 spawn)?
-- [ ] `ENEMY_SHAPE_BY_WEAPON[` 사용 ≥ 1 (적 모양 매핑)?
-- [ ] `ENEMY_FIRE_COOLDOWN_MS[` 사용 ≥ 1 (적 발사 주기)?
-- [ ] `SPAWN_CONFIG.minOnScreen` + `.maxOnScreen` + `.intervalByStage[s.currentStage]` 모두 사용?
-- [ ] `SCORE_PER_STAGE[s.currentStage]` 사용 (단일 값 `|| 10` 같은 fallback 0개)?
-- [ ] `MP_REGEN.cooldownAfterFireMs` / `.intervalMs` / `.amount` 정확 속성명 사용 (변형 0개)?
-- [ ] HUD 5개 항목 모두 그리는 fillText 또는 fillRect 코드 있는가? (HP·MP·Score·Stage·**현재 무기 이름**)
-- [ ] 현재 무기 한글명 (`WEAPONS.find(w=>w.id===s.player.weapon).name`) 그리는 코드?
-- [ ] 적 탄환 발사 시점 dx/dy 1회 계산 후 *재할당 0건* (homing 금지)?
-- [ ] 적 즉사 — `enemy.hp`, `enemy.durability`, `enemy.invuln*` 필드 0개?
-
-### 7-12. 표 → 코드 매핑 강제 (핵심 룰)
-
-본 명세서의 *모든 표*는 §7-10 placeholder에 이미 정의됨. GamePage.jsx는 **표 내용을 다시 적지 말고 placeholder import만**.
-
-- 표는 *사람이 읽기 위함*.
-- 코드는 *placeholder 그대로 사용*.
-- LLM이 표를 다시 JS 객체로 변환하지 말 것. 이미 §7-10에 정의돼 있음.
-- *인라인 변환*하면 SpecSync는 통과해도 시각적 회귀 (이번 cycle의 9가지 미반영 사례).
+> ⚠️ **stage 전환 버그 패턴** — 모든 스테이지의 threshold를 *1000으로 동일*하게 두면 score=1000 도달 시 매 frame에서 stage++가 반복 발화 → 1 frame 안에 stage 1→5 점프. 반드시 *누적 score 기준 step 1000*씩 증가하는 threshold 사용 (위 표 참조).
 
 ---
 
-## 8. 키보드·입력 (`GamePage.jsx`)
+## 9. 적(Enemy) 명세
+
+### 9-1. 종류
+- **총 4종**. 각 적은 **무기 4종 중 하나와 1:1로 매핑**되어 자기 무기를 들고 등장.
+- 스폰 시 4종 중 하나가 무작위 선택.
+- **적 색깔 = 그 적이 장비한 무기 색깔**. 모든 적은 반드시 위 표의 4색 중 한 가지를 갖는다.
+
+### 9-2. 이동 패턴 (스폰 시 아래 3종 중 1개를 무작위 부여)
+1. **직선 하강**: 화면 상단에서 일정 속도로 아래로 내려옴.
+2. **지그재그 하강**: 좌우로 sin 곡선을 그리며 내려옴.
+3. **타원 편대 하강**: 여러 마리가 줄지어 타원형 궤적을 그리며 진입 후 하강.
+
+### 9-3. 공격 패턴 (이번 보완의 핵심)
+- 적은 **자기 무기로 주인공을 향해 발사**한다.
+- 발사 주기: 무기별 쿨다운 (예시값, 구현 시 튜닝 가능)
+  - 성검 적: 1.2초마다 직선 1발
+  - 불꽃 적: 2.0초마다 부채꼴 3발
+  - 번개 적: 1.5초마다 고속 관통 1발
+  - 성광 적: 3.0초마다 360° 8방향
+- **탄환 색 = 적의 무기 색**.
+- 적은 화면 상단 진입 후 **0.5초 유예** 뒤부터 발사 시작 (스폰 즉시 피탄 방지).
+
+### 9-4. 스코어 
+- 적은 한 기가 맞을 때 마다 아래와 같은 스코어를 계산해준다
+1Stage = 100
+2Stage = 90
+3Stage = 80
+4Stage = 60
+5Stage = 50
+---
+
+## 10. 주인공 HP / 충돌
+
+| 항목 | 값 |
+|---|---|
+| 초기 HP | 100 |
+| 적 탄환 피탄 | -10 |
+| 적과 본체 충돌 | -10 |
+| 게임오버 | HP ≤ 0 → 즉시 ResultPage |
+
+---
+
+## 10-bis. 키보드 입력 (GamePage.jsx 필수 — 누락 시 조작 불가)
 
 | 키 | 동작 |
 |---|---|
 | ← ↑ ↓ → | 주인공 이동 (눌린 동안, 대각선 동시 가능) |
-| **Space** | `tryFire()` 호출 — §7-4 발사 딜레이 + MP cost 검사 |
-| **ESC** | `s.paused = !s.paused` 토글 (MP 회복·spawn·탄환 update 모두 정지) |
+| **Space** | 현재 무기 발사 — MP 부족 시 불가, 성검은 항상 가능 |
+| 1 / 2 / 3 / 4 | 무기 슬롯 전환 |
+| ESC | 일시정지 토글 |
 
-🚫 **금지**: 1/2/3/4 키 무기 슬롯 전환. 무기는 SelectPage에서 *한 번만* 선택, GamePage에서 변경 X. `s.player.weapon`은 게임 종료까지 불변.
+## 11. 결과 화면 / 리포트
 
-### 8-bis. SelectPage → GamePage 무기 전달
+`ResultPage.jsx` 표시 항목:
+- 최종 점수, 도달 스테이지, 사용 무기, 플레이 시간
+- 피탄 횟수, 충돌 횟수, 격파 적 수
+- 개인 최고와 비교 (`GET /api/v1/game/best?player_id=<id>` 호출 결과)
 
-```js
-// SelectPage.jsx: 무기 선택 후
-navigate('/game', { state: { weapon: selectedWeaponId } });
+### 11-1. `report.html` 다운로드 (Blob + download attribute)
 
-// GamePage.jsx: useLocation으로 받기
-const location = useLocation();
-const initialWeapon = location.state?.weapon || 'holy_sword';
-// s.player.weapon = initialWeapon (게임 종료까지 불변)
-```
-
----
-
-## 9. 결과 화면 / 리포트 (`ResultPage.jsx`)
-
-### 9-1. 표시
-- 최종 점수 (48px gold)
-- 도달 스테이지 (Stage <n> · <theme>)
-- 사용 무기 (한글 이름)
-- 플레이 시간 (초)
-- 피탄·충돌·격파 통계
-- 개인 최고와 비교 (`GET /api/v1/game/best?player_id=<id>`)
-
-### 9-2. `report.html` 다운로드
 ```jsx
-const html = `<!DOCTYPE html>...`;
+const html = `<!DOCTYPE html><html><body><h1>Result</h1>...</body></html>`;
 const blob = new Blob([html], { type: 'text/html' });
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
 a.href = url; a.download = 'report.html'; a.click();
 URL.revokeObjectURL(url);
 ```
+브라우저 다운로드 폴더에 저장. 외부 라이브러리 불필요.
 
----
+## 12. 완료 조건 (체크리스트)
 
-## 10. 완료 조건 체크리스트
+- [ ] 로컬에서 BE / FE 동시 실행 확인
+- [ ] `POST /signup`, `POST /login` API 정상 응답 확인 (200 / 400 / 409)
+- [ ] 회원가입 시 한글 Player Name 저장 확인 (MySQL UTF-8)
+- [ ] Confirm Password 불일치 시 가입 실패 확인
+- [ ] `player_users`, `game_results` 시드 데이터 1건 이상 삽입 확인
+- [ ] 게임오버 시 `game_results`에 결과 적재 확인
+- [ ] 적이 자기 무기로 공격하는지 화면상 확인
+- [ ] 주인공 피탄 / 충돌 시 HP -10 감소 확인
+- [ ] HP 0 도달 시 ResultPage 전환 확인
+- [ ] 게임 종료 후 `report.html` 생성 확인
 
-- [ ] `POST /signup`, `POST /login` API 정상 응답 (200/400/409)
-- [ ] 한글 Player Name 저장 (MySQL UTF-8)
-- [ ] 시드 1건 이상 삽입
-- [ ] 게임오버 시 `game_results` 적재
-- [ ] **§2-bis UI 꾸미기 적용** — 어두운 그라데이션 배경, 금/보라/청록 accent. 흰 배경·plain 버튼 0개
-- [ ] **SelectPage 무기 4종 카드 색이 무기 색** (50% 불투명)
-- [ ] **GamePage 매 frame `STAGES[s.currentStage-1].bgColor`로 캔버스 배경**
-- [ ] **stage 전환 시 배경색 바뀜** (5개 HEX 정확)
-- [ ] **HUD 5개 모두 표시** (HP·MP·Score·Stage·**현재 무기 한글명**)
-- [ ] **MP가 500ms마다 +2 회복** (공격 후 300ms cooldown 동안만 정지)
-- [ ] **적 무기가 ENEMY_POOLS[currentStage]에서 무작위 선택** (디폴트 하나로 고정 X)
-- [ ] **적 모양 4종이 모두 등장** (세모·별·네모·역삼각형)
-- [ ] **적 색 = 적 무기 색** (랜덤 색 X)
-- [ ] **적 격파 시 SCORE_PER_STAGE[currentStage] 가산** (단일 값 X)
-- [ ] 적 죽으면 자동 보충 spawn (화면 5~12마리 유지)
-- [ ] 적 탄환 발사 시점 직선 (homing 0)
-- [ ] HP 0 시 ResultPage 즉시 전환
-- [ ] 키보드 1/2/3/4 무기 전환 코드 *없음* (Space와 ←↑↓→ ESC만)
-- [ ] PostTest 5/5 PASS
