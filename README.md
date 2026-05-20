@@ -1,318 +1,304 @@
-# MyFirstAgentApp — Multi-Agent Signup System (PoC)
+# MyFirstAgentApp — Multi-Agent Code Generation PoC
 
-자연어 요구사항 → CodeChecker → BE Agent → FE Agent → Lint Agent (3단계 게이트) 순으로 동작하는
-멀티 에이전트 코드 생성/검증 시스템의 PoC.
+자연어 요구사항 → **CodeChecker → BE/FE Agent → 정적 가드 4종 → Lint → Deploy → PostTest** 자동 파이프라인. Claude Code 같은 어시스턴트 없이 *자율 동작*하는 게 목표.
 
-## 디렉토리 구조
+> **핵심 룰·다이어그램은 [CLAUDE.md](CLAUDE.md)에 있습니다.** 이 README는 *신규 환경 setup + 실행 가이드* 위주.
+
+---
+
+## 1. 파이프라인 한눈에
+
+```
+사용자 요청 (자연어 명세서, tmp_big_prompt_run.txt 또는 UI 입력창)
+  └─ Orchestrator (LLM X, 결정론 컨트롤러)
+      ├─ Phase 1   CodeChecker (LLM)         → FE/BE/BOTH 분류 + spec + api_contract
+      ├─ Phase 2   BE Agent (LLM)            → BE/ 코드 + migrations + Jest
+      ├─ Phase 2.5 Migration Agent (LLM X)   → BE/db/migrations/*.sql 자동 적용 (D33)
+      ├─ Phase 2.7 ContractSync Agent (LLM X)→ endpoint mount 정적 diff (D36)
+      ├─ Phase 2.8 SpecSync Agent (LLM X)    → spec/scenarios ↔ rules/domain.md 카탈로그 정적 검증 (D89~D92)
+      ├─ Phase 3   FE Agent (LLM)            → FE/ 코드 + Vitest+RTL
+      ├─ Phase 4   Lint Agent (LLM X)        → ESLint + Build + Tests (3-stage)
+      ├─ Phase 5   verdict (LLM X)           → PASS / FAIL / ERROR / CONTINUE(재진입)
+      ├─ Phase 8   Deploy Agent (LLM X)      → docker compose up (subnet 172.20 고정, D93)
+      ├─ Phase 9   PostTest Agent (LLM X)    → api_contract 기반 runtime fetch + schema 검증
+      ├─ Phase 6   finalize (LLM X)          → log_agent_decisions UPDATE
+      ├─ Phase 7   auto-commit (LLM X)       → PASS면 BE/+FE/ 자동 commit (push X)
+      └─ Phase 7.5 deploy teardown           → PASS면 docker compose down
+```
+
+LLM은 **CodeChecker · BE · FE Agent 안에서만** 호출. 나머지는 결정론.
+
+---
+
+## 2. 디렉토리 구조 (현재)
 
 ```
 myFirstAgentApp/
 ├── agents/
-│   ├── codechecker_agent.js     # 요구사항 분석 + api_contract 생성 (LLM)
-│   ├── be_agent.js              # BE/ 코드 + Jest 테스트 작성 (LLM)
-│   ├── fe_agent.js              # FE/ 코드 + Vitest+RTL 테스트 작성 (LLM)
-│   ├── lint_agent.js            # ESLint → Build → Test 3단계 검증 (LLM X)
-│   ├── deploy_agent.js          # Phase 8: docker compose up + teardown (LLM X)
-│   ├── test_agent.js            # Phase 9: api_contract 기반 PostTest (LLM X)
-│   └── orchestrator.js          # 전체 흐름 제어 (LLM X)
+│   ├── orchestrator.js               # 전체 흐름 제어 (LLM X)
+│   ├── codechecker_agent.js          # Phase 1 (LLM)
+│   ├── be_agent.js                   # Phase 2 (LLM)
+│   ├── fe_agent.js                   # Phase 3 (LLM)
+│   ├── migration_agent.js            # Phase 2.5
+│   ├── contract_sync_agent.js        # Phase 2.7 (D36)
+│   ├── spec_sync_agent.js            # Phase 2.8 (D89~D92)
+│   ├── lint_agent.js                 # Phase 4 (3-stage gate)
+│   ├── deploy_agent.js               # Phase 8
+│   └── test_agent.js                 # Phase 9 (PostTest)
 ├── lib/
-│   ├── db.js                    # mysql2 풀
-│   ├── logger.js                # log_agent_runs / log_agent_decisions / log_task_state 헬퍼
-│   ├── llm.js                   # @anthropic-ai/sdk 래퍼
-│   ├── bootstrap.js             # FE/BE 스캐폴딩 + Dockerfile/.dockerignore 복사
-│   ├── fs_util.js               # 경로 안전 검증 + 파일 스냅샷
-│   ├── api_test.js              # api_contract → fetch + JSON Schema 검증 (test_agent helper)
-│   ├── init_db.js               # agent_schema.sql 실행
-│   ├── stack.js                 # stack.config.json 로더
-│   ├── stack.config.json        # FE/BE 스택 정의 (단일 원천)
-│   └── stack_templates/         # 스캐폴딩 템플릿
-│       ├── docker-compose.yml   # Phase 8 deploy template
-│       ├── BE/                  # Dockerfile + .dockerignore + package.json + src/
-│       └── FE/                  # Dockerfile + .dockerignore + package.json + vite.config.js + ...
+│   ├── llm.js                        # Anthropic SDK 래퍼 (모델 cap-aware max_tokens)
+│   ├── logger.js                     # log_agent_* 헬퍼
+│   ├── db.js / init_db.js / reset_db.js
+│   ├── bootstrap.js                  # BE/FE 스캐폴딩
+│   ├── api_test.js                   # api_contract → fetch + schema 검증
+│   ├── contract_sync.js              # endpoint mount 정적 diff (D36)
+│   ├── spec_sync.js                  # spec/scenarios 카탈로그 일치 + cross-endpoint 검증 (D89~D92)
+│   ├── migration_sanity.js / container_sanity.js / container_cleanup.js / docker_health.js
+│   ├── dep_autofix.js / fe_contract_guard.js / agent_error_classifier.js
+│   ├── prompt_util.js / fs_util.js / test_codegen.js / resume_helper.js / port_killer.js
+│   ├── env_writer.js / db_state.js
+│   ├── stack.js / stack.config.json
+│   └── stack_templates/
+│       ├── docker-compose.yml        # Phase 8 (subnet 172.20.0.0/16 고정, D93)
+│       ├── BE/src/validators.js      # 🔒 결정론 placeholder (D88)
+│       ├── BE/Dockerfile + .dockerignore + package.json + ...
+│       └── FE/vite.config.js (hmr:false, D91) + Dockerfile + ...
 ├── rules/
-│   ├── common.md                # BE+FE 공통 규칙 (양 Agent 모두 읽음)
-│   ├── be.md                    # BE 전용 규칙
-│   └── fe.md                    # FE 전용 규칙
+│   ├── common.md                     # BE+FE 공통 규칙 (자동 inject)
+│   ├── be.md / fe.md / db.md         # 영역별 규칙
+│   └── domain.md                     # 도메인 필드 카탈로그 (D87~D92)
 ├── docs/
-│   ├── PRD.md                   # 비전·목표·비-목표
-│   ├── ARCHITECTURE.md          # 컴포넌트·DB·verdict·phase 상세
-│   ├── OPERATIONS.md            # 명령·트러블슈팅
-│   ├── DECISIONS.md             # 결정 타임라인
-│   └── ROADMAP.md               # 다음 작업 큐
-├── db/
-│   ├── agent_schema.sql         # Agent 도구 schema (log_* 3 tables)
-│   └── reset.sql                # DROP log_* (D31, init_db.js와 짝으로 동작)
-├── shared/
-│   └── api_contract.json        # CodeChecker가 BOTH일 때 작성
-├── FE/                          # 1회 부트스트랩 후 FE Agent가 채움
-├── BE/                          # 1회 부트스트랩 후 BE Agent가 채움
-├── .env.example
-├── package.json
-└── README.md
+│   ├── PRD.md / ARCHITECTURE.md / OPERATIONS.md / DECISIONS.md / ROADMAP.md
+│   ├── SPEC_WRITING.md               # 명세서 작성 가이드 (모호 표현 anti-pattern)
+│   └── SPEC_TEMPLATE.md              # 신규 게임 명세서 빈 템플릿
+├── ui/
+│   ├── server.js                     # Express UI server (port 3000)
+│   ├── public/                       # 대시보드 HTML/JS
+│   └── routes/                       # /api/init, /api/run, /api/tasks, /api/env, /api/git, /api/deploy
+├── scripts/
+│   ├── launch-ui.sh                  # npm run ui
+│   ├── run-10-cycles.sh              # 배치 cycle (PROMPT_FILE env 지원, D93)
+│   └── monitor-cycle.sh
+├── tests/                            # 25개 단위 테스트 (436 PASS 기준)
+├── shared/api_contract.json + router/
+├── db/agent_schema.sql               # log_* tables (SpecSync ENUM 포함, D89)
+├── BE/, FE/                          # bootstrap이 깐 placeholder, Agent가 채움
+├── tmp_big_prompt_run.txt            # 기본 명세서 (CLI/UI에서 사용)
+├── .vscode/settings.json             # EC2 Remote-SSH 검색 최적화
+└── .env / .env.example
 ```
 
-## DB 설계 (단일 DB: `myfirstagentapp_db`, D33으로 비즈니스 schema 흡수 결정)
+---
 
-`db/agent_schema.sql`은 Agent 도구 테이블(log_*)을 정의한다. 비즈니스 schema는 **D33(2026-05-14, B-2) 결정으로 *Agent migration emit → orchestrator 자동 적용* 메커니즘** 채택 — BE Agent가 `BE/db/migrations/<ts>_<name>.sql`을 emit하면 orchestrator가 자동 실행 + 이력 추적. **B-2 구현 commit으로 활성화 예정**이며 그 전까지는 D31의 잠정 정책(in-memory 우회)이 코드 prompt에 남아있다. 자세한 내용은 `docs/DECISIONS.md` D33 참조.
+## 3. 사전 요구사항
+
+- **Node.js >= 18**
+- **MySQL 8** (호스트 또는 별도 컨테이너)
+- **Docker Compose v2** (Phase 8/9, `DEPLOY_MODE=off`면 불필요)
+- **Nginx** (외부 도메인·HTTPS 시연 시. 로컬 개발은 선택)
+- **ANTHROPIC_API_KEY** (`.env`)
+
+---
+
+## 4. 설치 & 실행
+
+### 4-1. 환경 변수
+
+```bash
+cp .env.example .env
+# .env 열어 다음 입력:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
+#   COMMIT_MODE=auto       # verdict=PASS 시 BE/+FE/ 자동 commit (push 안 함)
+#   VALIDATION_MODE=on     # Phase 4 Lint 게이트 활성
+#   DEPLOY_MODE=on         # Phase 8/9 활성
+```
+
+### 4-2. 의존성 + DB 초기화
+
+```bash
+npm install
+npm run init-db       # db/agent_schema.sql 적용 (log_* + ENUM 포함)
+```
+
+FE/BE 의존성은 Orchestrator 첫 실행 시 `lib/bootstrap.js`가 자동 `npm install`.
+
+### 4-3. UI 서버 실행 (권장)
+
+```bash
+npm run ui
+```
+
+- Express UI server 가 port 3000 listen
+- 브라우저 http://localhost:3000 또는 (Nginx reverse proxy 시) http://your-domain/
+- 대시보드에서:
+  - **InitProject** 버튼 → git reset --hard origin/main + BE/src·FE/src 삭제 + DB log reset
+  - **prompt 입력 + Run Pipeline** 버튼 → orchestrator child spawn
+  - 작업 history·verdict·phase별 진행 polling
+
+### 4-4. CLI 직접 실행 (선택)
+
+```bash
+node agents/orchestrator.js --file=./tmp_big_prompt_run.txt
+# 또는
+node agents/orchestrator.js "회원가입 + 종스크롤 슈팅 게임 만들어줘"
+```
+
+### 4-5. 배치 cycle (시연·테스트용)
+
+```bash
+N_CYCLES=1 bash scripts/run-10-cycles.sh                                   # 기본 명세서
+PROMPT_FILE=tmp_big_prompt_run_2.txt N_CYCLES=1 bash scripts/run-10-cycles.sh   # 다른 명세서
+```
+
+InitProject → restore_fixes → Run pipeline → polling → 결과 집계 (`/tmp/10cycles_results.tsv`).
+
+---
+
+## 5. 결정론 가드 누적 (D87~D93, 2026-05-20)
+
+| Decision | 효과 |
+|---|---|
+| **D87** `rules/domain.md` 도메인 필드 카탈로그 + CodeChecker/BE Agent prompt inject | endpoint 간 validator drift 차단 (username/password 등) |
+| **D88** `lib/stack_templates/BE/src/validators.js` placeholder + `protectedConfigFiles` | LLM 자유추론 영역 박탈 (validator) — `signup`/`check`/`login` 동일 함수 강제 |
+| **D89** Phase 2.8 **SpecSync Agent** (`lib/spec_sync.js` + `agents/spec_sync_agent.js`) | spec.pattern · scenarios 카탈로그 일치 정적 검증 |
+| **D90** SpecSync `cross_endpoint_username_collision` | signup `valid_*` username과 check `available_*` username 충돌 차단 |
+| **D91** Vite `hmr: false` + Let's Encrypt HTTPS (`certbot --nginx`) | https mixed content 0, WebSocket 사용처 0 |
+| **D92** SpecSync `credential_seed_mismatch` | `valid_credentials` password = `Pass1234` (시드 hash 매핑값) 강제 |
+| **D93** docker-compose subnet 고정 (`172.20.0.0/16`) + cycle PROMPT_FILE env | random subnet → UFW 미스 차단, 결정론적 BE→MySQL |
+
+자세한 결정 맥락은 [docs/DECISIONS.md](docs/DECISIONS.md).
+
+---
+
+## 6. 모드 토글 (`.env`)
+
+| 변수 | 기본 | 효과 |
+|---|---|---|
+| `COMMIT_MODE` | `auto` | `auto`면 verdict=PASS 시 BE/+FE/ 자동 commit (push는 사람). `manual`이면 자동 commit 안 함 |
+| `VALIDATION_MODE` | `on` | `off`면 Phase 4 Lint 전체 skip + log_task_state 자동 SUCCESS |
+| `DEPLOY_MODE` | `on` | `off`면 Phase 8/9 통째 skip + log_agent_runs 자동 SUCCESS |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | 전체 fallback 모델 |
+| `CODECHECKER_MODEL` / `BE_AGENT_MODEL` / `FE_AGENT_MODEL` | (빈 값) | Agent별 모델 override |
+
+해석 우선순위: `<AGENT>_MODEL` → `ANTHROPIC_MODEL` → 하드코딩 default.
+
+---
+
+## 7. HTTPS 셋업 (선택, EC2/외부 도메인)
+
+D91 적용. Let's Encrypt + certbot:
+
+```bash
+sudo apt-get install -y python3-certbot-nginx
+sudo certbot --nginx -d <도메인> --non-interactive --agree-tos -m <이메일> --redirect
+```
+
+- `--redirect`로 nginx에 http→https 301 자동
+- `/etc/cron.d/certbot` + `certbot.timer`로 90일 만료 30일 전 자동 갱신
+- UFW에 443 인바운드 허용 + AWS SG도 443 허용 필요
+
+EC2 환경에서 docker subnet UFW 트랩 회피:
+```bash
+sudo ufw allow from 192.168.0.0/16 to any port 3306 proto tcp   # docker compose가 192.168 잡을 때 대비
+# (172.16.0.0/12 룰은 D93 기본 subnet 172.20 커버)
+```
+
+자세한 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+---
+
+## 8. 데이터베이스 — 단일 DB `myfirstagentapp_db`
+
+`db/agent_schema.sql`에 log_* tables 정의 (`SpecSync` / `SPEC_SYNC` ENUM 포함):
 
 | 테이블 | 용도 | INSERT | UPDATE |
 |---|---|---|---|
 | `log_agent_runs` | Agent별 실행 row | 각 Agent | 각 Agent (자기 row만) |
 | `log_agent_decisions` | task당 1행 최종 판정 | CodeChecker | Orchestrator |
-| `log_task_state` | FE/BE 영역별 상태 | CodeChecker | Lint |
+| `log_task_state` | FE/BE 영역별 상태 | CodeChecker | Lint / SpecSync / ContractSync |
+| `log_db_migrations` | 비즈니스 migration 이력 (D33) | Migration Agent | — |
 
-## 사전 요구사항
+비즈니스 schema는 BE Agent가 `BE/db/migrations/<ts>_<name>.sql` emit → Phase 2.5 Migration Agent가 자동 적용 + 이력 추적.
 
-- Node.js >= 18
-- MySQL 8 (호스트 직접 설치 또는 별도 컨테이너 — Phase 1~7에 사용)
-- Docker Desktop / `docker compose` v2 (Phase 8/9에 사용 — `DEPLOY_MODE=off`면 불필요)
-- ANTHROPIC_API_KEY (.env에 입력)
-- 기존 DB 사용자: 1회 ALTER 필요 — `docs/OPERATIONS.md` "Phase 8/9" 섹션 참조
+---
 
-## 설치 & 실행
+## 9. 핵심 규칙 (불변)
 
-### 1) 환경 변수
-```bash
-cp .env.example .env
-# .env 열어서 ANTHROPIC_API_KEY와 DB 접속 정보 입력
-# Phase 8/9 사용 시: DEPLOY_MODE=on (기본). Docker 안 쓰면 DEPLOY_MODE=off로 변경.
-```
+자세한 룰은 [CLAUDE.md](CLAUDE.md). 요약:
 
-#### LLM 모델 — Agent별 분리 가능
-각 Agent가 다른 모델을 쓸 수 있도록 `.env`에서 토글:
+1. **폴더 격리** — BE Agent는 `BE/`만, FE Agent는 `FE/`만 (`validatePaths` 차단)
+2. **protected 파일** — `package.json`/`vite.config.js`/`BE/src/validators.js` 등 응답 포함 시 차단
+3. **allowedDeps만** — 새 의존성·매니페스트 수정 금지
+4. **Placeholder 보존** — bootstrap이 깐 `server.test.js`/`App.test.jsx`/`validators.js`는 수정 불가
+5. **Stage 3 (테스트) 실패** = 즉시 verdict=FAIL 종료, 재시도 없음
+6. **재시도 최대 3회** (Stage 1·2 한정)
+7. **LLM 호출** = CodeChecker / BE / FE Agent만. 나머지 결정론.
+8. **자동 commit은 `BE/`+`FE/`만**, `push`는 항상 사람 (commit_mode=auto일 때)
 
-| 변수 | 적용 Agent | 빈 값일 때 |
-|---|---|---|
-| `CODECHECKER_MODEL` | CodeChecker | `ANTHROPIC_MODEL` 사용 |
-| `BE_AGENT_MODEL` | BE Agent | 동상 |
-| `FE_AGENT_MODEL` | FE Agent | 동상 |
-| `ANTHROPIC_MODEL` | 위 셋의 fallback | `claude-sonnet-4-5` 사용 |
+---
 
-해석 우선순위: **`<AGENT>_MODEL` → `ANTHROPIC_MODEL` → 하드코딩 default**.
+## 10. 스택 변경 체크리스트
 
-예시 — CodeChecker만 빠른 모델로:
-```
-ANTHROPIC_MODEL=claude-sonnet-4-5
-CODECHECKER_MODEL=claude-haiku-4-5
-BE_AGENT_MODEL=
-FE_AGENT_MODEL=
-```
+FE 또는 BE 스택을 바꾸려면 **두 곳만** 수정:
 
-orchestrator 시작 시 콘솔에 실제 적용된 모델이 출력됩니다:
-```
-[orchestrator] models: CodeChecker=claude-haiku-4-5, BE=claude-sonnet-4-5, FE=claude-sonnet-4-5
-```
+### 필수
+- [ ] `lib/stack.config.json` 해당 영역 블록 (displayName / install / lint stages / agent / snapshot / eslintConfig / protectedConfigFiles)
+- [ ] `lib/stack_templates/<AREA>/` placeholder 파일 (bootstrap이 자동 복사)
 
-### 2) 의존성
-```bash
-npm install
-```
-FE/BE 의존성은 Orchestrator가 첫 실행 시 자동으로 `npm install` 합니다 (`lib/bootstrap.js`).
+### 부수
+- [ ] `rules/common.md` / `rules/be.md` / `rules/fe.md` / `rules/db.md` / `rules/domain.md`
+- [ ] `README.md` 본 문서
 
-### 3) DB 초기화
-```bash
-npm run init-db
-```
-또는 직접:
-```bash
-mysql -u root -p < db/agent_schema.sql
-```
-
-### 4) 실행
-
-기본 시나리오(회원가입):
-```bash
-npm start
-```
-
-직접 요구사항 전달:
-```bash
-node agents/orchestrator.js "이메일과 비밀번호로 회원가입할 수 있는 기능을 만들어줘. 비밀번호는 8자 이상, 이메일 중복 체크 필수."
-```
-
-파일에서 읽기:
-```bash
-node agents/orchestrator.js --file=./my_request.txt
-```
-
-## 실행 흐름 (Phase 0~9 + 7.5)
-
-```
-Phase 0  Orchestrator 시작 + FE/BE 부트스트랩 (Dockerfile/.dockerignore 포함)
-Phase 1  CodeChecker (LLM)         → log_agent_decisions INSERT, log_task_state INSERT (1~2행)
-─────  라운드 사이클 ─────
-Phase 2  BE Agent (LLM)            → BE/ 코드 + 테스트
-Phase 3  FE Agent (LLM)            → FE/ 코드 + 테스트
-Phase 4  Lint Agent (LLM X)        → Stage1 ESLint → Stage2 Build → Stage3 Tests
-                                     판정 결과를 log_task_state에 UPDATE
-Phase 5  Orchestrator 1차 판정 (우선순위 단일 평가):
-           ① ERROR / ② PASS 후보 / ③ FAIL(STAGE3) / ④ FAIL(retry) / ⑤ CONTINUE
-─────────────────────────
-Phase 8  Deploy Agent (LLM X, Phase 5=PASS일 때만 1회)
-                                   → docker compose up (FE+BE+MySQL).
-                                     DEPLOY_MODE=off면 SUCCESS+skipped로 자동 통과.
-Phase 9  PostTest Agent (LLM X, Phase 8=SUCCESS일 때만)
-                                   → api_contract 기반 fetch + schema 검증.
-─────────────────────────
-Phase 6  Final verdict (evaluateFinalVerdict로 Phase 5 + 8/9 결합)
-         → log_agent_decisions UPDATE
-Phase 7  Auto-commit (PASS + COMMIT_MODE=auto)
-Phase 7.5 Deploy teardown (PASS + DEPLOY_MODE=on)
-         → docker compose down (FAIL/ERROR면 컨테이너 보존, D6=B)
-```
-
-## 재시도 부분수정 정책 (옵션 C)
-
-Lint가 Stage 1 또는 Stage 2에서 fail하면 Orchestrator가 다음 라운드에 BE/FE Agent를
-**`retry` 모드**로 호출:
-- `existing_files`: 현재 디스크의 파일 스냅샷
-- `allowed_paths`: `fix_instructions`에서 추출한 파일 경로 + 짝 테스트 파일
-- `fix_instructions`: Lint Stage의 stdout/stderr 요약
-- Agent는 `allowed_paths` 외의 파일을 수정하면 안 됨. Orchestrator가 응답 검증.
-
-## 핵심 규칙 (불변)
-
-1. BE Agent는 `BE/`만, FE Agent는 `FE/`만 수정.
-2. `log_agent_decisions`는 CodeChecker INSERT, Orchestrator UPDATE.
-3. `log_task_state`는 CodeChecker INSERT, Lint UPDATE.
-4. `log_agent_runs`는 각 컴포넌트가 자기 row만 INSERT/UPDATE.
-5. Stage 3 (테스트) 실패 = 즉시 `final_verdict='FAIL'` 종료. 재시도 없음.
-6. 재시도 최대 3회 (Stage 1·2 한정), 초과 시 FAIL.
-7. LLM 호출은 CodeChecker / FE / BE만. Lint, Orchestrator, Deploy, PostTest는 결정론적.
-
-## 유지보수 — 스택 변경 체크리스트
-
-FE 또는 BE의 기술 스택을 바꾸려면(예: FE → Phaser.js, BE → Spring Boot) 다음 **두 곳만** 수정하세요:
-
-### 필수 (스택 정보의 단일 원천)
-- [ ] **`lib/stack.config.json`** 의 해당 영역 블록
-  - `displayName`, `install.command/checkPath`
-  - `lint.{stage1,stage2,stage3}` — 정적분석/빌드/테스트 명령
-    - `type: "command"` (`command: ["mvn", "compile"]` 등) 또는
-    - `type: "node_check_recursive"` 같은 특수 핸들러 사용
-  - `agent.{systemPromptHeader, moduleSystem, testFilePattern, testFramework, allowedDeps, stackSpecificRules}`
-  - `snapshot.{extensions, rootGlob}` — Agent에게 보낼 파일 스냅샷 범위
-  - `eslintConfig` (Java/Kotlin이면 `null`로 두고 lint stage1을 다른 도구로 교체)
-- [ ] **`lib/stack_templates/<AREA>/`** placeholder 파일 일체
-  - 예 Spring Boot: `pom.xml` (또는 `build.gradle`), `src/main/java/.../Application.java`, `src/test/java/.../HealthControllerTest.java` 등
-  - bootstrap이 이 폴더를 그대로 `<AREA>/`에 복사
-
-### 부수 (필요 시)
-- [ ] **`rules/common.md`** §5 테스트 도구 이름, §9 스택 일관성 (자연어로 정리). 영역 전용 규칙은 `rules/be.md` / `rules/fe.md`
-- [ ] **`README.md`** 본 문서의 설치/실행 가이드
-
-### 변경하지 않아도 되는 곳 (이게 핵심)
-- ✅ `lib/bootstrap.js` — 템플릿 폴더만 보면 됨
-- ✅ `agents/lint_agent.js` — stage type만 인식하면 됨
-- ✅ `agents/be_agent.js` / `fe_agent.js` — 모든 스택 문구를 config에서 읽음
-- ✅ `lib/stack.js` — 단순 로더
-
-### 작업 순서 권장
-1. `lib/stack_templates/<AREA>/` 폴더 내용 교체 (새 스택 placeholder)
+### 작업 순서
+1. `lib/stack_templates/<AREA>/` 폴더 내용 교체
 2. `lib/stack.config.json` 의 `<AREA>` 블록 갱신
-3. 기존 `<AREA>/` 폴더 통째로 삭제 (`rm -rf BE` 등)
-4. `npm start` 실행 → bootstrap이 새 placeholder 깔고 의존성 설치 → CodeChecker → 새 스택 Agent → Lint
-5. 첫 라운드 통과하면 마이그레이션 완료
-
-### 한 곳 더 — 새 스택이 npm 기반이 아니면
-- `package.json` 루트의 `scripts.lint:be`, `scripts.test:be` 같은 보조 스크립트는 npm 의존이라 의미 없어질 수 있음. 사용 안 하면 무시하거나 삭제.
-- `db/agent_schema.sql`은 Agent 도구 전용이라 스택 변경과 무관 — 손댈 일 없음.
+3. 기존 `<AREA>/` 폴더 삭제 (`rm -rf BE` 등)
+4. UI Run 또는 `npm start` → bootstrap이 새 placeholder 깔고 cycle 진행
 
 ---
 
-## 파이프라인 자동 commit — `COMMIT_MODE`
+## 11. 명세서 작성 가이드 (신규 게임)
 
-orchestrator는 verdict=PASS로 끝났을 때 **`BE/`+`FE/`만** 자동 commit할 수 있습니다. push는 항상 사람이 수행합니다.
+PoC 핵심: *자연어 명세서를 LLM이 그대로 구현*. 명세서 모호함 = LLM 임의 채움 → 결과 다양성.
 
-> **사람의 commit/push는 어떤 모드에서도 검사·차단되지 않습니다.** 자동 commit 토글은 오직 *파이프라인이 만든 변경*에만 적용됩니다.
-
-### 모드
-`.env`의 `COMMIT_MODE`로 제어:
-
-| 값 | 동작 |
+| 문서 | 용도 |
 |---|---|
-| `auto` (기본, 미설정 시) | verdict=PASS일 때 orchestrator가 자동 commit |
-| `manual` (또는 `auto` 아닌 모든 값) | 자동 commit 안 함, 사람이 commit/push 모두 수행 |
+| [docs/SPEC_WRITING.md](docs/SPEC_WRITING.md) | 9개 카테고리 체크리스트 (상태 변수·이벤트 시점·적 AI·UI HUD·CRUD·동시성·boundary·모호 자가체크·PoC 메시지) |
+| [docs/SPEC_TEMPLATE.md](docs/SPEC_TEMPLATE.md) | 빈 게임 명세서 템플릿 (copy → `tmp_big_prompt_run.txt`) |
+| [tmp_big_prompt_run.txt](tmp_big_prompt_run.txt) | 현재 사용 중인 명세서 (판타지 슈팅 게임 사례) |
 
-### 동작 (`COMMIT_MODE=auto` + verdict=PASS일 때)
-```
-orchestrator Phase 7
-  → git rev-parse --is-inside-work-tree   (repo인지 확인)
-  → git add -- BE FE                       (BE/FE만 stage)
-  → git diff --cached --quiet -- BE FE     (실제 변경 있는지 확인)
-      ├─ 변경 없음    → skip
-      └─ 변경 있음    → git commit -m "auto: <task_id> — <요약>"
-```
-
-`git push`는 절대 호출하지 않습니다.
-
-### Skip되는 경우 (verdict=PASS여도 commit 안 함)
-- `COMMIT_MODE`가 `auto`가 아님
-- 현재 디렉토리가 git repo가 아님
-- `BE/`나 `FE/`에 staged 변경이 없음
-- `git add` / `git commit` 실행이 실패함 (오류 출력만 하고 verdict는 그대로 PASS)
-
-### 자동 commit 식별
-auto-commit은 메시지 prefix `auto: `로 식별 가능. 사람의 commit과 history에서 구별됩니다.
+명세서 작성 시:
+- *모호 표현 금지* (`적당히`/`잘`/`필요시` 등 12개 단어 → 수치·단위·조건으로)
+- *허용 + 금지* 모두 명시 (❌ → ✅ → 🚫 3단)
+- `rules/domain.md §2~§3` 카탈로그 글자 그대로 사용 (username/password/HTTP status/error message)
 
 ---
 
-## 검증 토글 — `VALIDATION_MODE`
+## 12. 트러블슈팅
 
-Phase 4 (Lint Agent의 eslint + build + tests 3단계)를 통째로 끄거나 켜는 토글. LLM 출력의 ablation 측정·디버깅·빠른 시연 용도.
-
-> **안전장치는 모드 무관 항상 켜짐**: `validatePaths`(폴더 격리), `protectedConfigFiles`(보호 파일) 등 보안성 검증은 OFF 모드에서도 동작.
-
-### 모드
-`.env`의 `VALIDATION_MODE`로 제어:
-
-| 값 | 동작 |
+| 증상 | 원인·해결 |
 |---|---|
-| `on` (기본, 미설정 시) | Phase 4 정상 실행 (eslint → build → tests, 재시도 로직 포함) |
-| `off` (또는 `on` 아닌 모든 값) | Phase 4 통째로 skip, `log_task_state` 자동 SUCCESS |
+| `Cannot find module '@anthropic-ai/sdk'` | `npm install` 실행 |
+| MySQL 연결 실패 | `.env` DB 접속 정보, MySQL 서버 기동, UFW 3306 허용 |
+| 첫 cycle이 너무 오래 (5분+) | FE/BE의 `npm install` 1회. 이후 빠름 |
+| Lint Stage 3 FAIL → 즉시 종료 | 정책상 재시도 없음. DB `log_task_state.stage_logs`에서 실패 상세 확인 |
+| **PostTest timeout (60s)** | BE → MySQL `ETIMEDOUT` — docker subnet이 UFW 룰 밖. D93 적용 후 subnet 172.20.0.0/16 고정으로 해결됨 |
+| Vite "Blocked request: prof23.p.ssafy.io" | `vite.config.js`에 `allowedHosts: true` (이미 적용) |
+| https 페이지 mixed content 경고 | D91 — `vite.config.js` `hmr: false`로 해결 (이미 적용) |
+| `git reset --hard` 후 작업 분 사라짐 | UI `/api/init`이 git reset 동반. 사람의 변경분은 *push 먼저 → InitProject* 순서. cycle script는 `/tmp/myapp-fix/`에 백업 후 `restore_fixes()`로 복원 |
+| SpecSync FAIL `credential_seed_mismatch` | `valid_credentials` scenario password ≠ `Pass1234`. D92 룰. CodeChecker prompt 따르면 자동 해결 |
+| docker subnet random → UFW 미스 | D93 — `lib/stack_templates/docker-compose.yml`에 subnet 172.20.0.0/16 고정 |
+| Windows 환경 | 모든 npm 자식 프로세스는 `shell: true`, path 구분자는 `path.join`으로 통일 |
 
-### OFF 모드 동작
-```
-Phase 1~3 (LLM)    → 그대로 실행, 코드 디스크에 떨어짐
-Phase 4 Lint       → skip, log_task_state.status='SUCCESS' 직접 UPDATE
-                       stage_logs에 { skipped: 'VALIDATION_MODE=off' } 기록
-Phase 5 verdict    → 모든 영역 SUCCESS이므로 PASS로 흐름
-Phase 6/7          → 그대로 (auto-commit 발동 가능 — 검증 안 된 코드가 commit됨)
-```
-
-### 의미
-"결정론적 *검증*"만 끄고 "결정론적 *제어흐름*"은 유지하는 모드. 즉:
-- LLM 부분(Phase 1~3)은 그대로 동작
-- 검증 부분(Phase 4)만 우회
-- 컨트롤 흐름(Phase 5~7)은 그대로
-
-→ "lint·테스트 없이 LLM이 한 번에 멀쩡한 코드를 뽑나?"를 측정하기 적합.
-
-### COMMIT_MODE와의 조합
-독립적입니다. 위험한 조합은 사용자 책임:
-
-| `VALIDATION_MODE` | `COMMIT_MODE` | 결과 |
-|---|---|---|
-| on | auto | 검증 통과한 코드만 자동 commit (안전) |
-| on | manual | 검증 통과, 사람이 직접 commit |
-| **off** | **auto** | **검증 안 된 코드가 자동 commit ⚠️** |
-| off | manual | 검증 안 된 코드, 사람이 commit 결정 |
-
-### 사용 예
-```bash
-# 검증 끄고 ablation 측정
-VALIDATION_MODE=off node agents/orchestrator.js "..."
-
-# .env에서 영구 토글
-VALIDATION_MODE=off
-```
+추가 진단·자주 하는 작업: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 
-## 트러블슈팅
+## 13. 운영 환경 (현재)
 
-- **`Cannot find module '@anthropic-ai/sdk'`**: `npm install` 실행 필요.
-- **MySQL 연결 실패**: `.env`의 DB 접속 정보, MySQL 서버 기동 여부 확인.
-- **첫 실행 시 너무 오래 걸림**: FE/BE의 `npm install`이 처음에 한 번 돌기 때문. 이후엔 빠름.
-- **Lint Stage 3에서 자꾸 FAIL**: 정책상 즉시 종료. 콘솔에 `task_id` 출력 → DB의 `log_task_state.stage_logs`에서 실패 상세 확인.
-- **Windows 환경**: 모든 npm 자식 프로세스는 `shell: true`로 실행되며 path 구분자는 path.join으로 통일됨.
+- **Primary**: EC2 (prof23.p.ssafy.io) 단일 환경
+- **HTTPS**: Let's Encrypt (만료 2026-08-18, 자동 갱신)
+- **Nginx reverse proxy**: `/` → UI (3000), `/api/v1/*` → BE (3001), `/demo/*` → FE Vite (5173)
+- **Docker subnet**: 172.20.0.0/16 고정
+- **Workflow**: 단일 worktree (`claude/test` branch) → `git push origin claude/test:main` ff push
