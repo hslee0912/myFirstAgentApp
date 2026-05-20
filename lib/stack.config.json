@@ -105,9 +105,11 @@
         "exclude": [".test.js"]
       },
       "stage3": {
-        "type": "command_per_file",
+        "type": "command_batch",
         "label": "BE jest",
-        "command_prefix": ["npx", "--no-install", "jest", "--runInBand", "--colors=false"],
+        "command_prefix": ["npx", "--no-install", "jest", "--colors=false"],
+        "batch_args": ["--json"],
+        "batch_parser": "jest",
         "per_file_pattern": {
           "rootDir": "src",
           "include": [".test.js"],
@@ -138,7 +140,8 @@
       "BE/package-lock.json",
       "BE/.eslintrc.json",
       "BE/Dockerfile",
-      "BE/.dockerignore"
+      "BE/.dockerignore",
+      "BE/src/validators.js"
     ],
     "eslintConfig": {
       "env": { "node": true, "es2022": true, "jest": true },

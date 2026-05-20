@@ -69,12 +69,16 @@ function readConvention() {
   // D41 (2026-05-14): rules/db.md를 BE Agent 전용으로 추가 inject.
   //   migration 관련 사고(특히 checksum 충돌)는 시스템 prompt에 *반복적·명시적*
   //   으로 박혀있어야 첫 응답에서 사용자 사고를 줄일 수 있음.
+  // 2026-05-20: rules/domain.md 추가 — endpoint 간 validator drift 차단 (signup vs check 등).
   const common = fs.readFileSync(path.join(ROOT, 'rules', 'common.md'), 'utf8');
   const beSpecific = fs.readFileSync(path.join(ROOT, 'rules', 'be.md'), 'utf8');
   const dbPath = path.join(ROOT, 'rules', 'db.md');
   const dbSpecific = fs.existsSync(dbPath) ? fs.readFileSync(dbPath, 'utf8') : '';
+  const domainPath = path.join(ROOT, 'rules', 'domain.md');
+  const domainSpecific = fs.existsSync(domainPath) ? fs.readFileSync(domainPath, 'utf8') : '';
   const parts = [common, beSpecific];
   if (dbSpecific) parts.push(dbSpecific);
+  if (domainSpecific) parts.push(domainSpecific);
   return parts.join('\n\n---\n\n');
 }
 
@@ -162,6 +166,16 @@ function buildInitialUserPrompt({ be_spec, api_contract, existing_files, db_stat
     'app.use("/api/v1/users", userRoutes);',
     '```',
     'placeholder의 `/health`는 컨테이너 내부 healthcheck용이라 prefix 미적용 OK — 외부에서 호출 안 함.',
+    '',
+    '## 도메인 필드 validator 통일 (필수 — endpoint 간 drift 차단)',
+    '`rules/domain.md §2`의 도메인 필드(`username`, `password`, `player_name`, `player_id`, `weapon_used`, `stage`, `score` 등)는 **공통 validator 함수로 통일**하라. 모든 endpoint가 같은 함수를 호출해야 한다 (예: `validateUsername()`). endpoint별 inline regex/조건 분기 금지. signup이 통과시키는 입력은 check/login도 통과시켜야 한다. regex/조건은 `rules/domain.md §2` 카탈로그 값을 *글자 그대로* 사용. 권장 구조:',
+    '```js',
+    '// BE/src/validators.js (또는 services/ 안의 단일 모듈) — 모든 route가 import',
+    'function validateUsername(u) { return typeof u === "string" && /^[a-zA-Z0-9_]{4,16}$/.test(u); }',
+    'function validatePassword(p) { return typeof p === "string" && /^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{8,}$/.test(p); }',
+    '// signup, check, login 등 모든 route가 동일 함수 호출',
+    '```',
+    'error message는 `rules/domain.md §3` 정확 문자열 사용 (`Missing required fields`, `Invalid username`, `Invalid username or password`, `Username already exists` 등).',
     '',
     '## 이미 적용된 migration (수정 금지 — 변경 필요 시 새 timestamp 파일로 ALTER만 emit)',
     formatApplied(stateBundle.applied),
@@ -267,6 +281,8 @@ function applyFiles(files) {
 
 async function run(params) {
   const { task_id, mode } = params;
+  const t0 = Date.now();
+  console.log(`[be] start — mode=${mode}, contract_endpoints=${(params.api_contract?.endpoints || []).length}`);
   const run_id = await logger.startRun({
     task_id,
     agent_name: 'BE',
@@ -308,12 +324,8 @@ async function run(params) {
       });
     }
 
-    // S1: max_tokens explicit at the call site for tunability + visibility.
-    // D55 (2026-05-15): Sonnet 4.5 (cap 64K)에서 30000으로 늘려 큰 BE 산출물도
-    // 한 번에 받음. continuation 횟수 감소로 JSON 구조 깨질 위험도 줄어듬.
-    const max_tokens = 30000;
-    // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
-    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'be', max_tokens });
+    // 2026-05-19: max_tokens 미지정 → callJSON이 model cap 그대로 사용.
+    // budget check도 callJSON 내부에서 단일 수행.
 
     // D64 (2026-05-15) inline retry: round retry 비용을 줄이기 위해 같은 round 안에서
     // UNAUTHORIZED_DEPS 발생 시 fix hint를 user prompt에 append하고 LLM 재호출.
@@ -327,7 +339,7 @@ async function run(params) {
     let autoTests;
 
     for (let inlineRetry = 0; inlineRetry <= MAX_INLINE_RETRIES; inlineRetry++) {
-      llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPromptForCall, cache: 'system', max_tokens });
+      llmOut = await callJSON({ agent: 'be', system: SYSTEM_PROMPT, user: userPromptForCall, cache: 'system' });
 
       // D64 옵션 1: deterministic alias auto-fix (bcryptjs → bcrypt 등).
       const fixed = autoFixDependencyAliases(llmOut.files || {});
@@ -377,8 +389,10 @@ async function run(params) {
       notes: llmOut.notes || '',
     };
     await logger.endRun(run_id, { status: 'SUCCESS', output_json: output });
+    console.log(`[be] done SUCCESS in ${((Date.now() - t0) / 1000).toFixed(1)}s — files=${Object.keys(files).length}`);
     return output;
   } catch (e) {
+    console.error(`[be] done FAIL in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${e.message}`);
     await logger.endRun(run_id, {
       status: 'FAILED',
       output_json: { error: e.message, stack: (e.stack || '').slice(0, 2000) },

@@ -40,6 +40,7 @@ const feAgent = require('./fe_agent');
 const lintAgent = require('./lint_agent');
 const migrationAgent = require('./migration_agent');
 const contractSyncAgent = require('./contract_sync_agent');
+const specSyncAgent = require('./spec_sync_agent');
 const dbState = require('../lib/db_state');
 const { classifyAgentError, buildFixInstructions } = require('../lib/agent_error_classifier');
 const { checkResumeEligibility } = require('../lib/resume_helper');
@@ -388,6 +389,10 @@ async function main() {
       // Rationale: Lint each area immediately after its Agent so subsequent
       // Agents see a clean baseline; also makes debug attribution per-area trivial.
 
+      // round 시작 직후 — fePrelaunched는 Phase 3과 inter-LLM cooldown에서 참조되니
+      // round loop scope에 선언 (이전: needBE block 안 let — block 밖에서 ReferenceError).
+      let fePrelaunched = null;
+
       // Phase 2 + Phase 4(BE): BE Agent → Lint(BE)
       if (needBE) {
         const beState = stateMap.BE;
@@ -421,11 +426,19 @@ async function main() {
           params.existing_files = snapshotArea('BE');
         }
 
+        // (Critical Issue #2 mitigation, 2026-05-19) BOTH 첫 round 한정 BE/FE 병렬:
+        // BE/FE LLM 호출은 입력 의존성 없음 (둘 다 CodeChecker가 미리 만든 contract만 본다).
+        // 첫 round + BOTH일 때만 FE Agent를 BE Phase 2 직전에 미리 시작 (fire-and-forget).
+        // BE Agent throw 처리는 그대로 + FE 결과는 Phase 3에서 회수.
+        // fePrelaunched는 위 round-scope에 선언됨.
+        const canParallelize = round === 1 && needBE && needFE && targets === 'BOTH';
+        if (canParallelize) {
+          const feParamsInitial = { task_id, mode: 'initial', fe_spec, api_contract };
+          console.log(`[round 1] BE/FE 병렬: FE Agent prelaunch (BE Phase 2와 동시 시작)`);
+          fePrelaunched = feAgent.run(feParamsInitial).catch((e) => ({ _error: e }));
+        }
+
         // D34 (2026-05-14): Agent run의 retryable guard throw도 retry 흐름으로.
-        //   classifyAgentError가 retryable=true면 task_state FAILED + retry_count++
-        //   + fix_instructions = 카테고리별 hint + 원본 message → 다음 round에서
-        //   BE Agent가 retry mode로 받아 회복 시도.
-        //   분류 안 되는 throw(시스템 예외)는 그대로 throw → main catch ERROR.
         let beAgentThrew = false;
         try {
           await beAgent.run(params);
@@ -497,7 +510,36 @@ async function main() {
             }
           }
 
-          if (contractSyncFailed) {
+          // Phase 2.8 (D89, 2026-05-20): SpecSync Agent — rules/domain.md §2 카탈로그
+          //   (도메인 필드 regex + PASS/FAIL 예)와 shared/router/<name>.json 의 spec/
+          //   test_scenarios 사이의 drift를 정적으로 검증.
+          //   BE/BOTH 모드일 때만, ContractSync PASS 이후에만 실행.
+          //   FAIL 시 Lint 건너뛰고 task_state를 FAILED+SPEC_SYNC로 → BE 재진입.
+          //   VALIDATION_MODE 무관 항상 ON (safety guard 등급).
+          let specSyncFailed = false;
+          if (!contractSyncFailed && (targets === 'BE' || targets === 'BOTH')) {
+            console.log(`[phase 2.8] SpecSync Agent`);
+            const ssResult = await specSyncAgent.run({ task_id });
+            if (ssResult.status === 'FAILED') {
+              specSyncFailed = true;
+              const driftCount = (ssResult.drifts || []).length;
+              console.log(`[phase 2.8] SpecSync FAILED — ${driftCount} drifts`);
+              const newRetryCount = (beState.retry_count || 0) + 1;
+              await logger.updateTaskState(beState.id, {
+                status: 'FAILED',
+                failed_stage: 'SPEC_SYNC',
+                retry_count: newRetryCount,
+                fix_instructions: ssResult.fix_instructions || ssResult.error || 'spec sync failed',
+                stage_logs: {
+                  migration: migResult,
+                  spec_sync: { drifts: ssResult.drifts },
+                },
+                result_text: `SpecSync FAILED: ${driftCount} drifts`,
+              });
+            }
+          }
+
+          if (contractSyncFailed || specSyncFailed) {
             // 위에서 task_state 갱신 — Lint skip
           } else if (validationMode === 'off') {
             console.log(`[phase 4] ⚠️  VALIDATION_MODE=off — skip Lint for BE, auto-SUCCESS (state_id=${beState.id})`);
@@ -531,8 +573,8 @@ async function main() {
         console.log(`[round ${round}] BE status=${beFinalStatus} — FE skip this round (D46: BE 안정화 후 FE 진행)`);
       }
 
-      // Inter-LLM cooldown between BE Lint and FE LLM call.
-      if (needBE && needFE && !skipFeBecauseBe) {
+      // Inter-LLM cooldown — fePrelaunched면 이미 BE와 병렬 진행이라 skip.
+      if (needBE && needFE && !skipFeBecauseBe && !fePrelaunched) {
         console.log(`[round ${round}] inter-LLM cooldown ${SLEEP_BETWEEN_LLM_MS}ms...`);
         await sleep(SLEEP_BETWEEN_LLM_MS);
       }
@@ -553,9 +595,18 @@ async function main() {
         }
 
         // D34 (2026-05-14): FE Agent도 동일한 retryable guard 처리.
+        // fePrelaunched가 있으면 (round 1 + BOTH) 그 결과를 회수, 아니면 새 호출.
         let feAgentThrew = false;
         try {
-          await feAgent.run(params);
+          if (fePrelaunched && !isRetry) {
+            console.log(`[phase 3] FE Agent 결과 회수 (병렬 prelaunch)`);
+            const fePreResult = await fePrelaunched;
+            if (fePreResult && fePreResult._error) {
+              throw fePreResult._error;
+            }
+          } else {
+            await feAgent.run(params);
+          }
         } catch (e) {
           const cls = classifyAgentError(e);
           if (!cls.retryable) throw e;

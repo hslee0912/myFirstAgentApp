@@ -30,7 +30,21 @@ function readSchemaIfAny() {
   }
 }
 
+function readDomainRulesIfAny() {
+  // 2026-05-20: rules/domain.md를 CodeChecker에도 inject — endpoint 간 validator/scenarios drift 차단.
+  // BE/FE Agent는 이미 매 호출마다 rules/* 읽음. CodeChecker만 안 읽고 있어 spec 단계에서 drift 발생 가능.
+  try {
+    return fs.readFileSync(path.join(ROOT, 'rules', 'domain.md'), 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
 const SCHEMA_SQL = readSchemaIfAny();
+const DOMAIN_RULES = readDomainRulesIfAny();
+const DOMAIN_SECTION = DOMAIN_RULES
+  ? `\n\n## 도메인 필드 카탈로그 (rules/domain.md — 반드시 글자 그대로 사용)\n\n${DOMAIN_RULES}`
+  : '';
 const SCHEMA_SECTION = SCHEMA_SQL
   ? `
 
@@ -118,7 +132,8 @@ const SYSTEM_PROMPT = `당신은 풀스택 요구사항 분석가다.
     4. **시나리오 간 체이닝 의존 금지** — signup 시나리오가 만든 user를 login 시나리오가 그대로 쓰는 식의 순서 의존 X. 각 시나리오는 독립적으로 PASS 가능해야 함 (시드 사용자나 명시적 setup만 의존).
     5. **subset 검증이 안전한 default** — \`expect_response_subset\`은 *부분 일치*(deep subset)로 검증. 가변 필드를 굳이 명시하지 말고, *확실히 안정된 필드만* 적어라 (예: \`{success: true, data: {username: 'demo_user'}}\` 정도. \`data.id\`는 빼라).
     6. **집계 endpoint(best/top/latest/max 등) 시드 보존** — PostTest는 endpoint × 시나리오를 *동일 컨테이너/DB*에 직렬 실행. *집계 결과를 갈아치울 수 있는 endpoint* (예: \`POST /game/result\` → is_best=1 갱신)의 시나리오는 *시드값보다 작은 값만* 사용. 그래야 그 다음 실행되는 \`GET /game/best\` 시나리오가 시드 값을 안정적으로 검증. 명세서 §4-3 시드값을 인지하고 다른 endpoint의 시나리오값을 *반드시 시드보다 낮게* 설계할 것.
-- **base_url은 반드시 \`/api/v1\` 고정** (다른 값 금지). 외부 진입은 Nginx :80 → \`/api/v1/*\`만 BE로 forward되므로, BE는 모든 비즈니스 router를 \`app.use('/api/v1/...', ...)\` 형태로 mount해야 한다. \`/api\`, \`/v1\`, \`/api/v2\` 등 다른 prefix를 사용하면 외부 요청이 BE에 도달하지 못한다.${SCHEMA_SECTION}`;
+- **base_url은 반드시 \`/api/v1\` 고정** (다른 값 금지). 외부 진입은 Nginx :80 → \`/api/v1/*\`만 BE로 forward되므로, BE는 모든 비즈니스 router를 \`app.use('/api/v1/...', ...)\` 형태로 mount해야 한다. \`/api\`, \`/v1\`, \`/api/v2\` 등 다른 prefix를 사용하면 외부 요청이 BE에 도달하지 못한다.
+- ⚠️ **도메인 필드 일관성 (rules/domain.md — endpoint 간 drift 차단)**: \`router_details\`의 모든 \`request.schema.properties[].pattern/minLength/maxLength\`는 rules/domain.md §2 카탈로그 값을 *글자 그대로* 사용. \`test_scenarios[].request_body\`의 valid 입력은 §2 "PASS 예", invalid 입력은 §2 "FAIL 예"에서만 선택. 임의 값 금지. 같은 field 이름(예: \`username\`)이 여러 endpoint에 등장하면 모든 endpoint에서 동일 규칙·동일 PASS 예 사용. 특히 "available_*"/"check_*" 같은 *PASS 의도* 시나리오는 §2 "PASS 예" 중에서 시드 외 값을 선택해야 한다 (FAIL 예를 PASS 시나리오에 넣으면 BE validator가 400 반환 → scenario FAIL).${SCHEMA_SECTION}${DOMAIN_SECTION}`;
 
 function buildUserPrompt(userRequirement) {
   return [
@@ -162,18 +177,16 @@ async function run({ task_id, user_request }) {
     input_json: { user_request },
   });
 
+  const t0 = Date.now();
+  console.log(`[codechecker] start — user_request=${user_request.length} chars`);
   try {
     const userPrompt = buildUserPrompt(user_request);
-    // S1: max_tokens explicit at the call site for tunability + visibility.
-    // D69 (2026-05-18): Sonnet 4.5 30000 — router_details + test_scenarios 출력 양 큼.
-    const max_tokens = 30000;
-    // Pre-call context budget check (also re-checked inside callJSON as defense in depth)
-    assertContextBudget({ system: SYSTEM_PROMPT, user: userPrompt, agent: 'codechecker', max_tokens });
+    // 2026-05-19: max_tokens 미지정 → callJSON이 model cap 그대로 사용.
+    // budget check도 callJSON 내부에서 단일 수행.
     const llmOut = await callJSON({
       agent: 'codechecker',
       system: SYSTEM_PROMPT,
       user: userPrompt,
-      max_tokens,
       // CodeChecker는 user_request가 큰 spec일 때 캐시 효과. 같은 spec 재실행
       // (디버깅·시연 반복) 시 5분 TTL 안에서 ~90% 절감. user_request가 작으면
       // 캐시 임계값 미달로 자동 no-op.
@@ -268,8 +281,10 @@ async function run({ task_id, user_request }) {
     };
 
     await logger.endRun(run_id, { status: 'SUCCESS', output_json: output });
+    console.log(`[codechecker] done SUCCESS in ${((Date.now() - t0) / 1000).toFixed(1)}s — targets=${targets}, endpoints=${(llmOut.api_contract?.endpoints || []).length}`);
     return output;
   } catch (e) {
+    console.error(`[codechecker] done FAIL in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${e.message}`);
     await logger.endRun(run_id, {
       status: 'FAILED',
       output_json: { error: e.message, stack: (e.stack || '').slice(0, 2000) },
