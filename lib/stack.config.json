@@ -62,7 +62,8 @@
       "FE/.eslintrc.json",
       "FE/Dockerfile",
       "FE/.dockerignore",
-      "FE/src/setupTests.js"
+      "FE/src/setupTests.js",
+      "FE/src/constants/game.js"
     ],
     "eslintConfig": {
       "env": { "browser": true, "es2022": true, "node": true, "jest": true },
