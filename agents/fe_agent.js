@@ -112,12 +112,59 @@ function readConvention() {
   return common + '\n\n---\n\n' + feSpecific;
 }
 
+// D94 (2026-05-21): FE 결정론 placeholder 강제 사용 — 명세서(tmp_big_prompt_run.txt)
+//   에 §7-10 같은 강제 룰이 없어도 *시스템 차원*에서 FE/src/constants/game.js를
+//   import 강제. lib/stack_templates/FE/src/constants/game.js (= bootstrap이
+//   매 cycle 깐 파일)을 system prompt에 직접 inject + 인라인 hex/enum/수치 금지.
+function readPlaceholderConstants() {
+  const p = path.join(ROOT, 'lib', 'stack_templates', 'FE', 'src', 'constants', 'game.js');
+  if (!fs.existsSync(p)) return '';
+  try {
+    const src = fs.readFileSync(p, 'utf8');
+    const exports = (src.match(/^export const (\w+)/gm) || [])
+      .map((m) => m.replace('export const ', ''))
+      .join(', ');
+    return [
+      '',
+      '## 🔒 FE 결정론 placeholder (`FE/src/constants/game.js` — bootstrap이 자동 깜, 수정 금지)',
+      '',
+      '`stack.config.json.FE.protectedConfigFiles`에 등록됨. **응답에 이 파일을 포함하면 validatePaths 차단**. `GamePage.jsx` 등은 *반드시* 다음 패턴으로 import해서 사용:',
+      '',
+      '```js',
+      "import { " + exports + " } from '../constants/game';",
+      '```',
+      '',
+      'placeholder 실제 내용 (수정·재정의 금지):',
+      '',
+      '```js',
+      src.trim(),
+      '```',
+      '',
+      '🚫 **금지 패턴 (시스템 차원 강제 — 명세서 무관 항상 적용)**:',
+      '- 인라인 hex (`ctx.fillStyle = "#1B4D2E"` 같은) → `STAGES[s.currentStage-1].bgColor` / `WEAPONS.find(w => w.id === ...).color` 사용',
+      '- 인라인 enum 값 (`"holy_sword"`, `"fire_magic"` 등 literal) → `WEAPONS.find(...).id` 또는 `ENEMY_POOLS[s.currentStage]` 사용',
+      '- 인라인 수치 (1000·100·50 같은 stage threshold/score) → `STAGES[i].scoreThreshold` / `SCORE_PER_STAGE[s.currentStage]` 사용',
+      '- placeholder 객체 *재정의* (`export const STAGES = [...]` 같은) — protectedConfigFiles로 차단되지만 사고 방지',
+      '',
+      '✅ **반드시 따를 패턴**:',
+      '- 매 frame 배경 그리기: `ctx.fillStyle = STAGES[s.currentStage - 1].bgColor; ctx.fillRect(0, 0, CANVAS.width, CANVAS.height)`',
+      '- 적 spawn 시 무기 결정: `const pool = ENEMY_POOLS[s.currentStage]; const weaponId = pool[Math.floor(Math.random()*pool.length)]`',
+      '- 점수 가산: `s.score += SCORE_PER_STAGE[s.currentStage]` (단일값 `+= 10` 금지)',
+      '- 무기 한글 이름 표시: `ctx.fillText(WEAPONS.find(w => w.id === s.player.weapon).name, ...)`',
+      '- HP/MP 초기값: `HERO_INITIAL.hp` / `HERO_INITIAL.mp` (인라인 100 금지)',
+    ].join('\n');
+  } catch (_) {
+    return '';
+  }
+}
+
 // Built once at module load. Includes rules so the entire system prompt is
 // stable across calls within an orchestrator run → prompt caching can hit.
 const SYSTEM_PROMPT =
   buildSystemPrompt(stackCfg) +
   '\n\n## rules (common + FE-specific, 반드시 준수)\n\n' +
-  readConvention();
+  readConvention() +
+  readPlaceholderConstants();
 
 function readApiContractIfAny() {
   const p = path.join(ROOT, 'shared', 'api_contract.json');
