@@ -8,7 +8,7 @@
 > - **GamePage.jsx 등 FE 코드는 *반드시* import해서 사용**:
 >   ```js
 >   import {
->     CANVAS, STAGES, WEAPONS, ENEMY_SHAPE_BY_WEAPON, ENEMY_POOLS,
+>     CANVAS, STAGES, WEAPONS, PATTERN_DEFINITIONS, ENEMY_SHAPE_BY_WEAPON, ENEMY_POOLS,
 >     ENEMY_FIRE_COOLDOWN_MS, SPAWN_CONFIG, ENEMY_MOVEMENT,
 >     SCORE_PER_STAGE, HERO_INITIAL, DAMAGE, MP_REGEN, BULLET_SPEED,
 >   } from '../constants/game';
@@ -268,9 +268,33 @@ renderCtx.fillRect(0, 0, CANVAS.width, CANVAS.height);
 
 ### 9-3. 공격 패턴 (이번 보완의 핵심)
 - 적은 **자기 무기로 주인공을 향해 발사**한다.
+- **공격 패턴 = `PATTERN_DEFINITIONS[weapon.pattern]`** (placeholder) — 플레이어와 *완전 동일* (탄환 수·각도 offset·관통·속도 배수). 차이는 *기준 방향*뿐.
+  - `single`: 직선 1발
+  - `fan`: 부채꼴 3발 (±20° offset)
+  - `pierce`: 관통 고속 1발 (`speedMul: 1.6`, `pierce: true`)
+  - `omni`: 8방향 단발 (`fixedDirection: true`, player 무관 고정)
+- 기준 방향 분기 (LLM 구현 시 *반드시* 다음 로직):
+  - 플레이어: 위쪽 (0° = up)
+  - 적: 발사 시점 player 위치 (aimed) — 단 `fixedDirection: true`이면 8방향 고정
+- **플레이어/적 공통 helper** 권장 — 한 함수로 placeholder lookup 후 탄환 배열 생성:
+  ```js
+  function spawnBullets(weapon, sourcePos, targetPos) {
+    const def = PATTERN_DEFINITIONS[weapon.pattern];
+    const baseAngle = def.fixedDirection ? 0 : Math.atan2(targetPos.y - sourcePos.y, targetPos.x - sourcePos.x);
+    const speed = BULLET_SPEED * def.speedMul;
+    return def.bullets.map(b => {
+      const a = def.fixedDirection ? (b.angleOffsetDeg * Math.PI / 180)
+                                    : baseAngle + (b.angleOffsetDeg * Math.PI / 180);
+      return { x: sourcePos.x, y: sourcePos.y, vx: Math.cos(a)*speed, vy: Math.sin(a)*speed, pierce: def.pierce, color: weapon.color };
+    });
+  }
+  ```
+  → 플레이어·적이 *같은 함수* 호출, *같은 패턴 정의* 사용 → 적별로 다른 공격 패턴 불가능.
 - 발사 주기 (무기별 쿨다운) = `ENEMY_FIRE_COOLDOWN_MS[weaponId]` placeholder (ms 단위).
 - **탄환 색 = 적의 무기 색** (`WEAPONS.find(...).color`).
 - 적은 화면 상단 진입 후 **0.5초 유예** 뒤부터 발사 시작 (스폰 즉시 피탄 방지).
+
+🚫 **금지**: 적별로 *별도 분기*로 패턴 작성 (예: `if (enemy.weapon === 'fire_magic') { 부채꼴; } else if ...`). 모든 적이 `PATTERN_DEFINITIONS[enemy.weapon.pattern]` 한 곳에서 lookup해야 함.
 
 ### 9-4. 스코어
 - 적이 격파되면 stage별 점수 가산. 값 = `SCORE_PER_STAGE[s.currentStage]` placeholder.
