@@ -138,7 +138,13 @@ const SYSTEM_PROMPT =
     ? '\n\n## 🔒 PLACEHOLDER FIELD INVENTORY (D97 — 반드시 이 필드명만 사용)\n\n' +
       PLACEHOLDER_INVENTORY +
       '\n\n위 인벤토리에 없는 필드명(예: `intervalMs`, `frequency`, `maxEnemies`, ' +
-      '`.type` 같은 환각)을 사용하면 빌드/테스트 실패. *추측 금지* — 정확한 이름만.'
+      '`.type` 같은 환각)을 사용하면 빌드/테스트 실패. *추측 금지* — 정확한 이름만.' +
+      '\n\n⚠️⚠️ **PATTERN_DEFINITIONS 사용 룰 (D97-bis-3)** — *플레이어와 적 모두* ' +
+      '같은 PATTERN_DEFINITIONS lookup을 거쳐 발사해야 함. fireEnemyBullet 같은 ' +
+      '함수에서 `BULLET_SPEED * 0.7 * unit(dx,dy)` 같은 *aimed 단발 hardcode 금지*. ' +
+      '플레이어와 같은 코드 경로 (helper 1개 권장), 기준 각도만 다름 ' +
+      '(플레이어=-π/2, 적=atan2). bullets / speedMul / pierce / fixedDirection 4 ' +
+      '필드를 *적 발사에도* 그대로 적용.'
     : '') +
   '\n\n## rules (common + FE-specific, 반드시 준수)\n\n' +
   readConvention();
