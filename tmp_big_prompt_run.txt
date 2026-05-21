@@ -317,111 +317,59 @@ renderCtx.fillRect(0, 0, CANVAS.width, CANVAS.height);
 
 ## 9. 적(Enemy) 명세
 
-### 9-1. 종류·외형 (drawEnemy 4-shape 분기 필수)
+### 9-1. 종류·외형
 
 - **총 4종**. 각 적은 **무기 4종 중 하나와 1:1로 매핑**되어 자기 무기를 들고 등장.
 - 스폰 시 무기 결정: `ENEMY_POOLS[currentStage]`에서 무작위 1개 선택 → `weaponId`.
-- **외형 lookup** (스폰 시):
-  - `shape = ENEMY_SHAPE_BY_WEAPON[weaponId]` (4종 문자열 중 하나, placeholder)
-  - `color = WEAPONS.find(w => w.id === weaponId).color` (무기 색 그대로)
-  - enemy 객체에 `{weaponId, shape, color, …}` 저장 → 매 frame draw에서 재활용.
+- 스폰 시점에 적 외형을 placeholder에서 lookup하여 enemy 객체에 저장 (매 frame 재계산 불필요):
+  - 모양 = `ENEMY_SHAPE_BY_WEAPON[weaponId]` (placeholder, 4종 문자열 중 1개)
+  - 색 = `WEAPONS.find(w => w.id === weaponId).color` (무기 색 그대로)
 
-**🚫 핵심 룰 — `drawEnemy`는 `enemy.shape` 문자열로 4-way switch 필수**:
+**🚫 핵심 룰 — drawEnemy는 적의 `shape` 문자열을 *반드시* 읽어 4가지 다른 모양을 그릴 것**:
 
-placeholder가 4가지 모양 *문자열*을 지정 (`'triangle' | 'star' | 'square' | 'inverted_triangle'`).
-단일 path 하드코딩 시 *모든 적이 같은 모양*으로 그려져 무기 종류 시각 구분 불가.
+placeholder `ENEMY_SHAPE_BY_WEAPON`이 4가지 모양 문자열(`'triangle' | 'inverted_triangle' | 'square' | 'star'`)을 지정함. drawEnemy가 단일 path만 하드코딩하면 *모든 적이 같은 모양*으로 그려져 무기 종류 시각 구분 불가 (이번 cycle 버그 보고 사유).
 
-```js
-function drawEnemy(ctx, enemy) {
-  ctx.save();
-  ctx.translate(enemy.x, enemy.y);
-  ctx.fillStyle = enemy.color;
-  switch (enemy.shape) {
-    case 'triangle':          // ▲ 위 꼭짓점, 아래 좌·우
-      // beginPath → moveTo(0,-h) → lineTo(w, h) → lineTo(-w, h) → closePath → fill
-      break;
-    case 'inverted_triangle': // ▽ 아래 꼭짓점, 위 좌·우 (triangle을 위·아래 뒤집기)
-      // beginPath → moveTo(0, h) → lineTo(w,-h) → lineTo(-w,-h) → closePath → fill
-      break;
-    case 'square':            // ■ 정사각형
-      // fillRect(-w/2, -w/2, w, w) 또는 path로 직사각형
-      break;
-    case 'star':              // ★ 5각 별 — 외접원/내접원 반지름 교대로 10점 path
-      // for i in 0..9: angle = -PI/2 + i*PI/5; r = (i%2===0) ? rOuter : rInner;
-      // beginPath → moveTo/lineTo → closePath → fill
-      break;
-  }
-  ctx.restore();
-}
-```
+각 모양의 의미:
+- `'triangle'`: ▲ 위 꼭짓점 1개, 아래 변 2점 (정삼각형)
+- `'inverted_triangle'`: ▽ 아래 꼭짓점 1개, 위 변 2점 (triangle을 상하 반전)
+- `'square'`: ■ 정사각형
+- `'star'`: ★ 5각 별 (외접·내접 반지름을 교대로 사용해 10개 점을 잇는 path)
 
-크기 가이드: 외접 반지름 ~14px (적이 너무 크면 화면 점령, 너무 작으면 시각 식별 어려움).
+크기 가이드: 외접 반지름 ~14px (적이 너무 크면 화면 점령, 너무 작으면 시각 식별 어려움). 색은 enemy.color 그대로 fill.
 
 ### 9-1-bis. 스폰 빈도 — `SPAWN_CONFIG` 필드명 정확히
 
-placeholder의 *정확한 필드명*만 사용. LLM이 `intervalMs`/`maxEnemies` 같이 *없는 필드*를
-만드는 환각 자주 발생.
+LLM이 placeholder에 *없는 필드*를 환각으로 만드는 경우 자주 발생 (`intervalMs`, `maxEnemies` 등). 반드시 아래 *정확한* 필드명만 사용:
 
-| placeholder 필드 (정확) | 의미 | 사용처 |
-|---|---|---|
-| `SPAWN_CONFIG.firstSpawnDelayMs` | 게임 시작 후 첫 스폰까지 지연 (ms) | 게임 시작 시 `spawnTimer = -firstSpawnDelayMs`로 초기화 |
-| `SPAWN_CONFIG.intervalByStage[stage]` | **현재 stage**의 스폰 주기 (ms) | `spawnTimer` 임계값 — stage 진행 시 자동으로 빨라짐 |
-| `SPAWN_CONFIG.minOnScreen` | 화면 *항상* 유지할 최소 적 수 | 화면 적 < min이면 *주기 무관* 즉시 추가 spawn |
-| `SPAWN_CONFIG.maxOnScreen` | 동시 등장 상한 | 도달 시 spawn skip |
+- `SPAWN_CONFIG.firstSpawnDelayMs` — 게임 시작 후 첫 스폰까지 지연 (ms). 게임 시작 직후 평온 구간 확보.
+- `SPAWN_CONFIG.intervalByStage[stage]` — **현재 stage 번호로 lookup**하는 스폰 주기 (ms). stage 진행과 함께 값이 작아져 난이도 상승 (placeholder 정의 그대로).
+- `SPAWN_CONFIG.minOnScreen` — 화면에 항상 유지할 최소 적 수. 화면 적이 이보다 적으면 *스폰 주기 무관* 즉시 추가 spawn.
+- `SPAWN_CONFIG.maxOnScreen` — 동시 등장 상한. 도달 시 spawn 건너뜀.
 
-🚫 환각 금지: `intervalMs`(단일값), `maxEnemies`/`maxCount`, `baseSpeed`(이건 ENEMY_MOVEMENT[key].speed). 모두 round retry 또는 stage 진행 무의미화.
+🚫 환각 금지 필드명 (모두 round retry 또는 stage 진행 무의미화):
+- `intervalMs`(stage 무관 단일값으로 만드는 환각) → `intervalByStage[stage]` 사용
+- `maxEnemies`/`maxCount` → `maxOnScreen` 사용
+- `baseSpeed`/`enemySpeed` (placeholder에 없음, 적 속도는 `ENEMY_MOVEMENT[key].speed`)
 
-### 9-2. 이동 패턴 — `ENEMY_MOVEMENT` 키 switch 필수 (3종 균등 확률)
+### 9-2. 이동 패턴 — `ENEMY_MOVEMENT` 키 자체로 분기 (3종 균등 확률)
 
-**❌ 가장 흔한 버그** — LLM이 `.type` 같은 *존재하지 않는 필드*로 분기:
-```js
-if (movDef.type === 'zigzag') { … }   // .type 필드는 placeholder에 없음 → 항상 false
-```
-결과: 모든 적이 else 분기로 빠져 *직선 하강만* 됨.
+`ENEMY_MOVEMENT` placeholder는 3개 키 `'straight'`, `'zigzag'`, `'formation'`를 가진 객체. **각 값 객체에 `.type` 같은 분류 필드는 *없음* — placeholder의 *키 문자열 자체*가 분기 조건**.
 
-**✅ 올바른 패턴** — placeholder 객체의 *키 자체*로 분기:
-```js
-// 1) 스폰 시: 키 무작위 선택, 문자열로 저장
-const keys = Object.keys(ENEMY_MOVEMENT);          // ['straight','zigzag','formation']
-const movementType = keys[Math.floor(Math.random() * keys.length)];
-enemy.movementType = movementType;                  // 문자열
+흐름:
+1. 스폰 시 — `ENEMY_MOVEMENT`의 키 3개 중 무작위 1개를 enemy.movementType 문자열로 저장 (균등 확률).
+2. 이동 갱신 시 — enemy.movementType *문자열*을 분기 조건으로 사용. 3개 패턴 *모두 처리* (formation까지). 한 케이스라도 누락하면 그 무빙은 fallback으로 빠져 직선이 됨.
 
-// 2) 이동 update: 문자열 키 자체로 switch
-const m = ENEMY_MOVEMENT[enemy.movementType];      // { speed, … } 필드는 패턴별 다름
-switch (enemy.movementType) {
-  case 'straight':
-    enemy.y += m.speed * dt;
-    break;
-  case 'zigzag':
-    enemy._zigzagT = (enemy._zigzagT || 0) + dt;
-    enemy.x += Math.sin(enemy._zigzagT * m.frequencyHz * 2 * Math.PI) * m.amplitude * dt;
-    enemy.y += m.speed * dt;
-    break;
-  case 'formation':
-    // 타원 편대 — 같은 _groupId·_groupIdx로 묶인 m.groupSize마리가 같은 타원 궤적
-    // 코드 측이 ellipse 중심·반지름·각속도를 자유 설계 (placeholder는 groupSize만 명시)
-    enemy.y += m.speed * dt;                       // y는 일관 하강
-    // x는 ellipse phase (예: enemy._phase += angularSpeed * dt; x = cx + rx * cos(phase))
-    break;
-}
-```
+각 패턴 동작 (placeholder 필드명 정확히 사용):
+- `'straight'`: y만 `speed × dt` 만큼 증가 (화면 위→아래 직선 하강).
+- `'zigzag'`: y는 `speed × dt`로 하강, x는 sin 곡선. sin 인자는 `2π × frequencyHz × t` (t는 spawn 후 경과 초), 진폭은 `amplitude` px. → 좌우로 진동하며 내려옴.
+- `'formation'`: y는 `speed × dt`로 하강, x는 타원 phase 기반 (코드 측이 ellipse 중심·반지름·각속도를 자유 설계). **단, 스폰 시 *동시에 `groupSize`마리*를 함께 생성**해야 "여러 마리가 줄지어"라는 의도가 시각화됨. 한 마리만 spawn하면 formation 의미 없음.
 
-**필드명 정확히** (placeholder 환각 방지):
-- `m.speed` (모든 패턴 공통)
-- `m.amplitude`, `m.frequencyHz` (zigzag만) — `frequency` 같은 줄임 금지
-- `m.groupSize` (formation만)
-
-formation 구현 가이드:
-- 스폰 시 *동시에 `m.groupSize`마리* 생성, 모두 같은 `_groupId` + 0..groupSize-1의 `_groupIdx` 부여
-- 같은 ellipse 궤적 위에서 `_groupIdx`만큼 phase 어긋난 위치로 배치
-- "여러 마리가 줄지어" 시각 효과 — 한 마리만 spawn하면 formation 의미 X
-
-🚫 **금지 (모두 round retry 또는 시각 버그 유발)**:
-- `movDef.type === '…'` 분기 (필드 없음)
-- 'orbit'/'linear'/'wave' 등 *없는 키*
-- formation 누락 (3종 중 1종이라도 빠지면 그 케이스 → 직선 fallback)
-- `frequency` (placeholder는 `frequencyHz`)
-- `enemySpeed`/`baseSpeed` 환각 (placeholder는 `ENEMY_MOVEMENT[key].speed`)
+**🚫 환각 금지 (모두 round retry 또는 시각 버그)**:
+- 값 객체의 `.type` 필드로 분기 — placeholder에 없는 필드, 항상 undefined → 모든 적 직선화
+- `'orbit'`/`'linear'`/`'wave'` 같이 *없는 키* 추가
+- 3종 중 일부 케이스 누락 (특히 formation)
+- `frequency` (placeholder는 `frequencyHz`, 줄임 금지)
+- `baseSpeed`/`enemySpeed` (속도는 `ENEMY_MOVEMENT[key].speed`로만 lookup)
 
 ### 9-3. 공격 패턴 (행동·룰만, 구현은 LLM이 작성)
 
