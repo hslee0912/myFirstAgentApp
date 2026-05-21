@@ -39,6 +39,49 @@ module.exports = SignupForm;
 - bootstrap이 깔아둔 `App.jsx` placeholder가 있으면 **그 동작·테스트를 보존**하면서 새 컴포넌트 추가.
 - placeholder 테스트가 검증하는 셀렉터(예: `screen.getByText(...)`)가 깨지지 않도록 주의.
 
+## 3-bis. Placeholder 데이터 파일 — 필드 구조 보존 (D94 일반화)
+
+bootstrap이 깐 `FE/src/constants/*.js` 같은 placeholder 데이터 파일 (예: `game.js`)은
+`stack.config.json`의 `FE.protectedConfigFiles`에 등록되어 *수정 불가*. FE Agent의 임무는
+이 파일을 **import만 하고 *필드 타입·구조 그대로* 사용**하는 것이다.
+
+**핵심 룰:**
+- placeholder의 *필드 타입*을 절대 변환하지 말 것 — 숫자 배열은 숫자 배열로, 문자열은
+  문자열로, 객체는 객체로 그대로 사용.
+- placeholder의 *필드 이름*을 rename하지 말 것 — `def.bullets`를 `def.angles`로 alias
+  하면 다른 컴포넌트의 lookup과 어긋남.
+- placeholder의 *순서*가 의미를 가지면 (배열·index 매핑) 그 순서로 순회.
+
+**나쁨** (placeholder를 객체로 재포장 → 후속 연산에서 NaN/undefined):
+```js
+import { PATTERN_DEFINITIONS, BULLET_SPEED } from '../constants/game';
+const def = PATTERN_DEFINITIONS.fan;
+// def.bullets는 [number, number, number] (예: [-20, 0, 20])
+const bullets = def.bullets.map(deg => ({ angleOffsetDeg: deg, ... }));  // ❌ 객체로 wrap
+// 이후 코드에서: const rad = base + (bullet.angleOffsetDeg * π/180);  ← 새 필드명 발명
+// 또는 더 나쁘게:  const rad = base + (bullet * π/180);  ← 객체 곱셈 → NaN
+```
+
+**좋음** (placeholder 그대로 map):
+```js
+import { PATTERN_DEFINITIONS, BULLET_SPEED } from '../constants/game';
+const def = PATTERN_DEFINITIONS.fan;
+def.bullets.map(deg => {                          // deg는 *숫자* 그대로
+  const rad = base + (deg * Math.PI) / 180;       // 직접 연산 OK
+  return { x, y, vx: Math.cos(rad)*speed, ... };  // 새 객체는 *런타임 산출*만 담음
+});
+```
+
+**왜 이게 중요한가**: placeholder는 시스템이 *명세서와 1:1 짝* 으로 관리하는 결정론적
+상수. LLM이 학습 분포 따라 "더 OOP스럽게" 객체 배열로 재구성하면, 명세서 §·다른 컴포넌트
+lookup·protectedConfigFiles 검증과 어긋나서 round retry 또는 silent NaN 버그.
+
+**자가 점검** (응답 emit 전 마지막):
+- 응답의 모든 `from '../constants/...'` import 라인을 찾아본다.
+- 그 placeholder의 *필드 타입을 변환하는 코드*가 있는가? — 있으면 그대로 쓰도록 수정.
+- `.map(x => ({...}))` 패턴이 있으면 → 새 객체로 *재포장* 중인지 확인 → 후속 코드가
+  *원본 필드명* 으로 접근하는지 vs *새 필드명*으로 접근하는지 점검.
+
 ## 4. React 패턴
 
 - Functional component + Hooks 사용. Class component 사용 금지.
