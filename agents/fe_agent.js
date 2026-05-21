@@ -24,6 +24,7 @@ const { callJSON, assertContextBudget } = require('../lib/llm');
 const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllowedDeps } = require('../lib/prompt_util');
 const { autoFixDependencyAliases } = require('../lib/dep_autofix');
 const { assertFEContract } = require('../lib/fe_contract_guard');
+const { checkPlaceholderUsageInFiles, formatMissingForFix } = require('../lib/placeholder_usage_check');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
@@ -351,13 +352,26 @@ async function run(params) {
         if (apiContract) {
           assertFEContract(files, apiContract.endpoints || [], apiContract.base_url || '');
         }
+        // D97-bis (2026-05-21) placeholder usage check — emit 직전 정적 스캔으로
+        // 무기 동작 핵심 식별자(PATTERN_DEFINITIONS / bullets / speedMul /
+        // fixedDirection)가 코드에 reference되는지 확인. 누락 시 throw → inline retry.
+        const usage = checkPlaceholderUsageInFiles(files);
+        if (!usage.ok) {
+          const err = new Error(formatMissingForFix(usage.missing));
+          err.code = 'MISSING_WEAPON_BEHAVIOR';
+          err.missing = usage.missing;
+          throw err;
+        }
         break;  // PASS — exit inline retry loop
       } catch (e) {
-        const retriableCodes = ['UNAUTHORIZED_DEPS', 'FE_CONTRACT_DRIFT'];
+        const retriableCodes = ['UNAUTHORIZED_DEPS', 'FE_CONTRACT_DRIFT', 'MISSING_WEAPON_BEHAVIOR'];
         if (!retriableCodes.includes(e.code) || inlineRetry >= MAX_INLINE_RETRIES) {
           throw e;
         }
-        const violationLabel = e.code === 'FE_CONTRACT_DRIFT' ? 'contract drift' : '미허가 의존성';
+        const violationLabel =
+          e.code === 'FE_CONTRACT_DRIFT' ? 'contract drift' :
+          e.code === 'MISSING_WEAPON_BEHAVIOR' ? '무기 동작 누락 (placeholder 필수 식별자 미참조)' :
+          '미허가 의존성';
         console.log(`[fe:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] ${e.code} — retrying with fix hint`);
         userPromptForCall =
           userPrompt +
