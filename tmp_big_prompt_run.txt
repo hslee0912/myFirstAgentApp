@@ -269,25 +269,35 @@ renderCtx.fillRect(0, 0, CANVAS.width, CANVAS.height);
 ### 9-3. 공격 패턴 (이번 보완의 핵심)
 - 적은 **자기 무기로 주인공을 향해 발사**한다.
 - **공격 패턴 = `PATTERN_DEFINITIONS[weapon.pattern]`** (placeholder) — 플레이어와 *완전 동일* (탄환 수·각도 offset·관통·속도 배수). 차이는 *기준 방향*뿐.
-  - `single`: 직선 1발
-  - `fan`: 부채꼴 3발 (±20° offset)
-  - `pierce`: 관통 고속 1발 (`speedMul: 1.6`, `pierce: true`)
-  - `omni`: 8방향 단발 (`fixedDirection: true`, player 무관 고정)
+  - `single`: 직선 1발 (`bullets: [0]`)
+  - `fan`: 부채꼴 3발 (`bullets: [-20, 0, 20]`)
+  - `pierce`: 관통 고속 1발 (`bullets: [0]`, `speedMul: 1.6`, `pierce: true`)
+  - `omni`: 8방향 단발 (`bullets: [0,45,90,...315]`, `fixedDirection: true`, player 무관 고정)
+- ⚠️ **`bullets`는 *숫자 배열* (degrees)** — placeholder 구조 그대로 사용. 객체로 wrap하지 말 것.
 - 기준 방향 분기 (LLM 구현 시 *반드시* 다음 로직):
-  - 플레이어: 위쪽 (0° = up)
-  - 적: 발사 시점 player 위치 (aimed) — 단 `fixedDirection: true`이면 8방향 고정
+  - 플레이어: 위쪽 (`baseAngle = -Math.PI / 2`)
+  - 적: 발사 시점 player 위치 (aimed) — `baseAngle = Math.atan2(player.y - enemy.y, player.x - enemy.x)`
+  - omni (`fixedDirection: true`)는 base 무관, *bullets의 deg 자체가 절대 각도*
 - **플레이어/적 공통 helper** 권장 — 한 함수로 placeholder lookup 후 탄환 배열 생성:
   ```js
-  function spawnBullets(weapon, sourcePos, targetPos) {
+  function spawnBullets(weapon, sourcePos, baseAngle) {
     const def = PATTERN_DEFINITIONS[weapon.pattern];
-    const baseAngle = def.fixedDirection ? 0 : Math.atan2(targetPos.y - sourcePos.y, targetPos.x - sourcePos.x);
-    const speed = BULLET_SPEED * def.speedMul;
-    return def.bullets.map(b => {
-      const a = def.fixedDirection ? (b.angleOffsetDeg * Math.PI / 180)
-                                    : baseAngle + (b.angleOffsetDeg * Math.PI / 180);
-      return { x: sourcePos.x, y: sourcePos.y, vx: Math.cos(a)*speed, vy: Math.sin(a)*speed, pierce: def.pierce, color: weapon.color };
+    const speed = BULLET_SPEED * (def.speedMul || 1);
+    const base = def.fixedDirection ? 0 : baseAngle;  // fixedDirection이면 deg가 절대 각도
+    return def.bullets.map((deg) => {
+      const rad = base + (deg * Math.PI) / 180;
+      return {
+        x: sourcePos.x,
+        y: sourcePos.y,
+        vx: Math.cos(rad) * speed,
+        vy: Math.sin(rad) * speed,
+        color: weapon.color,
+        pierce: def.pierce || false,
+      };
     });
   }
+  // 플레이어 발사: spawnBullets(player.weapon, player.pos, -Math.PI / 2)
+  // 적 발사:    spawnBullets(enemy.weapon, enemy.pos, Math.atan2(player.y-enemy.y, player.x-enemy.x))
   ```
   → 플레이어·적이 *같은 함수* 호출, *같은 패턴 정의* 사용 → 적별로 다른 공격 패턴 불가능.
 - 발사 주기 (무기별 쿨다운) = `ENEMY_FIRE_COOLDOWN_MS[weaponId]` placeholder (ms 단위).
