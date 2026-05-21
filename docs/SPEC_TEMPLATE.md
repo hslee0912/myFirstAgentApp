@@ -19,6 +19,24 @@
 > - **플레이 시간**: 약 <N>초 ~ <M>분
 > - **저장 단위**: <한 판 끝나면 결과 저장 / 매 stage 끝마다 / ...>
 
+> ## 🔒 결정론 placeholder — `FE/src/constants/game.js` (필독)
+>
+> 이 게임의 **모든 수치·enum·색·매핑은 `FE/src/constants/game.js`의 placeholder**가 single source of truth.
+>
+> - bootstrap이 자동 깜. `stack.config.json.FE.protectedConfigFiles`에 등록되어 *FE Agent가 응답에 포함하면 validatePaths 차단*. 수정·재정의 **금지**.
+> - GamePage.jsx 등 FE 코드는 *반드시* `import { ... } from '../constants/game'`으로 사용.
+> - 🚫 인라인 hex / 인라인 enum literal / 인라인 수치 (`+= 10`) / 재정의 모두 금지.
+> - ✅ `STAGES[i].bgColor` / `WEAPONS.find(w => w.id === ...).color` / `ENEMY_POOLS[s.currentStage]` / `SCORE_PER_STAGE[s.currentStage]` / `HERO_INITIAL.hp` 같은 패턴.
+>
+> ## ⚠️ 게임 변경 시 — **반드시 두 파일 짝으로 갱신**
+>
+> 본 명세서는 *현재 게임 전용*. 다른 게임 만들 때:
+>
+> 1. **본 파일 (`tmp_big_prompt_run.txt`)** — 새 게임 요구사항·placeholder 이름·사용 패턴 갱신
+> 2. **`lib/stack_templates/FE/src/constants/game.js`** — 새 게임 상수로 *통째 교체*
+>
+> *한쪽만 수정*하면 cycle FE 결과물 부정합 → 시각적 회귀. 두 파일을 **항상 함께** 갱신.
+
 ## 1. 프로젝트 개요
 
 - <게임 한 줄 소개>
@@ -318,6 +336,8 @@ stage / level / wave 등 사용 시:
 
 ### 7-10. 결정론 placeholder 매핑 (`FE/src/constants/game.js`)
 
+> ⚠️ **이 파일은 *bootstrap이 자동으로 깔아두는 결정론 placeholder*. `stack.config.json.FE.protectedConfigFiles`에 등록 → FE Agent가 응답에 포함하면 validatePaths 차단**. 명세서 §0 상단의 *짝 갱신* 룰을 반드시 따를 것.
+
 이 게임의 결정론 영역. Bootstrap이 깐 placeholder에 다음 상수를 export — Agent는 import만:
 
 ```js
@@ -391,6 +411,11 @@ URL.revokeObjectURL(url);
 
 ## 10. 완료 조건 (체크리스트)
 
+> ⚠️ **명세서 작성 *전*에 반드시 확인** — *두 파일 짝 갱신*:
+> - [ ] `tmp_big_prompt_run.txt` (이 명세서) 작성 완료
+> - [ ] `lib/stack_templates/FE/src/constants/game.js` placeholder 새 게임 상수로 갱신 완료
+> - [ ] 두 파일의 enum·수치·색이 *완전 일치* (예: `WEAPONS[].id` ↔ 명세서의 무기 이름 매칭)
+
 - [ ] 로컬에서 BE / FE 동시 실행 확인
 - [ ] `POST /signup`, `POST /login` API 정상 응답 (200 / 400 / 409)
 - [ ] 회원가입 시 한글 Player Name 저장 확인 (MySQL UTF-8)
@@ -400,6 +425,7 @@ URL.revokeObjectURL(url);
 - [ ] <게임별 항목 추가> — 적 행동 / 화면 전환 / HUD 표시 등
 - [ ] HP 0 도달 시 ResultPage 전환 확인 (frame 지연 없음)
 - [ ] 게임 종료 후 `report.html` 생성 확인
+- [ ] FE 코드에 인라인 hex / 인라인 enum literal / 인라인 수치 0건 (placeholder만 사용)
 - [ ] PostTest 5/5 PASS (또는 4/4 — game/best 미사용 시)
 
 ---

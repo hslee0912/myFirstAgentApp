@@ -1,5 +1,32 @@
 # 판타지 슈팅 게임 프로젝트 — 전체 구성 지시서
 
+> ## 🔒 결정론 placeholder — `FE/src/constants/game.js` (필독)
+>
+> 이 게임의 **모든 수치·enum·색·매핑은 `FE/src/constants/game.js` 에 정의된 placeholder**가 single source of truth.
+>
+> - **bootstrap이 자동 깜**. `stack.config.json.FE.protectedConfigFiles` 등록되어 있어 *FE Agent가 응답에 포함하면 validatePaths 차단*. 수정·재정의·재작성 **금지**.
+> - **GamePage.jsx 등 FE 코드는 *반드시* import해서 사용**:
+>   ```js
+>   import {
+>     CANVAS, STAGES, WEAPONS, ENEMY_SHAPE_BY_WEAPON, ENEMY_POOLS,
+>     ENEMY_FIRE_COOLDOWN_MS, SPAWN_CONFIG, ENEMY_MOVEMENT,
+>     SCORE_PER_STAGE, HERO_INITIAL, DAMAGE, MP_REGEN, BULLET_SPEED,
+>   } from '../constants/game';
+>   ```
+> - 🚫 **금지**: 인라인 hex (`'#FFD700'`) / 인라인 enum (`'holy_sword'` 같은 literal) / 인라인 수치 (`100`, `1000`, `+= 10` 같은 단일값) / 객체 재정의 (`const STAGES = [...]`).
+> - ✅ **사용 패턴**: `STAGES[s.currentStage-1].bgColor` / `WEAPONS.find(w => w.id === ...).color` / `ENEMY_POOLS[s.currentStage]` / `SCORE_PER_STAGE[s.currentStage]` / `HERO_INITIAL.hp` 등.
+>
+> ## ⚠️ 게임 변경 시 — **반드시 짝으로 갱신**
+>
+> 본 명세서는 *현재 게임(판타지 슈팅) 전용*. 다른 게임(퍼즐·플랫포머·리듬 등)을 만들 때:
+>
+> 1. **본 파일 (`tmp_big_prompt_run.txt`)** — 새 게임 요구사항·placeholder 이름·사용 패턴 갱신
+> 2. **`lib/stack_templates/FE/src/constants/game.js`** — 새 게임 상수로 *통째 교체* (CANVAS 외 모두 게임별로 다름)
+>
+> *한쪽만 수정*하면 cycle FE 결과물이 부정합 → 시각적 회귀. 두 파일을 **항상 함께** 갱신.
+
+---
+
 ## 1. 프로젝트 개요
 
 - 마성전설(Knightmare) 오마주 판타지 종스크롤 슈팅 게임
