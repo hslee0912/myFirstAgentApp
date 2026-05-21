@@ -1,20 +1,67 @@
 #!/usr/bin/env bash
-# Stop all UI server processes — `node .../ui/server.js` 매칭하는 모든 PID 종료.
+# Stop UI servers — 먼저 cycle Deploy 잔존 컨테이너 정리 후 UI 프로세스 종료.
 #
-# Why: 여러 워크트리(메인 / test / verify-* 등)에서 launch-ui.sh를 여러 번 띄우면
-# 같은 포트 충돌 또는 다른 워크트리에서 떠 있는 ui/server.js가 stale 상태로
-# Cycle을 트리거할 수 있음. 종료 시 일괄 정리하기 위한 단일 스크립트.
+# 순서가 중요한 이유: UI 서버를 *먼저* 죽이면 향후 `npm run ui`로 다시 띄울 때
+# 떠 있는 cycle artifact가 health probe·container_cleanup 로직과 충돌 가능.
+# 컨테이너부터 정리하고 마지막에 UI 서버 종료가 안전한 순서.
+#
+# 1단계 — Docker 컨테이너 정리:
+#   `com.myfirstagentapp.managed=true` 라벨이 붙은 컨테이너 (cycle Deploy
+#   Phase 8이 띄운 BE/FE) 를 모두 stop + rm. 라벨은
+#   lib/stack_templates/docker-compose.yml 의 `labels:` 섹션에서 부여됨
+#   (lib/container_cleanup.js 와 동일 정책).
+#
+# 2단계 — UI 서버 프로세스 종료:
+#   `node .../ui/server.js` 매칭하는 모든 PID에 SIGTERM. 0.5초 후 잔존하면
+#   SIGKILL fallback.
 #
 # 사용:
-#   bash scripts/stop-ui.sh           # 모든 ui/server.js PID 정상 종료 (SIGTERM)
-#   FORCE=1 bash scripts/stop-ui.sh   # SIGKILL 강제 종료 (SIGTERM 안 받는 경우 fallback)
-#
-# 종료 후 PID·작업 디렉터리·UI_PORT 결과를 stdout에 요약.
+#   bash scripts/stop-ui.sh            # 정상 종료
+#   FORCE=1 bash scripts/stop-ui.sh    # 처음부터 SIGKILL
+#   SKIP_DOCKER=1 bash scripts/stop-ui.sh   # 컨테이너 정리 skip (UI만 종료)
 
 set -u
 
-# pgrep -af로 'node .../ui/server.js' 매칭. -a는 명령 라인 전체 표시 (어떤 워크트리
-# 인지 식별), -f는 명령 라인 전체에 대한 매칭.
+MANAGED_LABEL="com.myfirstagentapp.managed=true"
+
+###################################
+# 1단계: Docker 컨테이너 정리
+###################################
+if [ "${SKIP_DOCKER:-0}" != "1" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    # 라벨 기반으로 cycle artifact 컨테이너 ID 수집 (실행 중 + 정지 모두).
+    MANAGED_IDS=$(docker ps -aq --filter "label=$MANAGED_LABEL" 2>/dev/null)
+
+    if [ -z "$MANAGED_IDS" ]; then
+      echo "ℹ️  관리 대상 컨테이너 없음 ($MANAGED_LABEL)."
+    else
+      echo "발견된 관리 대상 컨테이너:"
+      docker ps -a --filter "label=$MANAGED_LABEL" \
+        --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' 2>/dev/null
+      echo ""
+      echo "→ docker stop …"
+      # shellcheck disable=SC2086
+      docker stop $MANAGED_IDS >/dev/null 2>&1 || true
+      echo "→ docker rm …"
+      # shellcheck disable=SC2086
+      docker rm -f $MANAGED_IDS >/dev/null 2>&1 || true
+
+      # 같이 만들어진 compose network 정리 (orphan 네트워크 제거).
+      docker network prune -f >/dev/null 2>&1 || true
+      echo "✅ 컨테이너 정리 완료."
+    fi
+  else
+    echo "⚠️  docker 명령 없음 — 컨테이너 정리 skip."
+  fi
+else
+  echo "ℹ️  SKIP_DOCKER=1 — 컨테이너 정리 skip."
+fi
+
+echo ""
+
+###################################
+# 2단계: UI 서버 프로세스 종료
+###################################
 PIDS=$(pgrep -af 'node .*ui/server\.js' 2>/dev/null | awk '{print $1}')
 
 if [ -z "$PIDS" ]; then
