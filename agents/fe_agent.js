@@ -112,10 +112,33 @@ function readConvention() {
   return common + '\n\n---\n\n' + feSpecific;
 }
 
+// D97 (2026-05-21): placeholder 필드 인벤토리를 prompt 상단에 inject.
+// LLM이 추측하다가 환각 필드명(`SPAWN_CONFIG.intervalMs` 등)을 발명하는 패턴 차단.
+// `lib/placeholder_inventory.js`가 game.js를 정규식 파싱해 export 객체의 키 목록을
+// 생성. 빈 game.js 또는 파일 부재 시 fallback으로 빈 문자열.
+function readPlaceholderInventory() {
+  try {
+    const { buildPlaceholderInventory } = require('../lib/placeholder_inventory');
+    const ph = path.join(ROOT, 'lib', 'stack_templates', 'FE', 'src', 'constants', 'game.js');
+    if (!fs.existsSync(ph)) return '';
+    return buildPlaceholderInventory(ph);
+  } catch (err) {
+    logger.warn('placeholder_inventory build failed: ' + err.message);
+    return '';
+  }
+}
+
 // Built once at module load. Includes rules so the entire system prompt is
 // stable across calls within an orchestrator run → prompt caching can hit.
+const PLACEHOLDER_INVENTORY = readPlaceholderInventory();
 const SYSTEM_PROMPT =
   buildSystemPrompt(stackCfg) +
+  (PLACEHOLDER_INVENTORY
+    ? '\n\n## 🔒 PLACEHOLDER FIELD INVENTORY (D97 — 반드시 이 필드명만 사용)\n\n' +
+      PLACEHOLDER_INVENTORY +
+      '\n\n위 인벤토리에 없는 필드명(예: `intervalMs`, `frequency`, `maxEnemies`, ' +
+      '`.type` 같은 환각)을 사용하면 빌드/테스트 실패. *추측 금지* — 정확한 이름만.'
+    : '') +
   '\n\n## rules (common + FE-specific, 반드시 준수)\n\n' +
   readConvention();
 

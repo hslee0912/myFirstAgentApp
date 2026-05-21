@@ -38,6 +38,8 @@ restore_fixes() {
   cp "$FIX_DIR/llm.js"               lib/llm.js
   cp "$FIX_DIR/stack.config.json"    lib/stack.config.json
   cp "$FIX_DIR/spec_sync.js"         lib/spec_sync.js
+  # D97 (2026-05-21): placeholder 필드 인벤토리 자동 추출기. fe_agent.js가 require.
+  [ -f "$FIX_DIR/placeholder_inventory.js" ] && cp "$FIX_DIR/placeholder_inventory.js" lib/placeholder_inventory.js
   mkdir -p lib/stack_templates/BE/src && cp "$FIX_DIR/validators.js" lib/stack_templates/BE/src/validators.js
   # D94 (2026-05-21): FE 게임 상수 placeholder 복원 (결정론 가드)
   mkdir -p lib/stack_templates/FE/src/constants && [ -f "$FIX_DIR/game.js" ] && cp "$FIX_DIR/game.js" lib/stack_templates/FE/src/constants/game.js
