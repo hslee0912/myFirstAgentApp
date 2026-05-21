@@ -23,3 +23,11 @@ BE/coverage/
 # D87 (2026-05-18): eslint --cache 결과물. retry round에서 변경 없는 파일 skip.
 FE/.eslintcache
 BE/.eslintcache
+
+# D93+ (2026-05-21): cycle 산출물·로그·linter 백업 — VSCode SCM 노이즈 차단.
+#   BE/db/        BE Agent의 migration emit 산출물 (cycle별 다름, commit 대상 X)
+#   big_cycle_logs/  cycle 실행 로그 폴더
+#   *.bak         linter/editor 자동 백업 (e.g. *.sh.bak)
+BE/db/
+big_cycle_logs/
+*.bak
