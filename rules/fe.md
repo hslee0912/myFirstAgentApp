@@ -2,7 +2,7 @@
 
 이 문서는 FE Agent **전용** 규칙입니다. 공통 규칙은 `rules/common.md` 참조 — 두 문서를 합쳐 FE Agent의 system prompt에 주입됩니다.
 
-## ⚠️ FE 응답 emit 전 자가 체크 (필독 — FE에서 자주 어기는 4개)
+## ⚠️ FE 응답 emit 전 자가 체크 (필독 — FE에서 자주 어기는 5개)
 
 응답 JSON 직렬화 직전 마지막 확인. 하나라도 어기면 round ERROR 또는 STAGE 3 FAIL.
 
@@ -10,6 +10,10 @@
 2. **🧱 `return null` 절대 금지** — props 없이 `render(<Component />)` 호출되어 *non-null DOM 노드* 반환해야 함. `Modal`/`Toast`/`Drawer` 컴포넌트의 `if (!isOpen) return null` 패턴 매우 흔함. 차라리 `<div hidden />` 또는 `<div style={{display:'none'}} />`. §4-bis 참조.
 3. **🎁 prop default 값 반드시** — `function UserBadge({ user })` → `user.name` 접근 시 throw. `{ user = { name: '' } }` 또는 optional chaining `user?.name`. §4-ter 참조.
 4. **🚫 외부 라이브러리 — allowedDeps만** — `react-router-dom`, `react-hook-form`, `formik`, `axios`, `react-icons`, `styled-components`, `@emotion/*`, `tailwindcss`, `lodash`, `validator`, `joi`, `zod` 등 *모두 금지*. 직접 구현. `rules/common.md §9-bis` 함정 표 참조.
+5. **🔁 inline default + useEffect dep array 무한 setState 루프 절대 금지** (D78, **vitest 5분 timeout = round FAIL 최빈 원인**) — 컴포넌트 시그니처에 `= () => {}`, `= [...]`, `= {...}` 같은 *inline default*가 있고 그 prop이 useEffect dep array에 등장하면 매 render마다 새 reference → effect re-run → setState → 무한 루프. **해결 패턴 3가지** (반드시 하나 채택, §4-ter-α 참조):
+   - (1) `const NOOP = () => {}` 모듈 상수로 default 분리 → dep array에 그 *상수 reference*만 들어감
+   - (2) `useRef`로 최신값 보관 + dep array에서 그 prop 제외
+   - (3) dep array `[]` (mount once) — 이벤트 리스너·game loop에 가장 적합
 
 ---
 
@@ -152,7 +156,11 @@ function UserBadge({ user }) {
 - 객체/배열 prop은 default `{}` / `[]` 또는 optional chaining(`?.`).
 - 함수 prop(예: `onClick`)도 *호출 안 해도 안전*해야 하지만, *호출 시*엔 default가 없으면 throw → `onClick = () => {}`처럼 noop default.
 
-### 4-ter-α. ⚠️ **inline default가 useEffect dep에 들어가면 무한 setState 루프** (D78, vitest 5min hang 사고)
+### 4-ter-α. ⚠️⚠️ **inline default + useEffect dep array = 무한 setState 루프** (D78, **round FAIL 최빈 원인** — cycle #4 보고)
+
+> **Stage 3 vitest 5분 timeout의 가장 흔한 원인.** retry loop이 누적되면 LLM이 fix instructions 따라 *patch가 이 패턴을 새로 만드는* 사고 빈번. *retry round 진입 시 반드시 우선 점검*.
+
+
 
 함수/객체/배열 prop default를 *컴포넌트 시그니처 안*에서 inline으로 적으면 *매 render마다 새 reference* 가 생성된다. 이 prop을 useEffect dep array에 넣으면 *매 render마다 dep 변화 인식 → cleanup → re-run → 만약 effect 안에서 setState 호출하면 → re-render → 무한 루프*.
 
