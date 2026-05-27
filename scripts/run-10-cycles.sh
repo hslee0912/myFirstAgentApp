@@ -21,7 +21,7 @@ MAX_CYCLE_WAIT=${MAX_CYCLE_WAIT:-2400}
 
 cd "$PROJECT_DIR"
 
-MYSQL() { mysql -uroot -p"$DB_PASS" myfirstagentapp_db "$@" 2>/dev/null | grep -v 'Warning'; }
+MYSQL() { mysql -uroot -p"$DB_PASS" myfirstagentapp_db "$@" 2>/dev/null | { grep -v 'Warning' || true; }; }
 
 # restore — InitProject의 git reset --hard 후 우리 fix 다시 적용
 restore_fixes() {
