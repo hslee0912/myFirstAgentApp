@@ -4,9 +4,12 @@
 # 절차:
 #   1. scripts/stop-ui.sh — 잔존 managed Docker 컨테이너 + UI 서버 모두 종료.
 #      Docker 데몬이 떠 있지 않으면 컨테이너 정리는 silent skip (UI 종료만 동작).
-#   2. Docker 데몬 가동 보장 — 이미 응답하면 noop, 아니면 `sudo systemctl start docker`.
-#   3. Docker 데몬 응답 대기 — `docker info` 성공할 때까지 최대 30초.
-#   4. UI 서버 detached 가동 — nohup으로 npm run ui 실행, 로그는 /tmp/ui_server.log.
+#   2. Gerrit 데몬 정리 (OOM 방지) — gerrit.service 존재 시 stop + disable.
+#      `procedure_new_server_setup.md §1.5` 참조 — Gerrit 480 MB 상시 + cycle과 무관,
+#      OOM 원인 #1. idempotent — 이미 stopped/disabled / 미설치이면 skip.
+#   3. Docker 데몬 가동 보장 — 이미 응답하면 noop, 아니면 `sudo systemctl start docker`.
+#   4. Docker 데몬 응답 대기 — `docker info` 성공할 때까지 최대 30초.
+#   5. UI 서버 detached 가동 — nohup으로 npm run ui 실행, 로그는 /tmp/ui_server.log.
 #      "listening on" 로그 라인이 보일 때까지 대기 후 URL을 출력.
 #
 # 사용: bash scripts/start-ec2.sh
@@ -22,16 +25,37 @@ UI_LOG="${UI_LOG:-/tmp/ui_server.log}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-20}"
 
 ###################################
-# 1/4 잔존 컨테이너 + UI 정리
+# 1/5 잔존 컨테이너 + UI 정리
 ###################################
-echo "━━━ 1/4 잔존 컨테이너 + UI 정리 ━━━"
+echo "━━━ 1/5 잔존 컨테이너 + UI 정리 ━━━"
 bash "$ROOT/scripts/stop-ui.sh" || true
 
 ###################################
-# 2/4 Docker 데몬 가동 보장
+# 2/5 Gerrit 정리 (OOM 방지)
 ###################################
 echo ""
-echo "━━━ 2/4 Docker Engine 가동 보장 ━━━"
+echo "━━━ 2/5 Gerrit 데몬 정리 (OOM 방지) ━━━"
+if systemctl list-unit-files gerrit.service >/dev/null 2>&1 && \
+   systemctl cat gerrit.service >/dev/null 2>&1; then
+  ACTIVE=$(systemctl is-active gerrit 2>/dev/null || true)
+  ENABLED=$(systemctl is-enabled gerrit 2>/dev/null || true)
+  if [ "$ACTIVE" = "active" ] || [ "$ENABLED" = "enabled" ]; then
+    echo "→ sudo systemctl stop+disable gerrit"
+    sudo -n systemctl stop gerrit 2>/dev/null || true
+    sudo -n systemctl disable gerrit 2>/dev/null || true
+    echo "  → is-active=$(systemctl is-active gerrit 2>&1) / is-enabled=$(systemctl is-enabled gerrit 2>&1)"
+  else
+    echo "✅ gerrit 이미 정지·비활성 상태 (is-active=$ACTIVE, is-enabled=$ENABLED)"
+  fi
+else
+  echo "ℹ️  gerrit.service 미설치 — skip"
+fi
+
+###################################
+# 3/5 Docker 데몬 가동 보장
+###################################
+echo ""
+echo "━━━ 3/5 Docker Engine 가동 보장 ━━━"
 if docker info >/dev/null 2>&1; then
   echo "✅ Docker 데몬 이미 응답 중 — 가동 skip"
 else
@@ -46,10 +70,10 @@ else
 fi
 
 ###################################
-# 3/4 Docker 데몬 응답 대기
+# 4/5 Docker 데몬 응답 대기
 ###################################
 echo ""
-echo "━━━ 3/4 Docker 데몬 응답 대기 (최대 30초) ━━━"
+echo "━━━ 4/5 Docker 데몬 응답 대기 (최대 30초) ━━━"
 DOCKER_READY=0
 for i in $(seq 1 30); do
   if docker info >/dev/null 2>&1; then
@@ -65,10 +89,10 @@ if [ "$DOCKER_READY" != "1" ]; then
 fi
 
 ###################################
-# 4/4 UI 서버 detached 가동
+# 5/5 UI 서버 detached 가동
 ###################################
 echo ""
-echo "━━━ 4/4 UI 서버 가동 (detached, 로그=$UI_LOG) ━━━"
+echo "━━━ 5/5 UI 서버 가동 (detached, 로그=$UI_LOG) ━━━"
 cd "$ROOT"
 
 # 이전 로그 truncate (직전 세션 로그가 누적되지 않게).
