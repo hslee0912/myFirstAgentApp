@@ -25,6 +25,7 @@ const { abridgeExistingFiles, abridgeForRetry, dropProtectedFiles, validateAllow
 const { autoFixDependencyAliases } = require('../lib/dep_autofix');
 const { assertFEContract } = require('../lib/fe_contract_guard');
 const { checkPlaceholderUsageInFiles, formatMissingForFix } = require('../lib/placeholder_usage_check');
+const { checkGameInitInFiles, formatViolationsForFix: formatGameInitForFix } = require('../lib/game_init_check');
 const { dropAgentGeneratedTests, generateSmokeTests } = require('../lib/test_codegen');
 const { endpointChecklist } = require('../lib/api_test');
 const fsu = require('../lib/fs_util');
@@ -385,15 +386,25 @@ async function run(params) {
           err.missing = usage.missing;
           throw err;
         }
+        // D98 (2026-05-27) game init check — currentStage 1 / enemy hp 1 초기값
+        // hardcode 검사. 사용자 직접 플레이 보고로 발견된 두 버그 catch.
+        const gameInit = checkGameInitInFiles(files);
+        if (!gameInit.ok) {
+          const err = new Error(formatGameInitForFix(gameInit));
+          err.code = 'GAME_INIT_BUG';
+          err.violations = gameInit.violations;
+          throw err;
+        }
         break;  // PASS — exit inline retry loop
       } catch (e) {
-        const retriableCodes = ['UNAUTHORIZED_DEPS', 'FE_CONTRACT_DRIFT', 'MISSING_WEAPON_BEHAVIOR'];
+        const retriableCodes = ['UNAUTHORIZED_DEPS', 'FE_CONTRACT_DRIFT', 'MISSING_WEAPON_BEHAVIOR', 'GAME_INIT_BUG'];
         if (!retriableCodes.includes(e.code) || inlineRetry >= MAX_INLINE_RETRIES) {
           throw e;
         }
         const violationLabel =
           e.code === 'FE_CONTRACT_DRIFT' ? 'contract drift' :
           e.code === 'MISSING_WEAPON_BEHAVIOR' ? '무기 동작 누락 (placeholder 필수 식별자 미참조)' :
+          e.code === 'GAME_INIT_BUG' ? '게임 초기 상태 버그 (currentStage 또는 적 hp)' :
           '미허가 의존성';
         console.log(`[fe:inline-retry ${inlineRetry + 1}/${MAX_INLINE_RETRIES}] ${e.code} — retrying with fix hint`);
         userPromptForCall =

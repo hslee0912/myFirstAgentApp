@@ -42,6 +42,8 @@ restore_fixes() {
   [ -f "$FIX_DIR/placeholder_inventory.js" ] && cp "$FIX_DIR/placeholder_inventory.js" lib/placeholder_inventory.js
   # D97-bis (2026-05-21): placeholder 사용 검사 (필수 식별자 미참조 catch).
   [ -f "$FIX_DIR/placeholder_usage_check.js" ] && cp "$FIX_DIR/placeholder_usage_check.js" lib/placeholder_usage_check.js
+  # D98 (2026-05-27): 게임 초기 상태 검사 (currentStage 1 / 적 hp 1).
+  [ -f "$FIX_DIR/game_init_check.js" ] && cp "$FIX_DIR/game_init_check.js" lib/game_init_check.js
   mkdir -p lib/stack_templates/BE/src && cp "$FIX_DIR/validators.js" lib/stack_templates/BE/src/validators.js
   # D94 (2026-05-21): FE 게임 상수 placeholder 복원 (결정론 가드)
   mkdir -p lib/stack_templates/FE/src/constants && [ -f "$FIX_DIR/game.js" ] && cp "$FIX_DIR/game.js" lib/stack_templates/FE/src/constants/game.js
