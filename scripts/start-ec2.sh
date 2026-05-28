@@ -98,12 +98,19 @@ echo ""
 echo "━━━ 5/6 vscode-idle-killer cron entry (idempotent) ━━━"
 VSCODE_KILLER="$ROOT/scripts/vscode-idle-killer.sh"
 if [ -x "$VSCODE_KILLER" ]; then
-  CRON_LINE="*/5 * * * * $VSCODE_KILLER >>/tmp/vscode-idle-killer.log 2>&1"
-  if crontab -l 2>/dev/null | grep -qF "vscode-idle-killer.sh"; then
-    echo "✅ cron entry 이미 등록됨 ($(crontab -l 2>/dev/null | grep vscode-idle-killer | head -1))"
+  CRON_LINE="* * * * * $VSCODE_KILLER >>/tmp/vscode-idle-killer.log 2>&1"
+  EXISTING=$(crontab -l 2>/dev/null | grep -F "vscode-idle-killer.sh" || true)
+  if [ -n "$EXISTING" ]; then
+    if echo "$EXISTING" | grep -qE '^\* \* \* \* \* '; then
+      echo "✅ cron entry 이미 1분 간격으로 등록됨"
+    else
+      # 기존 entry가 다른 간격 — 1분으로 교체
+      crontab -l 2>/dev/null | grep -vF "vscode-idle-killer.sh" | { cat; echo "$CRON_LINE"; } | crontab -
+      echo "✅ cron entry 1분 간격으로 갱신 (이전 entry 교체)"
+    fi
   else
     (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
-    echo "✅ cron entry 등록 완료 (5분 간격, idle 15분 시 SIGTERM)"
+    echo "✅ cron entry 등록 완료 (1분 간격, idle 15분 시 SIGTERM)"
   fi
 else
   echo "ℹ️  $VSCODE_KILLER 없음 또는 비실행 — skip"
