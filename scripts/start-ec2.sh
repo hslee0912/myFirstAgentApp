@@ -110,7 +110,7 @@ if [ -x "$VSCODE_KILLER" ]; then
     fi
   else
     (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
-    echo "✅ cron entry 등록 완료 (1분 간격, idle 15분 시 SIGTERM)"
+    echo "✅ cron entry 등록 완료 (1분 간격, idle 3분 시 SIGTERM)"
   fi
 else
   echo "ℹ️  $VSCODE_KILLER 없음 또는 비실행 — skip"

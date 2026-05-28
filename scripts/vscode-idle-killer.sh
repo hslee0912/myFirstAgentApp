@@ -13,7 +13,7 @@
 #
 # 사용 (수동):
 #   bash scripts/vscode-idle-killer.sh           # 검사 + 임계 도달 시 kill
-#   IDLE_THRESHOLD=300 bash ...                  # 임계 5분 (default 900s = 15분)
+#   IDLE_THRESHOLD=300 bash ...                  # 임계 5분 (default 180s = 3분)
 #   DRY_RUN=1 bash ...                           # 검사만, kill 안 함
 #
 # 사용 (자동, cron):
@@ -23,7 +23,10 @@
 
 set -u
 
-IDLE_THRESHOLD="${IDLE_THRESHOLD:-900}"  # 15분 (초)
+IDLE_THRESHOLD="${IDLE_THRESHOLD:-180}"  # 3분 (초). cron이 1분 간격으로 ping 검사하므로
+                                          # 3회(=3분) 연속 활동 신호 없으면 정리. 잠깐 자리비움
+                                          # (전화/물마시기 ~2분) false positive 회피 + 닫고
+                                          # 즉시 효과 (체감 3-4분).
 DRY_RUN="${DRY_RUN:-0}"
 VSCODE_DIR="$HOME/.vscode-server"
 
