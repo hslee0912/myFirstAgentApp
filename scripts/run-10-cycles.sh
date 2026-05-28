@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 10회 cycle 자동 실행 — UI API (Init + Run Pipeline) 시뮬.
 #
-# ⚠️ 핵심: 우리 fix는 push 안 함 (사용자 명시). InitProject가 매번
-# `git reset --hard origin/main`으로 ahead 변경 폐기 → 매 cycle 직전에
-# /tmp/myapp-fix/* 에서 worktree로 복원해야 우리 fix가 살아남는다.
+# 참고 (2026-05-28 정정): 현재 워크플로는 fix를 origin/main에 commit·push한다 →
+# InitProject의 `git reset --hard origin/main`이 커밋된 fix를 이미 복원하므로
+# 아래 restore_fixes는 평소엔 휴면(no-op)이다. *커밋 안 한* 로컬 fix를 cycle에
+# 태울 때(디버그 모드)만 /tmp/myapp-fix → restore_fixes 경로로 복원된다.
 #
 # 결과: /tmp/10cycles_results.tsv (cycle별 verdict + duration)
 # 진행: /tmp/10cycles.log (실행 로그)
