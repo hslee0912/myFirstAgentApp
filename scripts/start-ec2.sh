@@ -9,7 +9,10 @@
 #      OOM 원인 #1. idempotent — 이미 stopped/disabled / 미설치이면 skip.
 #   3. Docker 데몬 가동 보장 — 이미 응답하면 noop, 아니면 `sudo systemctl start docker`.
 #   4. Docker 데몬 응답 대기 — `docker info` 성공할 때까지 최대 30초.
-#   5. UI 서버 detached 가동 — nohup으로 npm run ui 실행, 로그는 /tmp/ui_server.log.
+#   5. vscode-idle-killer cron entry 등록 (idempotent, 5분 간격).
+#      VSCode local 닫혀도 EC2 vscode-server는 init detach로 살아남음 → 15분 idle
+#      자동 종료. 새 서버 셋업 시에도 이 단계가 cron 자동 등록.
+#   6. UI 서버 detached 가동 — nohup으로 npm run ui 실행, 로그는 /tmp/ui_server.log.
 #      "listening on" 로그 라인이 보일 때까지 대기 후 URL을 출력.
 #
 # 사용: bash scripts/start-ec2.sh
@@ -89,10 +92,28 @@ if [ "$DOCKER_READY" != "1" ]; then
 fi
 
 ###################################
-# 5/5 UI 서버 detached 가동
+# 5/6 vscode-idle-killer cron 등록 (idempotent)
 ###################################
 echo ""
-echo "━━━ 5/5 UI 서버 가동 (detached, 로그=$UI_LOG) ━━━"
+echo "━━━ 5/6 vscode-idle-killer cron entry (idempotent) ━━━"
+VSCODE_KILLER="$ROOT/scripts/vscode-idle-killer.sh"
+if [ -x "$VSCODE_KILLER" ]; then
+  CRON_LINE="*/5 * * * * $VSCODE_KILLER >>/tmp/vscode-idle-killer.log 2>&1"
+  if crontab -l 2>/dev/null | grep -qF "vscode-idle-killer.sh"; then
+    echo "✅ cron entry 이미 등록됨 ($(crontab -l 2>/dev/null | grep vscode-idle-killer | head -1))"
+  else
+    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+    echo "✅ cron entry 등록 완료 (5분 간격, idle 15분 시 SIGTERM)"
+  fi
+else
+  echo "ℹ️  $VSCODE_KILLER 없음 또는 비실행 — skip"
+fi
+
+###################################
+# 6/6 UI 서버 detached 가동
+###################################
+echo ""
+echo "━━━ 6/6 UI 서버 가동 (detached, 로그=$UI_LOG) ━━━"
 cd "$ROOT"
 
 # 이전 로그 truncate (직전 세션 로그가 누적되지 않게).
